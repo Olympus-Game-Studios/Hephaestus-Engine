@@ -183,6 +183,8 @@ From `this:GetAnimator()` on an entity with a Character component. Clips are ref
 | `a:IsPlaying([clip])` | Whether anything (or a given clip) is playing. |
 | `a:GetCurrentAnimation()` / `a:GetTime()` / `a:GetDuration([clip])` | Where playback is. |
 | `a:SetTime(seconds)` | Jumps the current animation to that time, for example to start characters at different points of the same loop. |
+| `a:SetLayer(name, options)` | Lays a pose over the main animation on some bones, such as strafing legs under an aiming upper body. `options.clips` lists clip ids or `{ clip = id, weight = w, reverse = true }`; they play at one shared phase (so their steps stay in time) and mix by weight. `mask` names the bone whose branch it drives (the whole body when left out) and `exclude` a branch it leaves alone; `excludeBlend` (0 to 1) lets the excluded bone still take that share, halving for each bone below it, so the change at the waist is not sudden. `weight` (1) is how strongly it applies, `fade` how many seconds it takes to get there and `rate` its playback speed. Bone names match without a prefix such as `mixamorig:`. Call it again each frame to change the weights; it returns `false` and a message when a clip or bone is missing. |
+| `a:ClearLayer(name, fadeSeconds)` | Fades a layer out and removes it. |
 
 From `this:GetCharacter()`: `c:GetSocket(name)` (world space) and `c:GetSocketLocal(name)` (character space), each returning `position` and `rotation`, or `nil`.
 

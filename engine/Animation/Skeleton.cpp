@@ -1,6 +1,7 @@
 #include "Skeleton.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -73,6 +74,22 @@ const SkeletonBone* Skeleton::FindBone(const std::string& name) const {
         }
     }
     return nullptr;
+}
+
+int Skeleton::FindBoneByBaseName(const std::string& baseName) const {
+    auto lower = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    };
+    const std::string wanted = lower(baseName);
+    for (int i = 0; i < BoneCount(); ++i) {
+        const std::string& name = bones[static_cast<size_t>(i)].name;
+        const size_t colon = name.find_last_of(':');
+        if (lower(colon == std::string::npos ? name : name.substr(colon + 1)) == wanted) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 Mat4 ConvertSkeletalMatrix(const Mat4& gltfMatrix, float unitScale) {

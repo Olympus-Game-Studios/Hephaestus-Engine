@@ -43,6 +43,14 @@ Expose.number("perceptionInterval", 0.1)
 Expose.string("idleClip", "RifleIdle")
 Expose.string("walkClip", "RifleWalk")
 Expose.string("runClip", "RifleRun")
+-- Strafing legs: while moving, the hips and legs play these by move direction under the rifle upper body. Leave
+-- the strafe clips empty to keep whole-body clips only.
+Expose.string("walkStrafeLeftClip", "WalkStrafeLeft")
+Expose.string("walkStrafeRightClip", "WalkStrafeRight")
+Expose.string("runStrafeLeftClip", "JogStrafeLeft")
+Expose.string("runStrafeRightClip", "JogStrafeRight")
+Expose.number("walkClipSpeed", 1.6) -- metres per second the walk clips cover, so the feet do not slide
+Expose.number("runClipSpeed", 4.0)
 Expose.string("fragGrenadePrefab", "")
 Expose.number("grenadeDamage", 150)
 Expose.number("throwAngleDegrees", 40)
@@ -75,6 +83,7 @@ local heardNoise = nil
 local danger = nil
 local fire = { magazine = 30, reloading = 0, reaction = 0, burstLeft = 0, shotTimer = 0, pause = 0 }
 local currentClip = nil
+local legsLayer = true -- false once the strafe clips turn out to be missing
 local speedScale = 0
 local wishX, wishZ = 0, 0
 local faceTarget = nil
@@ -730,6 +739,38 @@ local function playClip(clip)
     end
 end
 
+-- The hips and legs follow the way the enemy moves relative to where it faces, mixing the forward, backward
+-- (the forward clip reversed) and sideways clips, at a rate that matches the speed.
+local function updateLegs(vx, vz, speed)
+    local animator = this:GetAnimator()
+    if not animator or not legsLayer then
+        return
+    end
+    if speed < 0.4 or walkStrafeLeftClip == "" then
+        animator:ClearLayer("Legs", 0.2)
+        return
+    end
+    local running = speed >= 3.2
+    local fx, fz = math.cos(yaw), -math.sin(yaw)
+    local forward = (vx * fx + vz * fz) / speed
+    local right = (vx * -fz + vz * fx) / speed
+    local ahead = running and runClip or walkClip
+    local ok, err = animator:SetLayer("Legs", {
+        clips = {
+            { clip = ahead, weight = math.max(0, forward) },
+            { clip = ahead, weight = math.max(0, -forward), reverse = true },
+            { clip = running and runStrafeRightClip or walkStrafeRightClip, weight = math.max(0, right) },
+            { clip = running and runStrafeLeftClip or walkStrafeLeftClip, weight = math.max(0, -right) },
+        },
+        mask = "Hips", exclude = "Spine", excludeBlend = 0.5, fade = 0.2,
+        rate = Gunplay.clamp(speed / math.max(running and runClipSpeed or walkClipSpeed, 0.1), 0.5, 1.8),
+    })
+    if not ok then
+        legsLayer = false
+        engine_log("[FPS.Enemy] strafing legs are off: " .. tostring(err))
+    end
+end
+
 local function parsePatrolPoints()
     local list = {}
     for x, z in string.gmatch(patrolPoints or "", "(-?[%d%.]+)%s*,%s*(-?[%d%.]+)") do
@@ -883,6 +924,7 @@ function onUpdate(dt)
     local velocity = Character.getVelocity() or {}
     local speed = math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2)
     playClip(speed < 0.4 and idleClip or (speed < 3.2 and walkClip or runClip))
+    updateLegs(velocity.x or 0, velocity.z or 0, speed)
 end
 
 function onHit(amount, zone, distance)

@@ -174,17 +174,23 @@ void SampleClip(const AnimationClip& clip,
     }
 }
 
+BoneLocalPose BlendBonePose(const BoneLocalPose& from, const BoneLocalPose& to, float alpha) {
+    const float t = std::max(0.0f, std::min(1.0f, alpha));
+    BoneLocalPose out;
+    out.translation = LerpVec3(from.translation, to.translation, t);
+    out.rotation = SlerpQuat(from.rotation, to.rotation, t);
+    out.scale = LerpVec3(from.scale, to.scale, t);
+    return out;
+}
+
 void BlendLocalPoses(const std::vector<BoneLocalPose>& from,
                      const std::vector<BoneLocalPose>& to,
                      float alpha,
                      std::vector<BoneLocalPose>& outPose) {
     const size_t count = std::min(from.size(), to.size());
     outPose.resize(count);
-    const float t = std::max(0.0f, std::min(1.0f, alpha));
     for (size_t i = 0; i < count; ++i) {
-        outPose[i].translation = LerpVec3(from[i].translation, to[i].translation, t);
-        outPose[i].rotation = SlerpQuat(from[i].rotation, to[i].rotation, t);
-        outPose[i].scale = LerpVec3(from[i].scale, to[i].scale, t);
+        outPose[i] = BlendBonePose(from[i], to[i], alpha);
     }
 }
 

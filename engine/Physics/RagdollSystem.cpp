@@ -54,24 +54,6 @@ const PartTemplate kParts[] = {
 constexpr int kPartCount = static_cast<int>(sizeof(kParts) / sizeof(kParts[0]));
 constexpr const char* kPelvisDriver = "Hips";
 
-std::string BaseName(const std::string& name) {
-    const size_t colon = name.find_last_of(':');
-    std::string base = colon == std::string::npos ? name : name.substr(colon + 1);
-    std::transform(base.begin(), base.end(), base.begin(), [](unsigned char c) { return std::tolower(c); });
-    return base;
-}
-
-int FindBone(const Hephaestus::Skeleton& skeleton, const char* name) {
-    std::string wanted = name;
-    std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return std::tolower(c); });
-    for (int i = 0; i < skeleton.BoneCount(); ++i) {
-        if (BaseName(skeleton.bones[static_cast<size_t>(i)].name) == wanted) {
-            return i;
-        }
-    }
-    return -1;
-}
-
 Vec3 Origin(const Mat4& m) {
     return Vec3(m.m[12], m.m[13], m.m[14]);
 }
@@ -379,15 +361,15 @@ bool RagdollSystem::Start(Scene& scene, entt::entity entity, const RagdollStart&
     int from[kPartCount];
     int to[kPartCount];
     for (int p = 0; p < kPartCount; ++p) {
-        from[p] = FindBone(skeleton, kParts[p].from);
-        to[p] = FindBone(skeleton, kParts[p].to);
+        from[p] = skeleton.FindBoneByBaseName(kParts[p].from);
+        to[p] = skeleton.FindBoneByBaseName(kParts[p].to);
         if (from[p] < 0 || (to[p] < 0 && kParts[p].fallbackLength <= 0.0f)) {
             outError = std::string("Skeleton has no '") + (from[p] < 0 ? kParts[p].from : kParts[p].to)
                 + "' bone; ragdolls need a humanoid skeleton with Mixamo bone names.";
             return false;
         }
     }
-    const int pelvisBone = FindBone(skeleton, kPelvisDriver);
+    const int pelvisBone = skeleton.FindBoneByBaseName(kPelvisDriver);
     if (pelvisBone < 0) {
         outError = "Skeleton has no 'Hips' bone; ragdolls need a humanoid skeleton with Mixamo bone names.";
         return false;

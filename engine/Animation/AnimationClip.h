@@ -89,6 +89,7 @@ void SampleClip(const AnimationClip& clip,
                 const Skeleton& skeleton,
                 float time,
                 std::vector<BoneLocalPose>& outPose);
+BoneLocalPose BlendBonePose(const BoneLocalPose& from, const BoneLocalPose& to, float alpha);
 void BlendLocalPoses(const std::vector<BoneLocalPose>& from,
                      const std::vector<BoneLocalPose>& to,
                      float alpha,

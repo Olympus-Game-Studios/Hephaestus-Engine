@@ -13,6 +13,7 @@
 #include <vector>
 
 struct CharacterComponent;
+struct CharacterAnimationLayer;
 class Scene;
 
 namespace Hephaestus {
@@ -29,6 +30,15 @@ public:
                           const std::string& name,
                           float duration,
                           std::string& outError);
+    /// Adds or updates the layer named in `layer` (clips, mask, target weight, fade and rate; its phase and current
+    /// weight carry over when it already exists). Fails when a clip is missing or a mask bone is not found.
+    static bool SetLayer(CharacterComponent& character, const CharacterAnimationLayer& layer, std::string& outError);
+    /// Fades the layer out over `fadeSeconds` and removes it; false when there is no such layer.
+    static bool ClearLayer(CharacterComponent& character, const std::string& name, float fadeSeconds);
+    /// Per-bone share of a layer: 1 inside `maskRoot`'s subtree (all bones when empty), 0 outside, and inside
+    /// `maskExclude`'s subtree `excludeBlend` halved for each level below it.
+    static bool BuildLayerMask(const Skeleton& skeleton, const CharacterAnimationLayer& layer,
+                               std::vector<float>& outWeights, std::string& outError);
     static void Pause(CharacterComponent& character);
     static void Resume(CharacterComponent& character);
     static void Stop(CharacterComponent& character);

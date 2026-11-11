@@ -3943,6 +3943,10 @@ void LuaScriptEngine::RegisterThisBindings() {
     lua_setfield(m_State, -2, "GetTime");
     lua_pushcfunction(m_State, Lua_Animator_SetTime);
     lua_setfield(m_State, -2, "SetTime");
+    lua_pushcfunction(m_State, Lua_Animator_SetLayer);
+    lua_setfield(m_State, -2, "SetLayer");
+    lua_pushcfunction(m_State, Lua_Animator_ClearLayer);
+    lua_setfield(m_State, -2, "ClearLayer");
     lua_pushcfunction(m_State, Lua_Animator_GetDuration);
     lua_setfield(m_State, -2, "GetDuration");
     lua_pushvalue(m_State, -1);
@@ -4859,6 +4863,81 @@ int LuaScriptEngine::Lua_Animator_SetTime(lua_State* L) {
         character->player.time = (std::max)(0.0f, seconds);
     }
     return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_SetLayer(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    CharacterAnimationLayer layer;
+    layer.name = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    auto number = [L](const char* key, float& out) {
+        lua_getfield(L, 3, key);
+        if (lua_isnumber(L, -1)) out = static_cast<float>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    };
+    auto text = [L](const char* key, std::string& out) {
+        lua_getfield(L, 3, key);
+        if (lua_isstring(L, -1)) out = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    };
+    text("mask", layer.maskRoot);
+    text("exclude", layer.maskExclude);
+    number("excludeBlend", layer.excludeBlend);
+    number("weight", layer.targetWeight);
+    number("fade", layer.fadeSeconds);
+    number("rate", layer.rate);
+    lua_getfield(L, 3, "clips");
+    if (lua_istable(L, -1)) {
+        const lua_Integer count = luaL_len(L, -1);
+        for (lua_Integer i = 1; i <= count; ++i) {
+            lua_rawgeti(L, -1, i);
+            CharacterAnimationLayer::Clip clip;
+            if (lua_isstring(L, -1)) {
+                clip.id = lua_tostring(L, -1);
+            } else if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "clip");
+                if (lua_isstring(L, -1)) clip.id = lua_tostring(L, -1);
+                lua_pop(L, 1);
+                lua_getfield(L, -1, "weight");
+                if (lua_isnumber(L, -1)) clip.weight = static_cast<float>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_getfield(L, -1, "reverse");
+                clip.reverse = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+            if (!clip.id.empty()) layer.clips.push_back(std::move(clip));
+        }
+    }
+    lua_pop(L, 1);
+    std::string error = character ? std::string() : std::string("No character");
+    if (character && Hephaestus::CharacterAnimationSystem::SetLayer(*character, layer, error)) {
+        lua_pushboolean(L, true);
+        return 1;
+    }
+    lua_pushboolean(L, false);
+    lua_pushstring(L, error.c_str());
+    return 2;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_ClearLayer(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    const char* name = luaL_checkstring(L, 2);
+    const float fade = static_cast<float>(luaL_optnumber(L, 3, 0.0));
+    lua_pushboolean(L, character && Hephaestus::CharacterAnimationSystem::ClearLayer(*character, name, fade));
+    return 1;
 #else
     (void)L;
     return 0;

@@ -89,7 +89,177 @@ bool EnsureCompatible(CharacterComponent& character, const AnimationClip& clip, 
     return false;
 }
 
+float LayerDuration(const CharacterComponent& character, const CharacterAnimationLayer& layer) {
+    float total = 0.0f;
+    float weights = 0.0f;
+    for (const CharacterAnimationLayer::Clip& entry : layer.clips) {
+        std::string error;
+        const AnimationClip* clip = FindClip(character.clips, entry.id, error);
+        if (clip && entry.weight > 0.0f) {
+            total += entry.weight * std::max(0.0f, ClipRangeEnd(*clip) - ClipRangeStart(*clip));
+            weights += entry.weight;
+        }
+    }
+    return weights > 0.0f ? total / weights : 0.0f;
+}
+
+void AdvanceLayers(CharacterComponent& character, float deltaTime) {
+    for (CharacterAnimationLayer& layer : character.layers) {
+        const float step = layer.fadeSeconds > 1e-4f ? deltaTime / layer.fadeSeconds : 1.0f;
+        if (layer.weight < layer.targetWeight) {
+            layer.weight = std::min(layer.targetWeight, layer.weight + step);
+        } else {
+            layer.weight = std::max(layer.targetWeight, layer.weight - step);
+        }
+        const float duration = LayerDuration(character, layer);
+        if (duration > 1e-6f) {
+            layer.phase += deltaTime * layer.rate * character.playbackSpeed / duration;
+            layer.phase -= std::floor(layer.phase);
+        }
+    }
+    character.layers.erase(std::remove_if(character.layers.begin(), character.layers.end(),
+                                          [](const CharacterAnimationLayer& layer) {
+                                              return layer.removeWhenFaded && layer.weight <= 0.0f;
+                                          }),
+                           character.layers.end());
+}
+
+// The layer's clips mixed by weight at its phase; false when none of them can be sampled.
+bool SampleLayer(const CharacterComponent& character, const CharacterAnimationLayer& layer,
+                 std::vector<BoneLocalPose>& outPose) {
+    float accumulated = 0.0f;
+    std::vector<BoneLocalPose> clipPose;
+    for (const CharacterAnimationLayer::Clip& entry : layer.clips) {
+        std::string error;
+        const AnimationClip* clip = FindClip(character.clips, entry.id, error);
+        if (!clip || entry.weight <= 0.0f) {
+            continue;
+        }
+        const float range = std::max(0.0f, ClipRangeEnd(*clip) - ClipRangeStart(*clip));
+        const float phase = entry.reverse ? 1.0f - layer.phase : layer.phase;
+        SampleClip(*clip, character.skeleton, ClipRangeStart(*clip) + phase * range, clipPose);
+        accumulated += entry.weight;
+        if (accumulated == entry.weight) {
+            outPose = clipPose;
+        } else {
+            BlendLocalPoses(outPose, clipPose, entry.weight / accumulated, outPose);
+        }
+    }
+    return accumulated > 0.0f;
+}
+
+void ApplyLayers(const CharacterComponent& character, std::vector<BoneLocalPose>& pose) {
+    std::vector<BoneLocalPose> layerPose;
+    for (const CharacterAnimationLayer& layer : character.layers) {
+        if (layer.weight <= 0.0f || !SampleLayer(character, layer, layerPose)) {
+            continue;
+        }
+        const size_t count = std::min({pose.size(), layerPose.size(), layer.boneWeights.size()});
+        for (size_t i = 0; i < count; ++i) {
+            const float share = layer.weight * layer.boneWeights[i];
+            if (share <= 0.0f) {
+                continue;
+            }
+            pose[i] = BlendBonePose(pose[i], layerPose[i], share);
+        }
+    }
+}
+
 } // namespace
+
+bool CharacterAnimationSystem::BuildLayerMask(const Skeleton& skeleton, const CharacterAnimationLayer& layer,
+                                              std::vector<float>& outWeights, std::string& outError) {
+    const int count = skeleton.BoneCount();
+    const int root = layer.maskRoot.empty() ? -1 : skeleton.FindBoneByBaseName(layer.maskRoot);
+    const int exclude = layer.maskExclude.empty() ? -1 : skeleton.FindBoneByBaseName(layer.maskExclude);
+    if (!layer.maskRoot.empty() && root < 0) {
+        outError = "Layer mask bone '" + layer.maskRoot + "' was not found.";
+        return false;
+    }
+    if (!layer.maskExclude.empty() && exclude < 0) {
+        outError = "Layer mask bone '" + layer.maskExclude + "' was not found.";
+        return false;
+    }
+    // Bones are in parent-before-child order, so each bone's parent is already decided.
+    std::vector<int> excludeDepth(static_cast<size_t>(count), -1);
+    std::vector<bool> inRootTree(static_cast<size_t>(count), false);
+    outWeights.assign(static_cast<size_t>(count), 0.0f);
+    for (int i = 0; i < count; ++i) {
+        const int parent = skeleton.bones[static_cast<size_t>(i)].parentEval;
+        const bool inRoot = root < 0 || i == root || (parent >= 0 && inRootTree[static_cast<size_t>(parent)]);
+        inRootTree[static_cast<size_t>(i)] = inRoot;
+        if (i == exclude) {
+            excludeDepth[static_cast<size_t>(i)] = 0;
+        } else if (parent >= 0 && excludeDepth[static_cast<size_t>(parent)] >= 0) {
+            excludeDepth[static_cast<size_t>(i)] = excludeDepth[static_cast<size_t>(parent)] + 1;
+        }
+        const int depth = excludeDepth[static_cast<size_t>(i)];
+        if (!inRoot) {
+            continue;
+        }
+        outWeights[static_cast<size_t>(i)] =
+            depth < 0 ? 1.0f : layer.excludeBlend * std::pow(0.5f, static_cast<float>(depth));
+    }
+    return true;
+}
+
+bool CharacterAnimationSystem::SetLayer(CharacterComponent& character, const CharacterAnimationLayer& layer,
+                                        std::string& outError) {
+    if (!character.runtimeReady) {
+        outError = "Character runtime is not bound.";
+        return false;
+    }
+    if (layer.name.empty() || layer.clips.empty()) {
+        outError = "A layer needs a name and at least one clip.";
+        return false;
+    }
+    for (const CharacterAnimationLayer::Clip& entry : layer.clips) {
+        const AnimationClip* clip = FindClip(character.clips, entry.id, outError);
+        if (!clip || !EnsureCompatible(character, *clip, outError)) {
+            return false;
+        }
+    }
+    auto existing = std::find_if(character.layers.begin(), character.layers.end(),
+                                 [&](const CharacterAnimationLayer& other) { return other.name == layer.name; });
+    CharacterAnimationLayer updated = layer;
+    if (existing != character.layers.end()) {
+        updated.weight = existing->weight;
+        updated.phase = existing->phase;
+        if (existing->maskRoot == layer.maskRoot && existing->maskExclude == layer.maskExclude &&
+            existing->excludeBlend == layer.excludeBlend) {
+            updated.boneWeights = existing->boneWeights;
+        }
+    } else if (layer.fadeSeconds <= 1e-4f) {
+        updated.weight = layer.targetWeight;
+    }
+    if (updated.boneWeights.size() != static_cast<size_t>(character.skeleton.BoneCount()) &&
+        !BuildLayerMask(character.skeleton, updated, updated.boneWeights, outError)) {
+        return false;
+    }
+    updated.removeWhenFaded = false;
+    if (existing != character.layers.end()) {
+        *existing = std::move(updated);
+    } else {
+        character.layers.push_back(std::move(updated));
+    }
+    return true;
+}
+
+bool CharacterAnimationSystem::ClearLayer(CharacterComponent& character, const std::string& name,
+                                          float fadeSeconds) {
+    for (CharacterAnimationLayer& layer : character.layers) {
+        if (layer.name == name) {
+            layer.targetWeight = 0.0f;
+            layer.fadeSeconds = std::max(0.0f, fadeSeconds);
+            layer.removeWhenFaded = true;
+            if (layer.fadeSeconds <= 1e-4f) {
+                layer.weight = 0.0f;
+            }
+            return true;
+        }
+    }
+    return false;
+}
 
 bool CharacterAnimationSystem::BindRuntime(CharacterComponent& character,
                                            Skeleton skeleton,
@@ -103,6 +273,7 @@ bool CharacterAnimationSystem::BindRuntime(CharacterComponent& character,
     character.skeleton = std::move(skeleton);
     character.clips = std::move(clips);
     character.player = AnimationPlayer{};
+    character.layers.clear();
     character.runtimeReady = true;
     character.lastError.clear();
     EvaluatePose(character);
@@ -224,6 +395,7 @@ void CharacterAnimationSystem::EvaluatePose(CharacterComponent& character) {
         }
     }
 
+    ApplyLayers(character, pose);
     character.localPoses = std::move(pose);
     LocalPosesToMatrices(character.skeleton, character.localPoses, character.localMatrices);
     SkeletonBuilder::EvaluateWorld(character.skeleton, character.localMatrices, character.worldPose);
@@ -281,6 +453,9 @@ void CharacterAnimationSystem::TickEntity(CharacterComponent& character, float d
         }
     }
     AdvancePlayer(character, deltaTime);
+    if (!character.player.paused) {
+        AdvanceLayers(character, deltaTime);
+    }
     EvaluatePose(character);
 }
 
