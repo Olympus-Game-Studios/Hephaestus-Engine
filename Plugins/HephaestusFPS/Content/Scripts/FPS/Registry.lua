@@ -15,6 +15,7 @@ local Registry = {
     combatants = {},
     friendlyFire = true,
     matchDirector = nil,
+    routes = nil, -- { points = { {x, y, z} }, chance }: where idle hunters sometimes go first (TeamDeathmatch)
     flanker = nil,
     lastBlast = nil,
     liveGrenades = {},
@@ -59,6 +60,7 @@ function Registry.ensureSession()
     Registry.combatants = {}
     Registry.friendlyFire = true
     Registry.matchDirector = nil
+    Registry.routes = nil
     Registry.flanker = nil
     Registry.lastBlast = nil
     Registry.liveGrenades = {}

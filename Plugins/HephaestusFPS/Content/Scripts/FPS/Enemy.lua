@@ -497,7 +497,22 @@ local function tactics(dt, row)
 end
 
 -- States -------------------------------------------------------------------------------------------------------
+-- With the match's route points (Registry.routes), now and then a lane or high-ground spot to head for, so the team
+-- spreads over the lanes instead of all taking the shortest way to the other team.
+local function routeSpot()
+    local routes = huntWhenIdle and Registry.routes
+    if not routes or random() >= routes.chance then
+        return nil
+    end
+    return Nav.closestPoint(routes.points[1 + math.floor(random() * #routes.points)])
+end
+
+-- The next place to walk to, and whether it is a route point (which distant gunfire doesn't pull them away from).
 local function nextPatrolPoint()
+    local route = routeSpot()
+    if route then
+        return route, true
+    end
     if huntWhenIdle then
         local spots = {}
         for _, row in pairs(Registry.combatants) do
@@ -518,8 +533,8 @@ local function nextPatrolPoint()
     return Nav.randomPoint(home, patrolRadius)
 end
 
--- What any calm state does first: fight, flee or investigate.
-local function reactions()
+-- What any calm state does first: fight, flee or investigate (unless ignoreNoise, which drops what was heard).
+local function reactions(ignoreNoise)
     if danger then
         return "evade"
     end
@@ -529,7 +544,9 @@ local function reactions()
     if heardNoise then
         local noise = heardNoise
         heardNoise = nil
-        return "investigate", noise, false
+        if not ignoreNoise then
+            return "investigate", noise, false
+        end
     end
     return nil
 end
@@ -538,14 +555,15 @@ local states = {}
 
 states.patrol = {
     enter = function(_, brain)
-        local point = nextPatrolPoint()
+        local point, routed = nextPatrolPoint()
+        brain.routed = routed
         if point then
             moveTo(point, false)
         end
         brain.waitTimer = nil
     end,
     update = function(_, brain, dt)
-        local next, a, b = reactions()
+        local next, a, b = reactions(brain.routed and not mover.arrived)
         if next then
             return next, a, b
         end
@@ -560,7 +578,8 @@ states.patrol = {
             brain.waitTimer = (brain.waitTimer or patrolWaitSeconds) - dt
             if brain.waitTimer <= 0 then
                 brain.waitTimer = nil
-                local point = nextPatrolPoint()
+                local point, routed = nextPatrolPoint()
+                brain.routed = routed
                 if point then
                     moveTo(point, false)
                 end
@@ -571,7 +590,8 @@ states.patrol = {
 }
 
 states.investigate = {
-    enter = function(_, brain, target, run)
+    enter = function(_, brain, target, run, route)
+        brain.route = route
         brain.target = target or lastKnown
         brain.lookTime = 0
         if brain.target then
@@ -585,7 +605,10 @@ states.investigate = {
         if awareness >= 1 and visible then
             return "combat"
         end
-        if heardNoise then
+        if heardNoise and brain.route and not mover.arrived then
+            heardNoise = nil
+        elseif heardNoise then
+            brain.route = nil
             brain.target = heardNoise
             heardNoise = nil
             moveTo(brain.target, true)
@@ -968,7 +991,11 @@ function onUpdate(dt)
         end
         local row = huntOnSpawn and (opponent() or nearestHostile())
         local feet = row and feetOf(row)
-        if feet then
+        local route = huntOnSpawn and routeSpot()
+        if route then
+            -- Into a lane first; the hunt starts from there.
+            brain = Brain.new(this, states, "investigate", route, true, true)
+        elseif feet then
             target = row
             -- Sent in to find the other team: start out searching where they are.
             lastKnown = { x = feet.x, y = feet.y, z = feet.z }

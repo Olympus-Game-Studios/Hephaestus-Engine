@@ -22,6 +22,8 @@ Expose.number("respawnSeconds", 5)
 Expose.string("friendlySpawns", "") -- "x,z;x,z": where team 1 comes back
 Expose.string("enemySpawns", "")
 Expose.number("minSpawnDistance", 15) -- spawn points closer than this to the other team are avoided
+Expose.string("routePoints", "") -- "x,z;x,y,z": lane and high-ground spots soldiers sometimes head for between fights
+Expose.number("routeChance", 0.5) -- chance a soldier with no enemy in sight goes to a route point first
 Expose.string("friendlyNames", "Hale;Ortiz;Becker;Novak;Reyes;Quinn;Marsh")
 Expose.string("enemyNames", "Volkov;Kane;Sato;Mercer;Drago;Lund;Brandt")
 Expose.string("teamNames", "BLUE;RED")
@@ -61,6 +63,23 @@ local function centre(points)
         x, z = x + p.x, z + p.z
     end
     return #points > 0 and { x = x / #points, z = z / #points } or { x = 0, z = 0 }
+end
+
+-- "x,z;x,y,z" -> { {x, y, z} }; y defaults to 0.
+local function parseRoutes(text)
+    local out = {}
+    for item in string.gmatch(text or "", "[^;]+") do
+        local n = {}
+        for v in string.gmatch(item, "-?[%d%.]+") do
+            n[#n + 1] = tonumber(v)
+        end
+        if #n == 2 then
+            out[#out + 1] = { x = n[1], y = 0, z = n[2] }
+        elseif #n == 3 then
+            out[#out + 1] = { x = n[1], y = n[2], z = n[3] }
+        end
+    end
+    return out
 end
 
 local function enemiesOf(team)
@@ -198,6 +217,8 @@ function onAwake()
     Registry.friendlyFire = false
     state, soldiers, byKey, phase, endMenu, shownCountdown = nil, {}, {}, "waiting", nil, nil
     spawns = { Waves.parsePoints(friendlySpawns), Waves.parsePoints(enemySpawns) }
+    local routes = parseRoutes(routePoints)
+    Registry.routes = #routes > 0 and { points = routes, chance = routeChance } or nil
     rng = (Registry.key(this) or 1) * 48271 % 2147483647 + 1
     local names = split(teamNames)
     MatchHud.reset()
@@ -275,6 +296,7 @@ end
 function onDestroy()
     if Registry.matchDirector == this then
         Registry.matchDirector = nil
+        Registry.routes = nil
         Registry.friendlyFire = true
     end
     MatchHud.reset()
