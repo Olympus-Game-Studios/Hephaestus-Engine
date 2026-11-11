@@ -110,6 +110,8 @@ Expose.string("fragGrenadePrefab", "")
 Expose.string("smokeGrenadePrefab", "")
 Expose.number("fragGrenades", 2)
 Expose.number("smokeGrenades", 2)
+Expose.number("maxFragGrenades", 4) -- grenade pickups fill up to these
+Expose.number("maxSmokeGrenades", 4)
 Expose.number("throwSpeed", 15)
 Expose.number("throwLift", 0.2)
 Expose.number("throwSeconds", 0.6)
@@ -517,6 +519,8 @@ function onAwake()
         pendingYaw = 0,
         bob = 0,
         input = {},
+        grenades = grenades,
+        maxGrenades = { frag = math.max(0, math.floor(maxFragGrenades)), smoke = math.max(0, math.floor(maxSmokeGrenades)) },
     })
     eyeHeight = standEyeHeight
     endedFor = nil

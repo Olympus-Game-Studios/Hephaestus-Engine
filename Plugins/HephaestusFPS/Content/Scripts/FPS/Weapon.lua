@@ -220,6 +220,7 @@ function Weapon.register(entity, options)
     row.reserve = setting(options, "reserveAmmo", 48)
     row.magazineSize = row.magazineSize or 12
     Logic.fillWeapon(row)
+    row.maxReserve = row.reserve -- ammo pickups refill up to the starting reserve
     row.rng = Gunplay.newRng((row.recoilSeed or 1) * 7919 + 13)
     row.hitscan = setting(options, "hitscan", true) ~= false
     row.fireLayers = setting(options, "fireLayers", nil)

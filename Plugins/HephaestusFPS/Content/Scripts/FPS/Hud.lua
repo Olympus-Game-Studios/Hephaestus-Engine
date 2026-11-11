@@ -39,6 +39,8 @@ function Hud.mount(path, enabled)
     Hud.widgets.BannerSub = UI.getWidget(handle, "BannerSub")
     Hud.widgets.WaveText = UI.getWidget(handle, "WaveText")
     Hud.widgets.DeathFade = UI.getWidget(handle, "DeathFade")
+    Hud.widgets.PickupText = UI.getWidget(handle, "PickupText")
+    Hud.pickup = nil
     Hud.banner = nil
     Hud.waveText = nil
     Hud.deathFade = false
@@ -67,6 +69,7 @@ end
 Hud.MAX_GRENADE_WARNINGS = 4
 Hud.warnings = {}
 Hud.MAX_DAMAGE_ARROWS = 4
+Hud.PICKUP_SECONDS = 1.8
 Hud.damageArrows = {}
 local WARNING_COLORS = {
     near = { 1.0, 1.0, 1.0 },
@@ -155,6 +158,11 @@ function Hud.showBanner(title, subtitle, seconds)
     Hud.banner = { title = title or "", subtitle = subtitle or "", remaining = seconds }
 end
 
+-- A short line above the prompt, such as "+50 Health", in the given colour; it fades out after a moment.
+function Hud.showPickup(text, r, g, b)
+    Hud.pickup = { text = text, remaining = Hud.PICKUP_SECONDS, r = r or 1, g = g or 1, b = b or 1 }
+end
+
 function Hud.clearBanner()
     Hud.banner = nil
 end
@@ -199,6 +207,20 @@ local function refreshMessages(dt)
     end
     if w.DeathFade then
         UI.setVisible(w.DeathFade, Hud.deathFade)
+    end
+    local pickup = Hud.pickup
+    if pickup then
+        pickup.remaining = pickup.remaining - dt
+        if pickup.remaining <= 0 then
+            Hud.pickup, pickup = nil, nil
+        end
+    end
+    if w.PickupText then
+        UI.setVisible(w.PickupText, pickup ~= nil and not Hud.suppressed)
+        if pickup then
+            UI.setText(w.PickupText, pickup.text)
+            UI.setTextColor(w.PickupText, pickup.r, pickup.g, pickup.b, math.min(1, pickup.remaining / 0.4))
+        end
     end
 end
 

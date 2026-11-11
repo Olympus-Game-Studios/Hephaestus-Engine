@@ -6,6 +6,7 @@ local Registry = {
     health = {},
     interactables = {},
     hitZones = {},
+    pickups = {},
     noises = {},
     noiseCount = 0,
     dangers = {},
@@ -61,6 +62,7 @@ function Registry.ensureSession()
     Registry.gameOver = nil
     Registry.interactables = {}
     Registry.hitZones = {}
+    Registry.pickups = {}
     Registry.currentTarget = nil
     Registry.activeWeaponId = nil
     Registry.sessionOpen = true

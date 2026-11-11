@@ -185,6 +185,27 @@
         }
       },
       {
+        "type": "Text",
+        "id": "PickupText",
+        "properties": {
+          "text": "",
+          "visible": false,
+          "anchor": "BottomCenter",
+          "size": [720, 40],
+          "textAlignment": "Center",
+          "margin": [0, 0, 0, 168],
+          "zOrder": 2
+        },
+        "style": {
+          "fontSize": 26,
+          "fontBold": true,
+          "textColor": [1.0, 0.92, 0.4, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
         "type": "Image",
         "id": "DamageArrow1",
         "properties": {

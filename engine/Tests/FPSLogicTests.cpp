@@ -1108,6 +1108,24 @@ check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, 1, 0, 0, 6, head, 2.5
 check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, -1, 0, 0, 50, head, 2.5),
       "a shot fired away from the player is not heard")
 
+local Pickups = require("FPS.Pickups")
+local hurt = Pickups.plan("health", 50, { health = 70, maxHealth = 100 })
+check(hurt and hurt.health == 30 and Pickups.describe(hurt) == "+30 Health", "health heals only up to max")
+check(Pickups.plan("health", 50, { health = 100, maxHealth = 100 }) == nil, "health is left when already full")
+local rifle = { reserve = 100, maxReserve = 150, magazineSize = 30 }
+local pistol = { reserve = 48, maxReserve = 48, magazineSize = 12 }
+local ammo = Pickups.plan("ammo", 2, { weapons = { rifle, pistol }, activeWeapon = 1 })
+check(ammo and ammo.ammo[1] == 50 and ammo.ammo[2] == 0 and Pickups.describe(ammo, 1) == "+50 Ammo",
+      "ammo gives magazines to every weapon up to its starting reserve")
+check(Pickups.describe(ammo, 2) == "+50 Ammo", "the message falls back to the weapon that got the most")
+rifle.reserve = 150
+check(Pickups.plan("ammo", 2, { weapons = { rifle, pistol } }) == nil, "ammo is left when every weapon is full")
+local carried = { grenades = { frag = 4, smoke = 1 }, maxGrenades = { frag = 4, smoke = 4 } }
+local both = Pickups.plan("grenades", 1, carried)
+check(both and both.frag == nil and both.smoke == 1 and Pickups.describe(both) == "+1 Smoke",
+      "grenades top up whichever kind has room")
+check(Pickups.plan("frag", 1, carried) == nil, "a frag pickup is left when frags are full")
+
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";
     if (luaL_dostring(L, kCombatChecks) != LUA_OK) {
