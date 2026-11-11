@@ -372,6 +372,14 @@ bool QtViewportWindow::event(QEvent* event)
         }
         return true;
 
+    case QEvent::Close:
+        if (!parent()) {
+            emit closeRequested();
+            event->ignore();
+            return true;
+        }
+        return QWindow::event(event);
+
     case QEvent::ShortcutOverride:
         if (m_gameOwnsKeyboard) {
             event->accept();

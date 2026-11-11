@@ -108,6 +108,15 @@ public:
     bool AttachToViewport(QtViewportWindow* viewport);
 
     /**
+     * @brief Move rendering and game input to another window, such as a separate Play window; nullptr returns
+     * to the editor viewport. Applied at the start of the next frame (never mid-frame), then
+     * presentationTargetChanged is emitted. The window must stay alive until it is no longer the target.
+     */
+    void PresentTo(QtViewportWindow* window);
+    QtViewportWindow* PresentationTarget() const { return m_viewport; }
+    bool IsPresentingToPlayWindow() const { return m_viewport && m_viewport != m_editorViewport; }
+
+    /**
      * @brief Start the render loop timer.
      * 
      * Call this after AttachToViewport() succeeds.
@@ -352,6 +361,9 @@ signals:
      */
     void playStateChanged(bool playing, bool paused);
 
+    /** @brief Rendering moved to this window (the editor viewport, or a Play window). */
+    void presentationTargetChanged(QtViewportWindow* window);
+
 private slots:
     /**
      * @brief Called by QTimer to tick the engine.
@@ -361,6 +373,8 @@ private slots:
 private:
     bool createVulkanInstance();
     bool initializeVulkanDevice();
+    void applyPresentationTarget();
+    void connectViewport(QtViewportWindow* window);
     bool createSwapchain();
     void renderFrame();
     /** Applies GPU viewport pick once readback completes (see EngineFrameRenderer::TakeViewportPickResult). */
@@ -467,6 +481,9 @@ private:
 
     // Viewport connection
     QtViewportWindow* m_viewport = nullptr;
+    QtViewportWindow* m_editorViewport = nullptr;
+    QtViewportWindow* m_pendingPresentTarget = nullptr;
+    bool m_presentPending = false;
     NativeSurface m_currentSurface;
 
     // Render loop

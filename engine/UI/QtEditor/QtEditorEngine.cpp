@@ -402,17 +402,91 @@ bool QtEditorEngine::AttachToViewport(QtViewportWindow* viewport)
         return false;
     }
     
-    // Connect viewport signals
-    connect(viewport, &QtViewportWindow::viewportResized, this, &QtEditorEngine::OnViewportResized);
-    viewport->SetInputEventCallback([this](const InputEvent& event) {
-        OnViewportInput(event);
-    });
+    m_editorViewport = viewport;
+    connectViewport(viewport);
     
     m_state = EngineState::Running;
     emit engineInitialized(true);
     
     std::cout << "[QtEditorEngine] Attached to viewport, ready to render\n";
     return true;
+}
+
+void QtEditorEngine::connectViewport(QtViewportWindow* window)
+{
+    connect(window, &QtViewportWindow::viewportResized, this, &QtEditorEngine::OnViewportResized,
+            Qt::UniqueConnection);
+    window->SetInputEventCallback([this, window](const InputEvent& event) {
+        OnViewportInput(event);
+        // In a Play window there is no Qt overlay over the game, so the game UI gets the mouse from here.
+        if (window != m_editorViewport && IsRuntimeUICursorMode()) {
+            const float dpr = static_cast<float>(window->devicePixelRatio());
+            switch (event.type) {
+            case InputEvent::Type::MousePress:
+                ForwardOverlayMouseEvent(0, event.x * dpr, event.y * dpr, event.button);
+                break;
+            case InputEvent::Type::MouseRelease:
+                ForwardOverlayMouseEvent(1, event.x * dpr, event.y * dpr, event.button);
+                break;
+            case InputEvent::Type::MouseMove:
+                ForwardOverlayMouseEvent(2, event.x * dpr, event.y * dpr, event.button);
+                break;
+            default:
+                break;
+            }
+        }
+    });
+}
+
+void QtEditorEngine::PresentTo(QtViewportWindow* window)
+{
+    m_pendingPresentTarget = window;
+    m_presentPending = true;
+}
+
+void QtEditorEngine::applyPresentationTarget()
+{
+    QtViewportWindow* target = m_pendingPresentTarget ? m_pendingPresentTarget : m_editorViewport;
+    if (!target || target == m_viewport) {
+        m_presentPending = false;
+        emit presentationTargetChanged(m_viewport);
+        return;
+    }
+    if (!target->IsReadyForRendering()) {
+        return;
+    }
+    m_presentPending = false;
+    vkDeviceWaitIdle(m_device->device);
+
+    QtViewportWindow* previous = m_viewport;
+    if (previous) {
+        if (previous->IsCursorCaptured()) {
+            previous->ReleaseCursor();
+        }
+        previous->SetGameOwnsKeyboard(false);
+        previous->SetInputEventCallback({});
+        disconnect(previous, &QtViewportWindow::viewportResized, this, &QtEditorEngine::OnViewportResized);
+    }
+
+    // The swapchain must go before the surface it was made from.
+    m_swapchain->Cleanup();
+    NativeSurface surface = target->GetNativeSurface();
+    if (!m_device->AttachToSurface(surface)) {
+        std::cerr << "[QtEditorEngine] Could not present to the new window; staying in the previous one\n";
+        target = previous;
+        surface = previous->GetNativeSurface();
+        m_device->AttachToSurface(surface);
+    }
+    m_currentSurface = surface;
+    m_swapchain->surface = m_device->surface;
+    m_swapchain->RecreateFromNativeSurface(surface.width, surface.height);
+    m_frameRenderer->OnResize(surface.width, surface.height);
+    m_swapchainNeedsRecreation = false;
+    m_viewport = target;
+    connectViewport(target);
+    std::cout << "[QtEditorEngine] Presenting to " << (target == m_editorViewport ? "the editor viewport" : "a Play window")
+              << " (" << surface.width << "x" << surface.height << ")\n";
+    emit presentationTargetChanged(target);
 }
 
 bool QtEditorEngine::createSwapchain()
@@ -1813,6 +1887,10 @@ void QtEditorEngine::onTick()
     float dt = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
     
+    if (m_presentPending) {
+        applyPresentationTarget();
+    }
+
     // Handle pending swapchain recreation
     if (m_swapchainNeedsRecreation) {
         if (m_frameRenderer && m_frameRenderer->HasDeviceLost()) {
@@ -2185,6 +2263,11 @@ void QtEditorEngine::renderFrame()
         }
     }
     
+    // A Play window has no Qt overlay, so the game UI is drawn by the renderer, as in a packaged game.
+    if (IsPresentingToPlayWindow() && !m_playModeManager.IsEditor()) {
+        m_frameRenderer->SubmitHUICommands(GetRuntimeUIDrawCommands());
+    }
+
     // Render frame using shared renderer
     bool success = m_frameRenderer->RenderFrame(
         m_editorContext.GetActiveScene(), 

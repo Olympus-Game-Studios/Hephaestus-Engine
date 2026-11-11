@@ -40,6 +40,7 @@
 #include "BuildSettingsDialog.h"
 #include "../../PluginAPI/PluginFirstParty.h"
 #include <memory>
+#include <optional>
 #include <atomic>
 #include <filesystem>
 #include <unordered_set>
@@ -281,7 +282,11 @@ private slots:
     void onPackageAndRun();
     void onRunLastPackage();
     void onCleanPackage();
-    void startBuild(Hephaestus::Build::BuildAction action);
+    void startBuild(Hephaestus::Build::BuildAction action,
+                    std::optional<Hephaestus::Build::BuildConfiguration> quickRun = std::nullopt);
+    void onBuildAndRun();
+    void openPlayWindow();
+    void onPresentationTargetChanged(QtViewportWindow* target);
 
     // Engine callbacks
     void onViewportReady();
@@ -357,6 +362,9 @@ private:
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;
     QAction* m_stepAction = nullptr;
+    QAction* m_playInWindowAction = nullptr;
+    QAction* m_buildRunReleaseAction = nullptr;
+    QtViewportWindow* m_playWindow = nullptr;
     QAction* m_selectAction = nullptr;
     QAction* m_translateAction = nullptr;
     QAction* m_rotateAction = nullptr;

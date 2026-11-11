@@ -194,6 +194,9 @@ signals:
      */
     void viewportResized(uint32_t width, uint32_t height);
 
+    /** @brief The window's close button was pressed; the window stays open until its owner closes it. */
+    void closeRequested();
+
 protected:
     // QWindow event overrides
     void exposeEvent(QExposeEvent* event) override;
