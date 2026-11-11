@@ -12,6 +12,9 @@ local Registry = {
     noiseCount = 0,
     dangers = {},
     enemies = {},
+    combatants = {},
+    friendlyFire = true,
+    matchDirector = nil,
     flanker = nil,
     lastBlast = nil,
     liveGrenades = {},
@@ -53,6 +56,9 @@ function Registry.ensureSession()
     Registry.noiseCount = 0
     Registry.dangers = {}
     Registry.enemies = {}
+    Registry.combatants = {}
+    Registry.friendlyFire = true
+    Registry.matchDirector = nil
     Registry.flanker = nil
     Registry.lastBlast = nil
     Registry.liveGrenades = {}
@@ -80,10 +86,15 @@ function Registry.setPlayer(entity, row)
     if row then
         row.entity = entity
         row.key = entityKey(entity)
+        row.team = row.team or 1
+        Registry.combatants[row.key] = row
     end
 end
 
 function Registry.clearPlayer()
+    if Registry.player and Registry.player.key then
+        Registry.combatants[Registry.player.key] = nil
+    end
     Registry.player = nil
     Registry.currentTarget = nil
     Registry.sessionOpen = false
@@ -111,10 +122,15 @@ function Registry.removeCorpse(key)
     end
 end
 
-function Registry.reportNoise(x, y, z, radius, source)
+-- team is the team that made it (a player noise is the player's team); nil for explosions.
+function Registry.reportNoise(x, y, z, radius, source, team)
     Registry.noiseCount = Registry.noiseCount + 1
+    source = source or "player"
+    if team == nil and source == "player" and Registry.player then
+        team = Registry.player.team
+    end
     table.insert(Registry.noises, { id = Registry.noiseCount, x = x, y = y, z = z, radius = radius or 20,
-                                    source = source or "player" })
+                                    source = source, team = team })
     while #Registry.noises > 32 do
         table.remove(Registry.noises, 1)
     end
@@ -141,6 +157,21 @@ function Registry.clearDanger(entity)
     if key then
         Registry.dangers[key] = nil
     end
+end
+
+-- Everyone who fights, by key: the player's row and each soldier's, with entity, key, team, name, eyeHeight,
+-- stance and speed. The combatant an entity belongs to, looking through hit zones to their owner, or nil.
+function Registry.combatantOf(entity)
+    local key = entityKey(entity)
+    local zone = key and Registry.hitZones[key]
+    if zone and zone.owner then
+        key = entityKey(zone.owner)
+    end
+    return key and Registry.combatants[key] or nil
+end
+
+function Registry.sameTeam(a, b)
+    return a ~= nil and b ~= nil and a.team ~= nil and a.team == b.team
 end
 
 function Registry.activeWeapon()

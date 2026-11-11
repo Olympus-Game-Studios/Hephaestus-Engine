@@ -10,6 +10,7 @@ Expose.number("vy", 0)
 Expose.number("vz", 0)
 Expose.number("spin", 10)
 Expose.bool("thrownByPlayer", false)
+Expose.string("thrownBy", "") -- the key of the soldier that threw it, who is credited with its kills
 Expose.number("damage", 150)
 Expose.number("radius", 7)
 Expose.number("innerRadius", 2)
@@ -72,7 +73,8 @@ local function detonate()
         damage = damage,
         radius = radius,
         innerRadius = innerRadius,
-        instigator = thrownByPlayer and Registry.player and Registry.player.entity or nil,
+        instigator = thrownByPlayer and Registry.player and Registry.player.entity
+            or (Registry.combatants[thrownBy] and Registry.combatants[thrownBy].entity) or nil,
         byPlayer = thrownByPlayer,
     })
     shakePlayer(p)

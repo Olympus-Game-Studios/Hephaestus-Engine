@@ -463,8 +463,12 @@ local function applyHit(row, hit, owner)
     if Health.isDead(target) then
         return
     end
+    local victim, shooter = Registry.combatantOf(target), Registry.combatantOf(owner)
+    if not Registry.friendlyFire and victim ~= shooter and Registry.sameTeam(victim, shooter) then
+        return
+    end
     local died = Health.applyDamage(target, amount, owner)
-    target:Call("onHit", amount, zone, hit.distance or 0)
+    target:Call("onHit", amount, zone, hit.distance or 0, owner)
     target:Call("onHealthChanged", Health.getHealth(target), Health.getMaxHealth(target))
     if Registry.player then
         Registry.player.hitEvent = died and "kill" or (zone == "head" and "head" or "hit")

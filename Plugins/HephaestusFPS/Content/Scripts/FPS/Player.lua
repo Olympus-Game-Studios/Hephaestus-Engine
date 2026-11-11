@@ -64,6 +64,7 @@ Expose.number("fieldOfView", 80)
 Expose.number("fullSpreadMoveSpeed", 5.0)
 Expose.number("interactDistance", 2.5)
 Expose.number("maxHealth", 100)
+Expose.integer("team", 1) -- soldiers on another team fight the player
 Expose.bool("hudEnabled", true)
 Expose.bool("showCrosshair", true)
 Expose.bool("showHealth", true)
@@ -514,6 +515,8 @@ function onAwake()
     commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
     Health.attach(this, { maxHealth = maxHealth })
     Registry.setPlayer(this, {
+        team = team,
+        name = "You",
         yaw = 0,
         pitch = 0,
         lookEnabled = true,
@@ -539,8 +542,12 @@ function onAwake()
     Hud.mount(hudDocument, hudEnabled)
 end
 
--- After death or a won game: wait restartDelaySeconds, then offer a restart on Jump (Scene.reload).
+-- After death or a won game: wait restartDelaySeconds, then offer a restart on Jump (Scene.reload). A match
+-- (Registry.matchDirector) ends with its own screen instead.
 local function updateGameEnd(dt)
+    if Registry.matchDirector then
+        return
+    end
     if not endedFor and Registry.gameOver then
         endedFor = 0
     end
@@ -975,12 +982,41 @@ function setHudSuppressed(suppressed)
     Hud.setSuppressed(suppressed)
 end
 
-function onDeath()
+function onDeath(instigator)
     Player.setInputEnabled(false)
     Hud.setSuppressed(true)
-    Registry.gameOver = Registry.gameOver or "dead"
     Hud.setDeathFade(true)
     Hud.showBanner("You died", "", nil)
+    -- In a match the player comes back (see respawn) instead of the game ending.
+    local director = Registry.matchDirector
+    if director and director:IsValid() then
+        director:Call("onCombatantDeath", this, instigator)
+        return
+    end
+    Registry.gameOver = Registry.gameOver or "dead"
+end
+
+-- Brings the player back for a match: full health, ammo and grenades, standing at (x, y, z) facing facingYaw.
+function respawn(x, y, z, facingYaw)
+    Health.revive(this)
+    Character.setProne(false)
+    Character.setCrouched(false)
+    Character.teleport(x, y, z)
+    yaw, pitch = facingYaw or yaw, 0
+    slide, mantle, throw, proneWanted, tactical, sprinting = nil, nil, nil, false, false, false
+    grenades.frag = math.max(0, math.floor(fragGrenades))
+    grenades.smoke = math.max(0, math.floor(smokeGrenades))
+    for _, row in pairs(Registry.weapons) do
+        row.reserve = row.maxReserve or row.reserve
+        row.reloadRemaining = 0
+        Logic.fillWeapon(row)
+    end
+    lastKnownHealth = Health.getHealth(this)
+    Hud.setDeathFade(false)
+    Hud.setSuppressed(false)
+    Hud.clearBanner()
+    Player.setInputEnabled(true)
+    Player.setLookEnabled(true)
 end
 
 function onDestroy()

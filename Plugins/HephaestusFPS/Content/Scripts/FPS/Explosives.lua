@@ -45,26 +45,29 @@ local function exposed(x, y, z, tx, ty, tz, distance, row)
     return not hit or not hit.entity or belongsTo(hit.entity, row) or (hit.distance or 0) >= distance - 0.25
 end
 
--- Damages every living entity with health in range. byPlayer shows the player's hit and kill markers.
--- Returns how many targets were damaged.
+-- Damages every living entity with health in range, except the instigator's teammates when friendly fire is off.
+-- byPlayer shows the player's hit and kill markers. Returns how many targets were damaged.
 function Explosives.applyBlast(x, y, z, options)
     local radius = options.radius or 6
     local inner = options.innerRadius or 1.5
     local damaged = 0
+    local by = options.instigator and Registry.combatantOf(options.instigator)
     local rows = {}
     for _, row in pairs(Registry.health) do
         rows[#rows + 1] = row
     end
     for _, row in ipairs(rows) do
         local tx, ty, tz = targetPoint(row)
-        if tx and not row.dead then
+        local victim = Registry.combatants[row.key]
+        local spared = not Registry.friendlyFire and victim ~= by and Registry.sameTeam(victim, by)
+        if tx and not row.dead and not spared then
             local distance = math.sqrt((tx - x) ^ 2 + (ty - y) ^ 2 + (tz - z) ^ 2)
             local scale = Explosives.falloff(distance, inner, radius)
             if scale > 0 and exposed(x, y, z, tx, ty, tz, distance, row) then
                 local amount = (options.damage or 100) * scale
                 local target = row.entity
                 local died = Health.applyDamage(target, amount, options.instigator)
-                target:Call("onHit", amount, "blast", distance)
+                target:Call("onHit", amount, "blast", distance, options.instigator)
                 target:Call("onHealthChanged", Health.getHealth(target), Health.getMaxHealth(target))
                 damaged = damaged + 1
                 local player = Registry.player

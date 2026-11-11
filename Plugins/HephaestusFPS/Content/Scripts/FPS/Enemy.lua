@@ -1,6 +1,7 @@
--- An enemy soldier. It patrols, notices the player by sight or sound, fights with burst fire from cover it finds
--- on the navmesh, searches where it last saw the player, gets out of the way of live grenades and warns nearby
--- allies. How well it does all of this comes from FPS.AI.Difficulty, so a settings menu can change it.
+-- A soldier. It patrols, notices anyone on the other team (the player is on team 1) by sight or sound, fights with
+-- burst fire from cover it finds on the navmesh, searches where it last saw them, gets out of the way of live
+-- grenades and warns nearby teammates. How well it does all of this comes from FPS.AI.Difficulty, so a settings
+-- menu can change it.
 -- Needs a Character Controller, a Character (for animation) and hit zone children (FPS.HitZone with no owner).
 local Registry = require("FPS.Registry")
 local Health = require("FPS.Health")
@@ -16,6 +17,10 @@ local Smoke = require("FPS.AI.Smoke")
 local Tracers = require("FPS.Tracers")
 
 Expose.number("maxHealth", 100)
+Expose.integer("team", 2) -- soldiers never shoot their own team; the player is on team 1
+Expose.string("displayName", "") -- the name the kill feed and scoreboard show
+Expose.bool("huntWhenIdle", false) -- instead of patrolling, head for where the other team is
+Expose.string("hideOnDeath", "") -- names of children (";" between them) removed when it dies, such as a team marker
 Expose.string("difficulty", "")
 Expose.string("skillOverrides", "")
 Expose.number("patrolRadius", 8)
@@ -97,6 +102,9 @@ local tacticsTimer = 0
 local ragdollPending = false
 local deathZone = nil
 local children = {}
+local selfRow = nil
+local target = nil -- the combatant row this soldier is fighting
+local killer = nil
 
 local function random()
     rng = (rng * 1103515245 + 12345) % 2147483648
@@ -121,22 +129,46 @@ local function position()
     return Transform.getPosition()
 end
 
-local function player()
-    local row = Registry.player
-    if not row or not row.entity or not row.entity:IsValid() or Health.isDead(row.entity) then
-        return nil
-    end
-    return row
+local function alive(row)
+    return row ~= nil and row.entity ~= nil and row.entity:IsValid() and not Health.isDead(row.entity)
 end
 
-local function playerFeet(row)
+local function hostile(row)
+    return row ~= nil and row.key ~= selfKey and not Registry.sameTeam(row, selfRow) and alive(row)
+end
+
+-- Who this soldier is fighting, while they are alive.
+local function opponent()
+    if hostile(target) then
+        return target
+    end
+    target = nil
+    return nil
+end
+
+local function feetOf(row)
     local transform = row.entity:GetTransform()
     return transform and transform:GetWorldPosition()
 end
 
-local function isPlayer(entity)
-    local row = Registry.player
-    return row ~= nil and Registry.key(entity) == row.key
+local function isTarget(entity)
+    local row = Registry.combatantOf(entity)
+    return row ~= nil and target ~= nil and row.key == target.key
+end
+
+local function nearestHostile()
+    local p = Transform.getPosition()
+    local best, bestDistance = nil, math.huge
+    for _, row in pairs(Registry.combatants) do
+        if hostile(row) then
+            local feet = feetOf(row)
+            local d = feet and (feet.x - p.x) ^ 2 + (feet.z - p.z) ^ 2
+            if d and d < bestDistance then
+                best, bestDistance = row, d
+            end
+        end
+    end
+    return best
 end
 
 local function eye()
@@ -160,7 +192,7 @@ local function refreshIgnore()
 end
 
 local function blocked(from, to)
-    return not Perception.clearLine(from, to, ignore, isPlayer)
+    return not Perception.clearLine(from, to, ignore, isTarget)
 end
 
 local function nearestNav(p)
@@ -186,7 +218,7 @@ end
 
 -- aimPoint (optional) shoots there instead of at the player, with extraSpread degrees more error: blind fire.
 local function fireShot(row, aimPoint, extraSpread)
-    local feet = playerFeet(row)
+    local feet = feetOf(row)
     if not feet and not aimPoint then
         return
     end
@@ -213,28 +245,40 @@ local function fireShot(row, aimPoint, extraSpread)
         Tracers.spawn(tracerPrefab, barrel.x, barrel.y, barrel.z, tx / tracerLength, ty / tracerLength,
                       tz / tracerLength, { speed = tracerSpeed, maxDistance = tracerLength })
     end
-    local hitPlayer = hit and hit.entity and isPlayer(hit.entity)
-    local hitSurface = hit and hit.entity and not hitPlayer and not Health.get(hit.entity)
+    local hitRow = hit and hit.entity and Registry.combatantOf(hit.entity)
+    local friendly = hitRow ~= nil and (hitRow.key == selfKey or Registry.sameTeam(hitRow, selfRow))
+    local playerRow = Registry.player
+    local hitPlayer = hitRow ~= nil and not friendly and hitRow == playerRow
+    local hitSurface = hit and hit.entity and not hitRow and not Health.get(hit.entity)
         and not Registry.hitZones[Registry.key(hit.entity)]
-    row.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, reach, hitPlayer and true or false,
-                    hitSurface and true or false)
+    if alive(playerRow) then
+        playerRow.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, reach,
+                              hitPlayer and true or false, hitSurface and true or false)
+    end
+    local amount = damage * skill.damageScale
     if hitPlayer then
-        local amount = damage * skill.damageScale
         Registry.notePlayerHit(barrel.x, barrel.y, barrel.z, Registry.clock or 0)
-        Health.applyDamage(row.entity, amount, this)
-        row.entity:Call("onHealthChanged", Health.getHealth(row.entity), Health.getMaxHealth(row.entity))
+        Health.applyDamage(playerRow.entity, amount, this)
+        playerRow.entity:Call("onHealthChanged", Health.getHealth(playerRow.entity),
+                              Health.getMaxHealth(playerRow.entity))
+    elseif hitRow and not friendly then
+        local zoneRow = Registry.hitZones[Registry.key(hit.entity)]
+        if not Health.isDead(hitRow.entity) then
+            Health.applyDamage(hitRow.entity, amount, this)
+            hitRow.entity:Call("onHit", amount, zoneRow and zoneRow.zone or "body", reach, this)
+        end
     elseif hitSurface then
         Impacts.surfaceEffect(hit, false)
     end
     if debugAI then
         engine_log(string.format("[FPS.Enemy] %s shot %s", this:GetName(),
-                                 hit and hit.entity and isPlayer(hit.entity) and "hit player" or "missed"))
+                                 hit and hit.entity and isTarget(hit.entity) and "hit player" or "missed"))
     end
     if fireSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
         Audio.play(fireSound, { volume = fireVolume, bus = "sfx", priority = 2, pitchJitter = 0.04,
                                 position = muzzle, minDistance = 3, maxDistance = 150 })
     end
-    Registry.reportNoise(muzzle.x, muzzle.y, muzzle.z, 40, "enemy")
+    Registry.reportNoise(muzzle.x, muzzle.y, muzzle.z, 40, "enemy", team)
 end
 
 -- Bursts at the player while canShoot, after the reaction delay; reloads when the magazine is empty. aimPoint and
@@ -285,29 +329,57 @@ local function alertAllies()
         return
     end
     local p = position()
-    for key, ally in pairs(Registry.enemies) do
-        if key ~= selfKey and ally:IsValid() then
-            local transform = ally:GetTransform()
-            local q = transform and transform:GetWorldPosition()
+    for key, ally in pairs(Registry.combatants) do
+        if key ~= selfKey and ally.bot and Registry.sameTeam(ally, selfRow) and alive(ally) then
+            local q = feetOf(ally)
             if q and (q.x - p.x) ^ 2 + (q.z - p.z) ^ 2 <= skill.allyAlertRadius ^ 2 then
-                ally:Call("onAllyAlert", lastKnown.x, lastKnown.y, lastKnown.z)
+                ally.entity:Call("onAllyAlert", lastKnown.x, lastKnown.y, lastKnown.z)
             end
         end
     end
 end
 
+-- Whether row is in sight, how far it is and where its feet are.
+local function sight(row)
+    local feet = feetOf(row)
+    if not feet then
+        return false
+    end
+    local h = row.eyeHeight or 1.6
+    local head = { x = feet.x, y = feet.y + h, z = feet.z }
+    local chest = { x = feet.x, y = feet.y + h * 0.75, z = feet.z }
+    local fx, fz = facing()
+    local seen, distance = Perception.canSee(eye(), fx, fz, head, chest, skill, ignore, function(entity)
+        local owner = Registry.combatantOf(entity)
+        return owner ~= nil and owner.key == row.key
+    end)
+    return seen, distance, feet
+end
+
+-- Keeps fighting the current opponent while it is in sight, otherwise turns to the nearest other one in sight.
 local function perceive(interval)
-    local row = player()
+    local row = opponent()
     local wasAlert = awareness >= 1
     visible = false
+    local seen, distance, feet = false, nil, nil
     if row then
-        local feet = playerFeet(row)
+        seen, distance, feet = sight(row)
+    end
+    if not seen then
+        for _, other in pairs(Registry.combatants) do
+            if other ~= row and hostile(other) then
+                local s, d, f = sight(other)
+                if s and (not seen or d < distance) then
+                    row, seen, distance, feet = other, s, d, f
+                end
+            end
+        end
+    end
+    if seen then
+        target = row
+    end
+    do
         if feet then
-            local h = row.eyeHeight or 1.6
-            local head = { x = feet.x, y = feet.y + h, z = feet.z }
-            local chest = { x = feet.x, y = feet.y + h * 0.75, z = feet.z }
-            local fx, fz = facing()
-            local seen, distance = Perception.canSee(eye(), fx, fz, head, chest, skill, ignore, isPlayer)
             visible = seen
             if seen then
                 awareness = math.min(1, awareness + Perception.awarenessRate(distance, skill, row.stance,
@@ -339,7 +411,7 @@ local function perceive(interval)
     local noise
     noise, lastHeardId = Perception.hear(Registry.noises or {}, lastHeardId, p.x, p.y, p.z, skill.hearingScale)
     -- An alert enemy treats a player noise as a fresh sighting; a calm one goes to look at any noise.
-    if noise and awareness >= 1 and noise.source == "player" and not visible then
+    if noise and awareness >= 1 and noise.team ~= nil and noise.team ~= team and not visible then
         lastKnown = Nav.closestPoint(noise) or lastKnown
     elseif noise and awareness < 1 then
         heardNoise = { x = noise.x, y = noise.y, z = noise.z }
@@ -382,7 +454,7 @@ local function throwGrenade()
     end
     Scene.instantiate(fragGrenadePrefab, {
         position = from,
-        vars = { vx = vx, vy = vy, vz = vz, damage = grenadeDamage * skill.grenadeDamageScale },
+        vars = { vx = vx, vy = vy, vz = vz, damage = grenadeDamage * skill.grenadeDamageScale, thrownBy = selfKey },
     })
     grenadesLeft = grenadesLeft - 1
     grenadeCooldown = skill.grenadeCooldownSeconds
@@ -426,6 +498,19 @@ end
 
 -- States -------------------------------------------------------------------------------------------------------
 local function nextPatrolPoint()
+    if huntWhenIdle then
+        local spots = {}
+        for _, row in pairs(Registry.combatants) do
+            local feet = hostile(row) and feetOf(row)
+            if feet then
+                spots[#spots + 1] = feet
+            end
+        end
+        if #spots > 0 then
+            local feet = spots[1 + math.floor(random() * #spots)]
+            return Nav.randomPoint(feet, 8) or Nav.closestPoint(feet)
+        end
+    end
     if #patrolList > 0 then
         patrolIndex = patrolIndex % #patrolList + 1
         return patrolList[patrolIndex]
@@ -531,7 +616,7 @@ states.combat = {
         if danger then
             return "evade"
         end
-        local row = player()
+        local row = opponent()
         if not row then
             awareness = 0
             return "patrol"
@@ -604,7 +689,7 @@ states.cover = {
         if danger then
             return "evade"
         end
-        local row = player()
+        local row = opponent()
         if not row then
             return "patrol"
         end
@@ -667,7 +752,7 @@ states.flank = {
         if danger then
             return "evade"
         end
-        local row = player()
+        local row = opponent()
         if not row then
             return "patrol"
         end
@@ -783,6 +868,10 @@ function onAwake()
     Registry.ensureSession()
     selfKey = Registry.key(this)
     Registry.enemies[selfKey] = this
+    selfRow = { entity = this, key = selfKey, team = team, bot = true, eyeHeight = eyeHeight, stance = "standing",
+                speed = 0, name = displayName ~= "" and displayName or this:GetName() }
+    Registry.combatants[selfKey] = selfRow
+    target, killer = nil, nil
     Health.attach(this, { maxHealth = maxHealth })
     skill = Difficulty.resolve(difficulty, parseOverrides(skillOverrides))
     rng = (selfKey or 1) * 7919 % 2147483647 + 1
@@ -809,8 +898,8 @@ local function fall()
     local from = nil
     if deathZone == "blast" and Registry.lastBlast then
         from = Registry.lastBlast
-    elseif Registry.player and Registry.player.entity and Registry.player.entity:IsValid() then
-        local transform = Registry.player.entity:GetTransform()
+    elseif killer and killer:IsValid() then
+        local transform = killer:GetTransform()
         from = transform and transform:GetWorldPosition()
     end
     local dx, dz = 0, 0
@@ -843,7 +932,11 @@ local function fall()
     end
     for _, child in ipairs(children) do
         if child:IsValid() then
-            child:Call("dropWeapon", dx * 2, 1.5, dz * 2)
+            if string.find(";" .. hideOnDeath .. ";", ";" .. child:GetName() .. ";", 1, true) then
+                Scene.destroy(child)
+            else
+                child:Call("dropWeapon", dx * 2, 1.5, dz * 2)
+            end
         end
     end
 end
@@ -873,10 +966,11 @@ function onUpdate(dt)
                 children[#children + 1] = entity
             end
         end
-        local row = huntOnSpawn and player()
-        local feet = row and playerFeet(row)
+        local row = huntOnSpawn and (opponent() or nearestHostile())
+        local feet = row and feetOf(row)
         if feet then
-            -- Sent in to find the player: start out searching where they are.
+            target = row
+            -- Sent in to find the other team: start out searching where they are.
             lastKnown = { x = feet.x, y = feet.y, z = feet.z }
             awareness = math.max(awareness, 0.6)
             brain = Brain.new(this, states, "investigate", lastKnown, true)
@@ -923,11 +1017,12 @@ function onUpdate(dt)
 
     local velocity = Character.getVelocity() or {}
     local speed = math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2)
+    selfRow.speed = speed
     playClip(speed < 0.4 and idleClip or (speed < 3.2 and walkClip or runClip))
     updateLegs(velocity.x or 0, velocity.z or 0, speed)
 end
 
-function onHit(amount, zone, distance)
+function onHit(amount, zone, distance, attacker)
     if debugAI then
         engine_log(string.format("[FPS.Enemy] %s hit in the %s for %.0f", this:GetName(), tostring(zone), amount))
     end
@@ -937,9 +1032,13 @@ function onHit(amount, zone, distance)
         end
         return
     end
-    local row = player()
+    local by = attacker and Registry.combatantOf(attacker)
+    if hostile(by) then
+        target = by
+    end
+    local row = opponent()
     if row then
-        local feet = playerFeet(row)
+        local feet = feetOf(row)
         if feet then
             lastKnown = { x = feet.x, y = feet.y, z = feet.z }
         end
@@ -965,8 +1064,14 @@ function onAllyAlert(x, y, z)
     end
 end
 
-function onDeath()
+function onDeath(instigator)
     dead = true
+    killer = instigator
+    Registry.combatants[selfKey] = nil
+    local director = Registry.matchDirector
+    if director and director:IsValid() then
+        director:Call("onCombatantDeath", this, instigator)
+    end
     if debugAI then
         engine_log("[FPS.Enemy] " .. this:GetName() .. " died")
     end
@@ -992,6 +1097,7 @@ function onDestroy()
         engine_log("[FPS.Enemy] " .. tostring(selfKey) .. " removed")
     end
     Registry.enemies[selfKey] = nil
+    Registry.combatants[selfKey] = nil
     Health.detach(this)
 end
 

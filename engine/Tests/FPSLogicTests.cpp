@@ -1126,6 +1126,50 @@ check(both and both.frag == nil and both.smoke == 1 and Pickups.describe(both) =
       "grenades top up whichever kind has room")
 check(Pickups.plan("frag", 1, carried) == nil, "a frag pickup is left when frags are full")
 
+local Match = require("FPS.Match")
+local match = Match.new({ scoreLimit = 3, timeLimitSeconds = 60, feedSize = 2 })
+Match.join(match, "you", "You", 1)
+Match.join(match, "ally", "Hale", 1)
+Match.join(match, "foe", "Kane", 2)
+local entry = Match.kill(match, "foe", "you")
+check(entry and entry.killer == "You" and entry.victim == "Kane" and entry.killerTeam == 1 and entry.victimTeam == 2,
+      "a kill names both sides and their teams")
+check(match.scores[1] == 1 and match.players.you.kills == 1 and match.players.foe.deaths == 1,
+      "a kill scores for the killer's team")
+entry = Match.kill(match, "ally", "you")
+check(match.scores[1] == 1 and match.players.you.kills == 1 and match.players.ally.deaths == 1 and entry.killer == nil,
+      "killing a teammate counts a death but no kill or score")
+Match.kill(match, "you", nil)
+check(match.scores[2] == 0 and match.players.you.deaths == 1, "a death no one caused scores nothing")
+check(#match.feed == 2 and match.feed[1].victim == "Hale" and match.feed[2].victim == "You",
+      "the kill feed keeps the newest entries")
+Match.kill(match, "foe", "ally")
+check(Match.kill(match, "foe", "you") ~= nil and match.winner == 1 and match.scores[1] == 3,
+      "reaching the score limit wins")
+check(Match.kill(match, "foe", "you") == nil and match.scores[1] == 3, "nothing counts after the match is over")
+local standings = Match.standings(match, 1)
+check(standings[1].id == "you" and standings[2].id == "ally", "standings put the most kills first")
+
+local timed = Match.new({ scoreLimit = 50, timeLimitSeconds = 10 })
+Match.join(timed, "a", "A", 1)
+Match.join(timed, "b", "B", 2)
+check(Match.clock(timed) == "0:10" and Match.step(timed, 4.5) == nil and Match.clock(timed) == "0:06",
+      "the clock counts down in whole seconds")
+check(Match.step(timed, 6) == "draw", "level scores when the time runs out are a draw")
+local ahead = Match.new({ scoreLimit = 50, timeLimitSeconds = 10 })
+Match.join(ahead, "a", "A", 1)
+Match.join(ahead, "b", "B", 2)
+Match.kill(ahead, "a", "b")
+check(Match.step(ahead, 11) == 2, "the team ahead when the time runs out wins")
+check(#Match.recentFeed(ahead, 5) == 0 and #Match.recentFeed(ahead, 20) == 1, "old kills leave the feed")
+
+local points = { { x = 0, z = 0 }, { x = 30, z = 0 }, { x = 60, z = 0 } }
+local spot = Match.pickSpawn(points, { { x = 55, z = 0 } }, 20, function() return 0.99 end)
+check(spot == points[2], "spawns are picked away from the enemy")
+check(Match.pickSpawn(points, { { x = 0, z = 0 }, { x = 60, z = 0 } }, 40, function() return 0 end) == points[2],
+      "with nowhere far enough, the spawn furthest from the nearest enemy is used")
+check(Match.pickSpawn({}, {}, 10, function() return 0 end) == nil, "no spawn points gives no spawn")
+
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";
     if (luaL_dostring(L, kCombatChecks) != LUA_OK) {
