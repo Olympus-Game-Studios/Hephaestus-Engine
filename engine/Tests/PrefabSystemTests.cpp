@@ -78,6 +78,7 @@ bool BuildLampHierarchy(Scene& scene, Entity& outRoot, Entity& outShade) {
     auto& mesh = outShade.AddComponent<MeshRendererComponent>();
     mesh.meshAssetPath = "assets/meshes/cube.mesh";
     mesh.appliedMaterialPaths = { "assets/materials/Lamp.hematerial" };
+    mesh.castShadows = false;
     auto& material = outShade.AddComponent<MaterialComponent>();
     material.albedo = Vec3(0.8f, 0.6f, 0.2f);
     auto& collider = outShade.AddComponent<MeshColliderComponent>();
@@ -219,6 +220,11 @@ bool TestSceneRoundtripAndTransforms(const fs::path& outDir) {
     ok &= Check(PrefabOverrideSystem::IsPropertyOverridden(inst, inst.rootNodeId, "Light", "intensity"),
                 "light intensity override recorded");
 
+    Entity plain = scene.CreateEntity("PlainNoShadow");
+    plain.AddComponent<MeshRendererComponent>().castShadows = false;
+    Entity plainDefault = scene.CreateEntity("PlainShadow");
+    plainDefault.AddComponent<MeshRendererComponent>();
+
     PrefabOverrideSystem::SyncAllInstances(scene);
     const fs::path scenePath = outDir / "LampScene.hpscene";
     SceneSerializer serializer(scene);
@@ -254,12 +260,20 @@ bool TestSceneRoundtripAndTransforms(const fs::path& outDir) {
         if (loadedShade) {
             ok &= Check(Near(loadedShade.GetComponent<TransformComponent>().position.y, 3.5f),
                         "child transform override survived reload");
+            ok &= Check(!loadedShade.GetComponent<MeshRendererComponent>().castShadows,
+                        "prefab mesh castShadows off survived reload");
             auto glow = loadedShade.GetComponent<LuaScriptComponent>().variables.find("glow");
             ok &= Check(glow != loadedShade.GetComponent<LuaScriptComponent>().variables.end() &&
                         glow->second.IsNumber() && Near(static_cast<float>(*glow->second.AsNumber()), 4.0f),
                         "lua override survived reload");
         }
     }
+    Entity loadedPlain = FindByTag(loaded, "PlainNoShadow");
+    Entity loadedPlainDefault = FindByTag(loaded, "PlainShadow");
+    ok &= Check(loadedPlain && !loadedPlain.GetComponent<MeshRendererComponent>().castShadows,
+                "scene mesh castShadows off survived reload");
+    ok &= Check(loadedPlainDefault && loadedPlainDefault.GetComponent<MeshRendererComponent>().castShadows,
+                "scene mesh castShadows defaults on");
     return ok;
 }
 

@@ -67,6 +67,9 @@ void CaptureMeshRenderer(const MeshRendererComponent& mesh, JsonValue& data) {
     if (mesh.viewModel) {
         data.objectValue["viewModel"] = MakeBool(true);
     }
+    if (!mesh.castShadows) {
+        data.objectValue["castShadows"] = MakeBool(false);
+    }
     data.objectValue["showHiddenOutline"] = MakeBool(mesh.showHiddenOutline);
     if (!mesh.meshAssetPath.empty()) {
         data.objectValue["meshSource"] =
@@ -98,6 +101,9 @@ void ApplyMeshRenderer(MeshRendererComponent& mesh, const JsonValue& data) {
     }
     if (const JsonValue* viewModelValue = data.Find("viewModel")) {
         mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
+    }
+    if (const JsonValue* castShadowsValue = data.Find("castShadows")) {
+        mesh.castShadows = ParseBoolLike(*castShadowsValue, mesh.castShadows);
     }
     if (const JsonValue* showHiddenOutlineValue = data.Find("showHiddenOutline")) {
         mesh.showHiddenOutline = ParseBoolLike(*showHiddenOutlineValue, mesh.showHiddenOutline);

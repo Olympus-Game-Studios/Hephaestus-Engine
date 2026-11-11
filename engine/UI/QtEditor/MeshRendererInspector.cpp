@@ -152,6 +152,10 @@ void MeshRendererInspector::buildUI()
         "so it never clips into walls. It casts no shadows."));
     form->addRow(QString(), m_viewModelCheck);
 
+    m_castShadowsCheck = new QCheckBox(tr("Cast Shadows"));
+    m_castShadowsCheck->setToolTip(tr("Off keeps this mesh out of shadow maps, such as a first-person body."));
+    form->addRow(QString(), m_castShadowsCheck);
+
     // Backface Culling
     m_backfaceCullCheck = new QCheckBox(tr("Backface Culling"));
     form->addRow(QString(), m_backfaceCullCheck);
@@ -218,6 +222,10 @@ void MeshRendererInspector::connectSignals()
         EndEdit();
     });
     connect(m_viewModelCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_castShadowsCheck, &QCheckBox::toggled, this, [this](bool) {
         applyToComponent();
         EndEdit();
     });
@@ -319,13 +327,14 @@ bool MeshRendererInspector::eventFilter(QObject* watched, QEvent* event)
 void MeshRendererInspector::Refresh()
 {
     EndEdit();
-    MixedBool visible, outline, hideInGame, viewModel, cull;
+    MixedBool visible, outline, hideInGame, viewModel, castShadows, cull;
     MixedString meshPath;
     VisitTargets<MeshRendererComponent>([&](const MeshRendererComponent& mr, entt::entity) {
         AccumulateBool(visible, mr.visible);
         AccumulateBool(outline, mr.showHiddenOutline);
         AccumulateBool(hideInGame, mr.hideInGame);
         AccumulateBool(viewModel, mr.viewModel);
+        AccumulateBool(castShadows, mr.castShadows);
         AccumulateBool(cull, mr.backfaceCulling);
         AccumulateString(meshPath, mr.meshAssetPath);
     });
@@ -338,6 +347,7 @@ void MeshRendererInspector::Refresh()
     m_showHiddenOutlineCheck->setVisible(!visible.mixed && !visible.value);
     SetCheckFromMixed(m_hideInGameCheck, hideInGame);
     SetCheckFromMixed(m_viewModelCheck, viewModel);
+    SetCheckFromMixed(m_castShadowsCheck, castShadows);
     SetCheckFromMixed(m_backfaceCullCheck, cull);
     if (meshPath.mixed) {
         m_meshPathEdit->setPath(QString(), true, false);
@@ -605,6 +615,9 @@ void MeshRendererInspector::applyToComponent()
     if (TryReadCheck(m_viewModelCheck, value)) {
         ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.viewModel = value; });
     }
+    if (TryReadCheck(m_castShadowsCheck, value)) {
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.castShadows = value; });
+    }
     if (TryReadCheck(m_backfaceCullCheck, value)) {
         ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.backfaceCulling = value; });
     }
@@ -620,6 +633,7 @@ void MeshRendererInspector::blockAllSignals(bool block)
     m_showHiddenOutlineCheck->blockSignals(block);
     m_hideInGameCheck->blockSignals(block);
     m_viewModelCheck->blockSignals(block);
+    m_castShadowsCheck->blockSignals(block);
     m_backfaceCullCheck->blockSignals(block);
 }
 

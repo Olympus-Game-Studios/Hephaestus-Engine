@@ -909,6 +909,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             if (mesh->viewModel) {
                 oss << "          \"viewModel\": true,\n";
             }
+            if (!mesh->castShadows) {
+                oss << "          \"castShadows\": false,\n";
+            }
             oss << "          \"showHiddenOutline\": " << (mesh->showHiddenOutline ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";
             if (mesh->HasValidMesh()) {
@@ -1384,6 +1387,9 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* viewModelValue = meshObj->Find("viewModel")) {
                 mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
+            }
+            if (const JsonValue* castShadowsValue = meshObj->Find("castShadows")) {
+                mesh.castShadows = ParseBoolLike(*castShadowsValue, mesh.castShadows);
             }
             if (const JsonValue* showHiddenOutlineValue = meshObj->Find("showHiddenOutline")) {
                 mesh.showHiddenOutline = ParseBoolLike(*showHiddenOutlineValue, mesh.showHiddenOutline);
@@ -2540,6 +2546,9 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
             if (mesh->viewModel) {
                 oss << "          \"viewModel\": true,\n";
+            }
+            if (!mesh->castShadows) {
+                oss << "          \"castShadows\": false,\n";
             }
             oss << "          \"showHiddenOutline\": " << (mesh->showHiddenOutline ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";

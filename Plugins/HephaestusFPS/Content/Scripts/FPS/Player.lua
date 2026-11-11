@@ -54,6 +54,15 @@ Expose.number("slideCooldown", 0.6)
 Expose.number("slideSteer", 1.5)
 Expose.number("slideFovBoost", 6)
 Expose.number("slideRollDegrees", 4)
+-- The player's own legs, seen while sliding: a character prefab with FPS/SlideLegs.lua ("" for none) and where it
+-- sits relative to the player's feet and facing.
+Expose.string("slideLegsPrefab", "")
+Expose.number("slideLegsForward", -0.35)
+Expose.number("slideLegsRight", -0.12)
+Expose.number("slideLegsHeight", -0.55)
+Expose.number("slideLegsYawDegrees", 90)
+Expose.number("slideLegsPitchDegrees", 0)
+Expose.number("slideLegsDrop", 0.45) -- how far below their place they rise from and drop back to
 Expose.bool("mantleEnabled", true)
 Expose.number("mantleReach", 0.8)
 Expose.number("mantleMaxHeight", 2.0)
@@ -156,6 +165,7 @@ local sinceHardLanding = nil
 local slide = nil
 local slideCooldownRemaining = 0
 local slideBlend = 0
+local slideLegs = nil
 local tactical = false
 local tacticalCharge = 0
 local tacticalBlend = 0
@@ -569,6 +579,15 @@ end
 
 function onUpdate(dt)
     lastDt = dt
+    if slideLegsPrefab ~= "" and not slideLegs then
+        local feet = Transform.getPosition()
+        slideLegs = Scene.instantiate(slideLegsPrefab, {
+            position = { x = feet.x, y = feet.y, z = feet.z },
+            vars = { forwardOffset = slideLegsForward, rightOffset = slideLegsRight, heightOffset = slideLegsHeight,
+                     yawOffsetDegrees = slideLegsYawDegrees, pitchDegrees = slideLegsPitchDegrees,
+                     hiddenDrop = slideLegsDrop },
+        }) or false
+    end
     Registry.clock = (Registry.clock or 0) + dt
     Tracers.update(dt)
     updateGameEnd(dt)
@@ -598,6 +617,7 @@ function onUpdate(dt)
     Registry.player.speed = velocity and math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2) or 0
     Registry.player.stance = Character.isProne() and "prone" or (Character.isCrouched() and "crouched" or "standing")
     Registry.player.eyeHeight = eyeHeight
+    Registry.player.slideBlend = slideBlend
     local row = activeWeaponRow()
     if lookEnabled and inputEnabled and not menuOpen then
         local basis = Logic.yawBasis(yaw)
@@ -1020,6 +1040,9 @@ function respawn(x, y, z, facingYaw)
 end
 
 function onDestroy()
+    if slideLegs and slideLegs:IsValid() then
+        Scene.destroy(slideLegs)
+    end
     Health.detach(this)
     Hud.unmount()
     Registry.clearPlayer()

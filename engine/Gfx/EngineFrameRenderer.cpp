@@ -3285,7 +3285,7 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, c
             if (!IsEditorEntityVisible(static_cast<uint32_t>(entity), config)) continue;
             if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
             if (config.isPlaying && meshComp.hideInGame) continue;
-            if (meshComp.viewModel) continue;
+            if (meshComp.viewModel || !meshComp.castShadows) continue;
             {
                 Entity owner(entity, scene);
                 const MaterialComponent* surface = resolveMaterialForSlot(owner, meshComp, 0);
