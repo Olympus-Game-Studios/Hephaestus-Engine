@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- 2026-11-11: FPS plugin slide camera: the player's eye eases down to `slideCameraHeight` (0.7 m) while sliding and back up afterwards, smoothly through jumps and mantles out of a slide. The slide legs now lean back with the lead leg raised so it shows while looking ahead, and hide past `slideLegsHideBelowPitchDegrees` so the waist cut never shows.
 - 2026-11-11: Mesh Renderer **Cast Shadows** (`castShadows`, on by default): off keeps a mesh out of shadow maps. FPS plugin slide legs (`slideLegsPrefab` on the Player, `FPS/SlideLegs.lua`): the player's own legs show in a slide pose while sliding, with no shadow and no collider. FPS-Shooter has a legs-only rigged mesh cut from the friendly soldier (`PlayerLegs.hpcharacter`) with LegsSlide and LegsStand pose clips.
 - 2026-11-11: FPS plugin team deathmatch route points (`routePoints`, `routeChance`): soldiers with no enemy in sight sometimes head for a lane or high-ground spot first, ignoring distant gunfire on the way, so bots spread over every lane of a map instead of all taking the shortest path. FPS-Shooter has a greybox three-lane TDM map, Greybox Crossroads, now the menu's Team Deathmatch map.
 - 2026-11-11: Development game runtimes built with runtime automation read `HEPHAESTUS_USER_DATA_ROOT`: when set, the game keeps its logs, saves and settings in `<root>/<game name>` instead of the player's data folder, so test packages never touch real settings. Release runtimes ignore it.

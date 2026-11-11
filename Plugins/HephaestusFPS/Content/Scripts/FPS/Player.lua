@@ -54,15 +54,16 @@ Expose.number("slideCooldown", 0.6)
 Expose.number("slideSteer", 1.5)
 Expose.number("slideFovBoost", 6)
 Expose.number("slideRollDegrees", 4)
+Expose.number("slideCameraHeight", 0.7) -- eye height while sliding, eased in and out with the slide (0 keeps crouch height)
 -- The player's own legs, seen while sliding: a character prefab with FPS/SlideLegs.lua ("" for none) and where it
 -- sits relative to the player's feet and facing.
 Expose.string("slideLegsPrefab", "")
-Expose.number("slideLegsForward", -0.35)
+Expose.number("slideLegsForward", -0.2)
 Expose.number("slideLegsRight", -0.12)
-Expose.number("slideLegsHeight", -0.55)
+Expose.number("slideLegsHeight", -0.66)
 Expose.number("slideLegsYawDegrees", 90)
-Expose.number("slideLegsPitchDegrees", 0)
 Expose.number("slideLegsDrop", 0.45) -- how far below their place they rise from and drop back to
+Expose.number("slideLegsHideBelowPitchDegrees", 55) -- looking further down than this hides them (the waist is cut)
 Expose.bool("mantleEnabled", true)
 Expose.number("mantleReach", 0.8)
 Expose.number("mantleMaxHeight", 2.0)
@@ -151,6 +152,7 @@ local pitch = 0
 local lookEnabled = true
 local inputEnabled = true
 local eyeHeight = 1.62
+local viewHeight = 1.62 -- eyeHeight lowered towards slideCameraHeight while sliding; where the camera and aim sit
 local lastDt = 1 / 60
 local commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
 local discoverTries = 0
@@ -539,6 +541,7 @@ function onAwake()
         maxGrenades = { frag = math.max(0, math.floor(maxFragGrenades)), smoke = math.max(0, math.floor(maxSmokeGrenades)) },
     })
     eyeHeight = standEyeHeight
+    viewHeight = standEyeHeight
     endedFor = nil
     Settings.gameFieldOfView = fieldOfView
     Settings.load()
@@ -584,8 +587,8 @@ function onUpdate(dt)
         slideLegs = Scene.instantiate(slideLegsPrefab, {
             position = { x = feet.x, y = feet.y, z = feet.z },
             vars = { forwardOffset = slideLegsForward, rightOffset = slideLegsRight, heightOffset = slideLegsHeight,
-                     yawOffsetDegrees = slideLegsYawDegrees, pitchDegrees = slideLegsPitchDegrees,
-                     hiddenDrop = slideLegsDrop },
+                     yawOffsetDegrees = slideLegsYawDegrees, hiddenDrop = slideLegsDrop,
+                      hideBelowPitchDegrees = slideLegsHideBelowPitchDegrees },
         }) or false
     end
     Registry.clock = (Registry.clock or 0) + dt
@@ -616,7 +619,7 @@ function onUpdate(dt)
     local velocity = Character.getVelocity()
     Registry.player.speed = velocity and math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2) or 0
     Registry.player.stance = Character.isProne() and "prone" or (Character.isCrouched() and "crouched" or "standing")
-    Registry.player.eyeHeight = eyeHeight
+    Registry.player.eyeHeight = viewHeight
     Registry.player.slideBlend = slideBlend
     local row = activeWeaponRow()
     if lookEnabled and inputEnabled and not menuOpen then
@@ -790,18 +793,23 @@ function onLateUpdate(dt)
     elseif eyeHeight > target then
         eyeHeight = math.max(target, eyeHeight - speed)
     end
+    viewHeight = eyeHeight
+    if slideCameraHeight > 0 and slideBlend > 0 then
+        local eased = slideBlend * slideBlend * (3 - 2 * slideBlend)
+        viewHeight = eyeHeight + (math.min(slideCameraHeight, eyeHeight) - eyeHeight) * eased
+    end
     local feet = Transform.getPosition()
     lean = Gunplay.approach(lean, leanTarget, dt / math.max(leanSeconds, 0.01))
     leanOffset = Logic.leanOffset(lean, leanDistance, function(side, distance)
         local right = Logic.yawBasis(yaw).right
-        local hit = Physics.raycast(feet.x, feet.y + eyeHeight, feet.z, right.x * side, 0, right.z * side,
+        local hit = Physics.raycast(feet.x, feet.y + viewHeight, feet.z, right.x * side, 0, right.z * side,
                                     distance, nil, true)
         return hit and hit.distance or nil
     end)
     -- The player turns with yaw, so the camera's local +z is the player's right.
-    Camera.setPosition(0, eyeHeight, leanOffset)
+    Camera.setPosition(0, viewHeight, leanOffset)
 
-    local origin, direction = Logic.aimRay(feet, eyeHeight, yaw, pitch)
+    local origin, direction = Logic.aimRay(feet, viewHeight, yaw, pitch)
     local leanRight = Logic.yawBasis(yaw).right
     origin.x, origin.z = origin.x + leanRight.x * leanOffset, origin.z + leanRight.z * leanOffset
 
@@ -973,7 +981,7 @@ function onIncomingShot(ox, oy, oz, dx, dy, dz, length, hit, hitSurface)
     end
     local clock = Registry.clock or 0
     local feet = Transform.getPosition()
-    local head = { x = feet.x, y = feet.y + eyeHeight, z = feet.z }
+    local head = { x = feet.x, y = feet.y + viewHeight, z = feet.z }
     if hitSurface and #bulletSounds.impacts > 0 then
         local at = { x = ox + dx * length, y = oy + dy * length, z = oz + dz * length }
         local ax, ay, az = at.x - head.x, at.y - head.y, at.z - head.z

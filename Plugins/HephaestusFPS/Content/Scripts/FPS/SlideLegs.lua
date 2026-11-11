@@ -5,14 +5,14 @@
 -- the player's slide blend), then hide.
 local Registry = require("FPS.Registry")
 
--- Metres along the player's facing from their feet to the model's origin. The hips stay behind the camera so only a
--- view straight down shows the cut at the waist.
-Expose.number("forwardOffset", -0.35)
+-- Metres along the player's facing from their feet to the model's origin. The hips stay behind the camera, and
+-- looking steeply down hides the legs, so the cut at the waist never shows.
+Expose.number("forwardOffset", -0.2)
 Expose.number("rightOffset", -0.12)
-Expose.number("heightOffset", -0.55) -- metres from the floor; the model's hips sit 0.94 m above its origin
+Expose.number("heightOffset", -0.66) -- metres from the floor; the model's hips sit 0.94 m above its origin
 Expose.number("yawOffsetDegrees", 90) -- turns the model to face the way the player faces
-Expose.number("pitchDegrees", 0) -- tips the legs back (positive) or forward
 Expose.number("hiddenDrop", 0.45) -- how far below their place the legs start and end, in metres
+Expose.number("hideBelowPitchDegrees", 55) -- looking further down than this hides the legs, so the cut waist never shows
 Expose.string("slideClip", "LegsSlide")
 
 local shown = false
@@ -24,7 +24,8 @@ end
 function onUpdate(dt)
     local player = Registry.player
     local blend = player and player.entity and player.entity:IsValid() and (player.slideBlend or 0) or 0
-    local visible = blend > 0.02
+    local lookingDown = player and -(player.pitch or 0) > math.rad(hideBelowPitchDegrees)
+    local visible = blend > 0.02 and not lookingDown
     if visible ~= shown then
         shown = visible
         Mesh.setVisible(visible)
@@ -48,5 +49,5 @@ function onUpdate(dt)
     Transform.setPosition(feet.x + fx * forwardOffset + rx * rightOffset,
                           feet.y + heightOffset - hiddenDrop * (1 - eased),
                           feet.z + fz * forwardOffset + rz * rightOffset)
-    Transform.setRotation(math.rad(pitchDegrees), yaw + math.rad(yawOffsetDegrees), 0)
+    Transform.setRotation(0, yaw + math.rad(yawOffsetDegrees), 0)
 end
