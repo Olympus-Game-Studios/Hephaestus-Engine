@@ -15,6 +15,19 @@
 
 namespace Hephaestus {
 
+namespace {
+std::filesystem::path& UserDataRootOverride()
+{
+    static std::filesystem::path root;
+    return root;
+}
+} // namespace
+
+void SetUserDataRootOverride(const std::filesystem::path& root)
+{
+    UserDataRootOverride() = root;
+}
+
 std::filesystem::path ExecutableDirectory()
 {
 #ifdef _WIN32
@@ -57,6 +70,9 @@ std::filesystem::path ExecutableDirectory()
 
 std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName)
 {
+    if (!UserDataRootOverride().empty()) {
+        return UserDataRootOverride() / appName;
+    }
 #ifdef _WIN32
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     wchar_t* localAppData = nullptr;
@@ -77,6 +93,9 @@ std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName)
 
 std::filesystem::path UserDataFor(const std::filesystem::path& appName)
 {
+    if (!UserDataRootOverride().empty()) {
+        return UserDataRootOverride() / appName;
+    }
 #ifdef _WIN32
     return LocalAppDataFor(appName);
 #elif defined(__APPLE__)

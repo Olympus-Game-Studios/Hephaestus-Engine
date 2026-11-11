@@ -422,6 +422,12 @@ static void LoadConfigFile(GameConfig& config) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+    // Test packages keep saves, settings and logs out of the player's real folder.
+    if (const char* testRoot = std::getenv("HEPHAESTUS_USER_DATA_ROOT"); testRoot && *testRoot) {
+        Hephaestus::SetUserDataRootOverride(testRoot);
+    }
+#endif
     // ── Bootstrap ─────────────────────────────────
     BootstrapConfig bootstrapConfig;
     bootstrapConfig.applicationName = "HephaestusGame";

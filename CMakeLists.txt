@@ -1444,6 +1444,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND IniFileTests
     )
 
+    add_executable(AppPathsTests
+        engine/Tests/AppPathsTests.cpp
+    )
+    target_link_libraries(AppPathsTests PRIVATE HephaestusRuntime)
+    target_include_directories(AppPathsTests PRIVATE engine)
+    add_test(
+        NAME AppPaths
+        COMMAND AppPathsTests
+    )
+
     add_executable(SwapchainFormatTests
         engine/Tests/SwapchainFormatTests.cpp
     )

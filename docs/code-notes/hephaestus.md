@@ -489,3 +489,7 @@ Layouts follow FigCraft pages "12 Material Editor", "13 UI Editor" (Layout mode 
 ## Menu selection tick (2026-11-11)
 
 - `Plugins/HephaestusFPS/Content/Scripts/FPS/Menu.lua:Menu.tick` / `selectItem`: every user-driven selection change (row hover and click, arrow and gamepad moves, the wheel clamping the selection, BACK hover) goes through `selectItem`, which ticks only when the index changes; `setPage`, `push`, `back` and `refresh` set the selection directly so opening or refitting a menu stays silent. The 40 ms gap uses `menu.clock`, advanced in `Menu.update` from `Time.unscaledDeltaTime` because Lua has no unscaled clock. `Controls.lua:refresh` ticks when its own row and column change, with `view.tickKey` cleared in `custom.show`. The default path is a project asset; a project without it only gets the audio engine's load failure on stderr.
+
+## Test user data root (2026-11-11)
+
+- `engine/Core/AppPaths.cpp:SetUserDataRootOverride`: one override for both `LocalAppDataFor` (runtime log and crash dumps through `RuntimeBootstrap`) and `UserDataFor` (Lua storage and config roots in `GameMain.cpp`), so a test package writes nothing to the real per-user folder. Only `engine/Game/GameMain.cpp:main` sets it, from `HEPHAESTUS_USER_DATA_ROOT`, and only under `HEPHAESTUS_RUNTIME_AUTOMATION`, before `Bootstrap::Initialize` opens the log; Release runtimes compile the read out. The editor never sets it. Covered by `engine/Tests/AppPathsTests.cpp`.

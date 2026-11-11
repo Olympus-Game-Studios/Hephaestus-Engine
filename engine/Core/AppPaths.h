@@ -53,6 +53,8 @@ std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName);
 // ~/Library/Application Support/<appName> on macOS, $XDG_DATA_HOME (or ~/.local/share)/<appName> elsewhere.
 // Empty when none can be found.
 std::filesystem::path UserDataFor(const std::filesystem::path& appName);
+// Replaces the per-user folder root for LocalAppDataFor and UserDataFor (<root>/<appName>); empty restores the default.
+void SetUserDataRootOverride(const std::filesystem::path& root);
 
 // Where logs go when LocalAppDataFor is empty: beside the resources, except a shipped .app
 // (which must not modify itself) logs to ~/Library/Logs/<app name>.
