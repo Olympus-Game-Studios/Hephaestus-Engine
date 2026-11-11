@@ -164,7 +164,7 @@ Controls lists every gameplay action (moving, jumping, crouching, prone, sprint,
 
 Everything is saved as a commented INI file with `[Gameplay]`, `[Video]`, `[Audio]` and `[Controls]` sections: in a packaged game `Saved\Config\Settings.ini` in the player's data folder (`%LOCALAPPDATA%\<project name>\...` on Windows), and in Editor Play `Saved/Config/EditorSettings.ini` in the project, so testing never touches a player's file. Players can edit it with the game closed; a value that does not read keeps its default and is logged, and a missing line uses the default. Settings saved by older versions are moved into the file the first time.
 
-Every page opened from another (Settings, Controls, Play's mode choice) has a BACK button in the bottom left corner, after its last item, that does the same as Escape or Backspace.
+Every page opened from another (Settings, Controls, Play's mode choice) has a BACK button in the bottom left corner, after its last item, that does the same as Escape or Backspace. Menus fit the screen at any UI size (`UI.getLayoutSize`): a list longer than the room above BACK scrolls with the selection and the mouse wheel, with a thin bar beside it showing where it is.
 
 To make a main menu, put a script on the menu scene's camera that builds one with `FPS.Menu`:
 

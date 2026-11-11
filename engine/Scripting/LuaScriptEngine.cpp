@@ -6755,6 +6755,8 @@ void LuaScriptEngine::RegisterUIBindings() {
 
     lua_pushcfunction(m_State, Lua_UI_measureText);
     lua_setfield(m_State, -2, "measureText");
+    lua_pushcfunction(m_State, Lua_UI_getLayoutSize);
+    lua_setfield(m_State, -2, "getLayoutSize");
     lua_pushcfunction(m_State, Lua_UI_setTextAlignment);
     lua_setfield(m_State, -2, "setTextAlignment");
 
@@ -8246,6 +8248,23 @@ int LuaScriptEngine::Lua_UI_setFontItalic(lua_State* L) {
     return 1;
 #else
     (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getLayoutSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UIContext) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto size = engine->m_UIContext->GetLayoutSize();
+    lua_pushnumber(L, size.x);
+    lua_pushnumber(L, size.y);
+    return 2;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 

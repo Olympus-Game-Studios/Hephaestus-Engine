@@ -11,7 +11,9 @@
 -- A page with `custom` draws itself instead of a list: custom.show(menu) and custom.hide(menu) when it appears and
 -- goes, and custom.update(menu) each frame, returning "back" to leave it. Item actions receive the menu.
 -- Every page opened on top of another shows a BACK button in the bottom left corner, after its last item; a custom
--- page selects it with Menu.selectBack.
+-- page selects it with Menu.selectBack. Menus fit the height the player's UI size leaves (Menu.screenHeight): a list
+-- longer than the room above BACK scrolls, following the selection and the mouse wheel, with a thin bar showing where
+-- it is.
 local Menu = {}
 
 Menu.theme = {
@@ -83,6 +85,15 @@ end
 
 local function itemsOf(page)
     return page.custom and {} or page.items
+end
+
+-- The screen's height in game UI units: 1080 at 100% UI size, less when the UI is made bigger.
+function Menu.screenHeight()
+    if not UI.getLayoutSize then
+        return 1080
+    end
+    local _, height = UI.getLayoutSize()
+    return (height and height > 0) and height or 1080
 end
 
 local function clamp(v, lo, hi)
@@ -179,30 +190,33 @@ function Menu.new(name, options)
         row.more = button(root, ">", menu.x + menu.width - 50, y, 36, menu.rowHeight - 8, arrowSize, Menu.theme.ink)
         UI.setOnHover(row.button, function(hovered)
             if hovered and menu.visible then
-                menu.selected = i
+                menu.selected = menu.first + i - 1
                 Menu.refresh(menu)
             end
         end)
         UI.setOnClick(row.button, function()
             if menu.visible then
-                menu.selected = i
-                activate(menu, i)
+                menu.selected = menu.first + i - 1
+                activate(menu, menu.selected)
             end
         end)
         UI.setOnClick(row.less, function()
             if menu.visible then
-                menu.selected = i
-                adjust(menu, i, -1)
+                menu.selected = menu.first + i - 1
+                adjust(menu, menu.selected, -1)
             end
         end)
         UI.setOnClick(row.more, function()
             if menu.visible then
-                menu.selected = i
-                adjust(menu, i, 1)
+                menu.selected = menu.first + i - 1
+                adjust(menu, menu.selected, 1)
             end
         end)
     end
-    menu.backY = 1080 - 46 - 26 - (menu.rowHeight - 8)
+    menu.first = 1
+    menu.scrollTrack = panel(root, menu.barX + menu.padLeft + menu.width + 14, menu.y, 3, 0, Menu.theme.track)
+    menu.scrollThumb = panel(root, menu.barX + menu.padLeft + menu.width + 14, menu.y, 3, 0, Menu.theme.accent)
+    menu.backY = Menu.screenHeight() - 46 - 26 - (menu.rowHeight - 8)
     menu.backRow = { amount = 0, target = 0 }
     menu.backRow.label = text(menu, root, "BACK", menu.x, menu.backY, menu.width, menu.rowHeight - 8, menu.labelSize, true)
     menu.backRow.button = button(root, "BACK", menu.barX, menu.backY, menu.width, menu.rowHeight - 8, 22, Menu.theme.clear)
@@ -249,6 +263,7 @@ end
 function Menu.setPage(menu, page)
     menu.pages = { page }
     menu.selected = 1
+    menu.first = 1
     menu.backSelected = false
     menu.snap = true
     Menu.refresh(menu)
@@ -257,6 +272,7 @@ end
 function Menu.push(menu, page)
     menu.pages[#menu.pages + 1] = page
     menu.selected = 1
+    menu.first = 1
     menu.backSelected = false
     menu.snap = true
     Menu.refresh(menu)
@@ -271,6 +287,7 @@ function Menu.back(menu)
     if #menu.pages > 1 then
         table.remove(menu.pages)
         menu.selected = 1
+        menu.first = 1
         menu.backSelected = false
         menu.snap = true
         Menu.refresh(menu)
@@ -305,12 +322,31 @@ function Menu.refresh(menu)
     end
     local theme = Menu.theme
     local items = itemsOf(page)
-    -- Long pages close up their rows so the list ends above the BACK button.
-    menu.step = math.min(menu.rowHeight, math.floor((menu.backY - 16 - menu.y) / math.max(#items, 1)))
-    local height = math.min(menu.rowHeight - 8, menu.step - 4)
+    menu.backY = Menu.screenHeight() - 46 - 26 - (menu.rowHeight - 8)
+    menu.lines = clamp(math.floor((menu.backY - 12 - menu.y) / menu.rowHeight), 1, MAX_ROWS)
+    if menu.selected <= #items then
+        if menu.selected < menu.first then
+            menu.first = menu.selected
+        elseif menu.selected >= menu.first + menu.lines then
+            menu.first = menu.selected - menu.lines + 1
+        end
+    end
+    menu.first = clamp(menu.first, 1, math.max(1, #items - menu.lines + 1))
+    local height = menu.rowHeight - 8
+    local scrolling = #items > menu.lines
+    UI.setVisible(menu.scrollTrack, scrolling)
+    UI.setVisible(menu.scrollThumb, scrolling)
+    if scrolling then
+        local track = menu.lines * menu.rowHeight - 8
+        UI.setSize(menu.scrollTrack, 3, track)
+        UI.setPosition(menu.scrollThumb, menu.barX + menu.padLeft + menu.width + 14,
+                       menu.y + track * (menu.first - 1) / #items)
+        UI.setSize(menu.scrollThumb, 3, track * menu.lines / #items)
+    end
     for i, row in ipairs(menu.rows) do
-        local item = items[i]
-        local selected = item ~= nil and i == menu.selected
+        local index = menu.first + i - 1
+        local item = i <= menu.lines and items[index] or nil
+        local selected = item ~= nil and index == menu.selected
         local hasValue = item ~= nil and (item.kind == "slider" or item.kind == "choice")
         UI.setVisible(row.button, item ~= nil)
         UI.setVisible(row.label, item ~= nil)
@@ -324,7 +360,7 @@ function Menu.refresh(menu)
         UI.setVisible(row.more, hasValue and selected)
         if item then
             UI.setText(row.label, item.label)
-            local rowY = menu.y + (i - 1) * menu.step
+            local rowY = menu.y + (i - 1) * menu.rowHeight
             local _, inkLeft, inkRight = UI.measureText(item.label, menu.labelSize, true, theme.font)
             row.inkLeft = inkLeft or 0
             local inkWidth = (inkRight or 0) - row.inkLeft
@@ -379,6 +415,7 @@ function Menu.refresh(menu)
         back.barWidth = menu.padLeft + (inkWidth > 0 and inkWidth or 4 * menu.labelSize * 0.62) + menu.padRight
         UI.setPosition(back.label, menu.x - (inkLeft or 0), menu.backY)
         UI.setSize(back.label, back.barWidth, menu.rowHeight - 8)
+        UI.setPosition(back.button, menu.barX, menu.backY)
         UI.setSize(back.button, back.barWidth + HOVER_PAD, menu.rowHeight - 8)
     end
     local item = items[menu.selected]
@@ -388,9 +425,9 @@ function Menu.refresh(menu)
         menu.targetWidth = back.barWidth
         menu.targetHeight = menu.rowHeight - 8
     elseif item then
-        menu.targetY = menu.y + (menu.selected - 1) * menu.step
+        menu.targetY = menu.y + (menu.selected - menu.first) * menu.rowHeight
         menu.targetHeight = height
-        menu.targetWidth = menu.rows[menu.selected].barWidth or menu.width
+        menu.targetWidth = menu.rows[menu.selected - menu.first + 1].barWidth or menu.width
     end
     if menu.snap or Menu.reducedMotion then
         menu.snap = false
@@ -455,6 +492,14 @@ function Menu.update(menu)
     end
     local items = #page.items
     local count = items + (hasBack(menu) and 1 or 0)
+    local wheel = Input.getScrollDelta().y or 0
+    if wheel ~= 0 and items > (menu.lines or items) then
+        menu.first = clamp(menu.first - (wheel > 0 and 1 or -1), 1, items - menu.lines + 1)
+        if menu.selected <= items then
+            menu.selected = clamp(menu.selected, menu.first, menu.first + menu.lines - 1)
+        end
+        Menu.refresh(menu)
+    end
     local up = Input.isActionPressed("MenuUp")
     local down = Input.isActionPressed("MenuDown")
     local left = Input.isActionPressed("MenuLeft")

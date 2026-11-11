@@ -40,6 +40,7 @@ local ROW_HEIGHT = 40
 local LABEL_WIDTH = 330
 local CELL_WIDTH = 220
 local GAP = 12
+local MAX_LINES = 24
 
 local KINDS = {
     keyboard = "key", mouse_button = "mouse", gamepad_button = "pad", gamepad_axis = "stick",
@@ -273,18 +274,32 @@ local function refresh()
     local ui = menu.controls
     local rows = view.rows
     local count = #rows + 1
+    local lines = math.max(3, math.min(#ui.lines, math.floor((menu.backY - 50 - ui.top) / ROW_HEIGHT)))
+    view.lines = lines
     view.selected = math.max(1, math.min(view.selected, count + 1))
     Menu.selectBack(menu, view.selected == count + 1)
     if view.selected <= count and view.selected < view.first then
         view.first = view.selected
-    elseif view.selected <= count and view.selected >= view.first + #ui.lines then
-        view.first = view.selected - #ui.lines + 1
+    elseif view.selected <= count and view.selected >= view.first + lines then
+        view.first = view.selected - lines + 1
+    end
+    view.first = math.max(1, math.min(view.first, count - lines + 1))
+    UI.setSize(ui.backdrop, ui.width, 42 + lines * ROW_HEIGHT + 44)
+    UI.setPosition(ui.status, menu.x, ui.top + lines * ROW_HEIGHT + 6)
+    local scrolling = count > lines
+    UI.setVisible(ui.scrollTrack, scrolling)
+    UI.setVisible(ui.scrollThumb, scrolling)
+    if scrolling then
+        local track = lines * ROW_HEIGHT - 6
+        UI.setSize(ui.scrollTrack, 3, track)
+        UI.setPosition(ui.scrollThumb, ui.scrollX, ui.top + track * (view.first - 1) / count)
+        UI.setSize(ui.scrollThumb, 3, track * lines / count)
     end
     local theme = Menu.theme
     for i, line in ipairs(ui.lines) do
         local index = view.first + i - 1
-        local row = rows[index]
-        local isReset = index == count
+        local row = i <= lines and rows[index] or nil
+        local isReset = i <= lines and index == count
         local shown = row ~= nil or isReset
         UI.setVisible(line.label, shown)
         UI.setText(line.label, isReset and "RESET TO DEFAULTS" or (row and row.label or ""))
@@ -355,11 +370,14 @@ local function build(menu)
     local root = menu.root
     local ui = { lines = {} }
     local top = menu.y + 34
-    local bottom = menu.backY - 50
-    local visible = math.max(6, math.floor((bottom - top) / ROW_HEIGHT))
+    local visible = MAX_LINES
     local width = LABEL_WIDTH + PAD * CELL_WIDTH + (PAD - 1) * GAP + 36
+    ui.top, ui.width = top, width
     ui.backdrop = panel(root, menu.barX - 6, menu.y - 8, width, 42 + visible * ROW_HEIGHT + 44,
                         { r = 0, g = 0, b = 0, a = 0.55 })
+    ui.scrollX = cellX(menu, PAD) + CELL_WIDTH + 12
+    ui.scrollTrack = panel(root, ui.scrollX, top, 3, 0, Menu.theme.track)
+    ui.scrollThumb = panel(root, ui.scrollX, top, 3, 0, Menu.theme.accent)
     ui.heads = {}
     for column, title in ipairs({ "PRIMARY", "SECONDARY", "GAMEPAD" }) do
         ui.heads[column] = text(root, cellX(menu, column) + 12, menu.y, CELL_WIDTH - 12, 28, 16, true, Menu.theme.muted)
@@ -413,7 +431,7 @@ local function build(menu)
         ui.lines[i] = line
     end
     ui.status = text(root, menu.x, top + visible * ROW_HEIGHT + 6, 900, 30, 18, false, Menu.theme.muted)
-    ui.all = { ui.backdrop, ui.heads[1], ui.heads[2], ui.heads[3], ui.status }
+    ui.all = { ui.backdrop, ui.heads[1], ui.heads[2], ui.heads[3], ui.status, ui.scrollTrack, ui.scrollThumb }
     for _, line in ipairs(ui.lines) do
         ui.all[#ui.all + 1] = line.label
         ui.all[#ui.all + 1] = line.resetButton
@@ -470,6 +488,14 @@ function custom.update(menu)
         return nil
     end
     local count = #view.rows + 2
+    local wheel = Input.getScrollDelta().y or 0
+    if wheel ~= 0 and view.lines and count - 1 > view.lines then
+        view.first = math.max(1, math.min(view.first - (wheel > 0 and 1 or -1), count - view.lines))
+        if view.selected < count then
+            view.selected = math.max(view.first, math.min(view.selected, view.first + view.lines - 1))
+        end
+        refresh()
+    end
     if Input.isActionPressed("MenuUp") then
         view.selected = (view.selected - 2) % count + 1
         refresh()
