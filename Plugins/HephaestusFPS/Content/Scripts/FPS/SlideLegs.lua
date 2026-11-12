@@ -3,8 +3,8 @@
 -- (the player has no body shadow), and no collider
 -- (so shots pass through); Player.lua spawns it as a child of the player (so it moves with the player's drawn,
 -- physics-interpolated position, as the camera does) from slideLegsPrefab and sets the tuning below. The legs sit in the
--- slide pose and rise into view as the slide starts; as it ends they play exitClip (feet pulled up, then turned down out
--- of view) in step with the player's slide blend, then hide. A mantle out of a slide hides them at once.
+-- slide pose and rise into view as the slide starts; as it ends they play exitClip (the slide pose turned down about the
+-- hips) in step with the player's slide blend and stay put as the camera rises, so they sink out of view, then hide. A mantle out of a slide hides them at once.
 local Registry = require("FPS.Registry")
 
 -- Metres along the player's facing from the camera to the model's origin. Looking down moves the legs back

@@ -69,7 +69,7 @@ Expose.bool("mantleEnabled", true)
 Expose.number("mantleReach", 0.8)
 Expose.number("mantleMaxHeight", 2.0)
 Expose.number("vaultMaxHeight", 1.1) -- obstacles up to this high (metres) with open floor beyond are vaulted, not mantled
-Expose.number("vaultMaxDepth", 1.0) -- and no deeper than this from their front face
+Expose.number("vaultMaxDepth", 1.25) -- and no deeper than this from their front face (1.2 m cover blocks vault)
 Expose.bool("vaultWhenRunning", true) -- sprinting or sliding into a vaultable obstacle vaults it without pressing Jump
 Expose.number("vaultMinSeconds", 0.35) -- a vault crosses its path at the speed the player came in with, within these
 Expose.number("vaultMaxSeconds", 0.55)
