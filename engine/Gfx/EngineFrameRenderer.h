@@ -519,9 +519,11 @@ private:
     };
     SkinnedPass m_skinned;
 
+    // One palette per frame in flight: a frame still on the GPU keeps reading its own pose while the next is written.
     struct CharacterBoneGpu {
-        VulkanBuffer buffer;
-        VkDescriptorSet set = VK_NULL_HANDLE;
+        VulkanBuffer buffers[MAX_FRAMES_IN_FLIGHT];
+        VkDescriptorSet sets[MAX_FRAMES_IN_FLIGHT] = {};
+        uint64_t writtenFrame[MAX_FRAMES_IN_FLIGHT] = {};
         uint64_t lastUsedFrame = 0;
     };
     std::unordered_map<uint32_t, CharacterBoneGpu> m_characterBonePalettes;

@@ -1355,11 +1355,13 @@ void EngineFrameRenderer::destroyCharacterBonePalettes()
 
 void EngineFrameRenderer::releaseCharacterBonePalette(CharacterBoneGpu& gpu)
 {
-    if (gpu.set != VK_NULL_HANDLE && m_skinned.bonePool != VK_NULL_HANDLE) {
-        vkFreeDescriptorSets(m_device->device, m_skinned.bonePool, 1, &gpu.set);
+    for (int slot = 0; slot < MAX_FRAMES_IN_FLIGHT; ++slot) {
+        if (gpu.sets[slot] != VK_NULL_HANDLE && m_skinned.bonePool != VK_NULL_HANDLE) {
+            vkFreeDescriptorSets(m_device->device, m_skinned.bonePool, 1, &gpu.sets[slot]);
+        }
+        gpu.sets[slot] = VK_NULL_HANDLE;
+        gpu.buffers[slot].Destroy(m_device->allocator);
     }
-    gpu.set = VK_NULL_HANDLE;
-    gpu.buffer.Destroy(m_device->allocator);
 }
 
 VkDescriptorSet EngineFrameRenderer::resolveSkinnedBoneSet(entt::entity entity,
@@ -1374,27 +1376,30 @@ VkDescriptorSet EngineFrameRenderer::resolveSkinnedBoneSet(entt::entity entity,
     const uint32_t id = static_cast<uint32_t>(entity);
     CharacterBoneGpu& gpu = m_characterBonePalettes[id];
     gpu.lastUsedFrame = m_frameSerial;
-    if (gpu.buffer.buffer == VK_NULL_HANDLE) {
-        gpu.buffer.Create(m_device->allocator, kBoneUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                          VMA_MEMORY_USAGE_CPU_TO_GPU);
+    const int slot = static_cast<int>(m_currentFrame);
+    VulkanBuffer& buffer = gpu.buffers[slot];
+    VkDescriptorSet& set = gpu.sets[slot];
+    if (buffer.buffer == VK_NULL_HANDLE) {
+        buffer.Create(m_device->allocator, kBoneUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                      VMA_MEMORY_USAGE_CPU_TO_GPU);
         VkDescriptorSetAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         alloc.descriptorPool = m_skinned.bonePool;
         alloc.descriptorSetCount = 1;
         alloc.pSetLayouts = &m_skinned.boneSetLayout;
-        if (vkAllocateDescriptorSets(m_device->device, &alloc, &gpu.set) != VK_SUCCESS) {
+        if (vkAllocateDescriptorSets(m_device->device, &alloc, &set) != VK_SUCCESS) {
             std::cerr << "[EngineFrameRenderer] Failed to allocate a character bone descriptor set\n";
-            gpu.set = VK_NULL_HANDLE;
-            gpu.buffer.Destroy(m_device->allocator);
+            set = VK_NULL_HANDLE;
+            buffer.Destroy(m_device->allocator);
             return mesh.boneDescriptorSet;
         }
         VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = gpu.buffer.buffer;
+        bufferInfo.buffer = buffer.buffer;
         bufferInfo.offset = 0;
         bufferInfo.range = kBoneUboSize;
         VkWriteDescriptorSet write{};
         write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = gpu.set;
+        write.dstSet = set;
         write.dstBinding = 0;
         write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         write.descriptorCount = 1;
@@ -1403,17 +1408,19 @@ VkDescriptorSet EngineFrameRenderer::resolveSkinnedBoneSet(entt::entity entity,
     }
 
     void* mapped = nullptr;
-    if (vmaMapMemory(m_device->allocator, gpu.buffer.allocation, &mapped) == VK_SUCCESS) {
+    if (gpu.writtenFrame[slot] != m_frameSerial &&
+        vmaMapMemory(m_device->allocator, buffer.allocation, &mapped) == VK_SUCCESS) {
+        gpu.writtenFrame[slot] = m_frameSerial;
         std::vector<Mat4> palette(128, Mat4::Identity());
         const size_t copyCount = std::min(character->bonePalette.size(), palette.size());
         for (size_t i = 0; i < copyCount; ++i) {
             palette[i] = character->bonePalette[i];
         }
         std::memcpy(mapped, palette.data(), static_cast<size_t>(kBoneUboSize));
-        vmaFlushAllocation(m_device->allocator, gpu.buffer.allocation, 0, VK_WHOLE_SIZE);
-        vmaUnmapMemory(m_device->allocator, gpu.buffer.allocation);
+        vmaFlushAllocation(m_device->allocator, buffer.allocation, 0, VK_WHOLE_SIZE);
+        vmaUnmapMemory(m_device->allocator, buffer.allocation);
     }
-    return gpu.set != VK_NULL_HANDLE ? gpu.set : mesh.boneDescriptorSet;
+    return set != VK_NULL_HANDLE ? set : mesh.boneDescriptorSet;
 }
 
 VkPipeline EngineFrameRenderer::getSkinnedPipeline(bool backfaceCulling, bool wireframe) const
@@ -1448,13 +1455,14 @@ bool EngineFrameRenderer::createSkinnedBoneLayout()
         return false;
     }
 
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 256};
+    // Mesh bind-pose sets plus one set per frame in flight for each animated character.
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 512};
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.poolSizeCount = 1;
     poolInfo.pPoolSizes = &poolSize;
-    poolInfo.maxSets = 256;
+    poolInfo.maxSets = 512;
     if (vkCreateDescriptorPool(m_device->device, &poolInfo, nullptr, &m_skinned.bonePool) !=
         VK_SUCCESS) {
         return false;
