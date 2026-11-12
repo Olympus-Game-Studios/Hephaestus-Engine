@@ -607,19 +607,23 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         }
     }
     if (outputNode->inputs.size() > 5) {
-        outMaterial.roughness = resolveScalar(outputNode->inputs[5], outMaterial.roughness);
+        bool connected = false;
+        Value texValue = EvaluateInputPin(graph, outputNode->inputs[5], cache, active, outErrorMessage, &connected);
         if (!outErrorMessage.empty()) {
             return false;
         }
-        // Check if it's a texture instead
-        bool connected = false;
-        Value texValue = EvaluateInputPin(graph, outputNode->inputs[5], cache, active, outErrorMessage, &connected);
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
+            // A map keeps the Roughness pin's value, which the shader multiplies it by.
             outMaterial.useRoughnessTexture = true;
             outMaterial.roughnessTexturePath = texValue.texturePath;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
+            }
+        } else {
+            outMaterial.roughness = resolveScalar(outputNode->inputs[5], outMaterial.roughness);
+            if (!outErrorMessage.empty()) {
+                return false;
             }
         }
     }

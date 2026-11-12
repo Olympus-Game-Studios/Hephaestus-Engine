@@ -40,7 +40,7 @@ Every graph ends in exactly one **Material Output** node. Its inputs are the mat
 | **Metallic** | 0 for things like wood, plastic and skin; 1 for bare metal. Rarely anything in between. |
 | **Roughness** | 0 is a mirror, 1 is chalk. Most of a material's character lives here. |
 | **Emissive** | Light the surface gives off by itself, for screens, lava, glowing runes. |
-| **Normal Map**, **Roughness Map**, **AO Map** | Texture maps for fine surface detail, roughness variation and ambient occlusion. |
+| **Normal Map**, **Roughness Map**, **AO Map** | Texture maps for fine surface detail, roughness variation and ambient occlusion. With a Roughness Map, **Roughness** multiplies it: below 1 makes the surface shinier, above 1 rougher (up to chalk). |
 | **Specular** | Strength of reflections on non metals. Leave it at 0.5 unless you know you need to change it. |
 | **Opacity**, **Opacity Mask** | Cut holes in a surface, for leaves, fences and grates. |
 | **Refraction** | Reserved for later. It doesn't change anything yet. |

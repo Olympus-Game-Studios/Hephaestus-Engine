@@ -436,7 +436,7 @@ void main() {
         float texRoughness = texture(materialTextures[index], texCoord).r;
         roughness = texRoughness * material.roughness; // Blend with base value
     }
-    roughness = max(roughness, 0.04); // Prevent division by zero
+    roughness = clamp(roughness, 0.04, 1.0); // a multiplier above 1 can roughen a map; 0.04 avoids division by zero
     
     // Ambient occlusion texture
     float ao = material.ao;
