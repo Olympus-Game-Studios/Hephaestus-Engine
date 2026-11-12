@@ -8,6 +8,8 @@
 --   { label = "PLAY", action = function }
 --   { label = "FIELD OF VIEW", kind = "slider", min, max, step, get = function, set = function(v), format = function(v) }
 --   { label = "DIFFICULTY", kind = "choice", options = { { value, text }, ... }, get, set }
+-- Any item may also have `hint` (shown in the hint bar while it is selected) and `disabled = true` (drawn muted, does
+-- nothing); a choice with an `action` runs it on Enter (and still changes with left and right).
 -- A page with `custom` draws itself instead of a list: custom.show(menu) and custom.hide(menu) when it appears and
 -- goes, and custom.update(menu) each frame, returning "back" to leave it. Item actions receive the menu.
 -- Every page opened on top of another shows a BACK button in the bottom left corner, after its last item; a custom
@@ -141,6 +143,9 @@ local function adjust(menu, index, direction)
     if not item then
         return
     end
+    if item.disabled then
+        return
+    end
     if item.kind == "slider" then
         local step = item.step or 0.1
         local value = clamp(item.get() + direction * step, item.min, item.max)
@@ -152,15 +157,16 @@ local function adjust(menu, index, direction)
     Menu.refresh(menu)
 end
 
+-- Enter runs an item's action (a choice with one, such as a map that opens a list, too) or steps a slider or choice.
 local function activate(menu, index)
     local item = currentPage(menu).items[index]
-    if not item then
+    if not item or item.disabled then
         return
     end
-    if item.kind == "slider" or item.kind == "choice" then
-        adjust(menu, index, 1)
-    elseif item.action then
+    if item.action then
         item.action(menu)
+    elseif item.kind == "slider" or item.kind == "choice" then
+        adjust(menu, index, 1)
     end
 end
 
@@ -401,6 +407,7 @@ function Menu.refresh(menu)
         UI.setVisible(row.trackFill, item ~= nil and item.kind == "slider")
         UI.setVisible(row.less, hasValue and selected)
         UI.setVisible(row.more, hasValue and selected)
+        row.disabled = item ~= nil and item.disabled
         if item then
             UI.setText(row.label, item.label)
             local rowY = menu.y + (i - 1) * menu.step
@@ -462,7 +469,10 @@ function Menu.refresh(menu)
         UI.setSize(back.button, back.barWidth + HOVER_PAD, menu.rowHeight - 8)
     end
     local item = items[menu.selected]
+    UI.setText(menu.hints, item and item.hint or menu.hintText)
     UI.setVisible(menu.highlight, item ~= nil or onBack)
+    local bar = item and item.disabled and not onBack and Menu.theme.muted or Menu.theme.accent
+    UI.setBackgroundColor(menu.highlight, bar.r, bar.g, bar.b, bar.a)
     if onBack then
         menu.targetY = menu.backY
         menu.targetWidth = back.barWidth
@@ -499,8 +509,9 @@ function Menu.animate(menu, dt)
     for i, row in ipairs(menu.rows) do
         row.amount = mix(row.amount, row.target, k)
         local a = row.amount
-        UI.setTextColor(row.label, mixColor(theme.text, theme.ink, a))
-        UI.setTextColor(row.value, mixColor(theme.text, theme.ink, a))
+        local text = row.disabled and theme.muted or theme.text
+        UI.setTextColor(row.label, mixColor(text, theme.ink, a))
+        UI.setTextColor(row.value, mixColor(text, theme.ink, a))
         UI.setBackgroundColor(row.trackFill, mixColor(theme.accent, theme.ink, a))
     end
     local back = menu.backRow

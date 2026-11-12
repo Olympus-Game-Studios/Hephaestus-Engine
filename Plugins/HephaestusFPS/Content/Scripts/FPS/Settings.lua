@@ -1,8 +1,8 @@
--- Player settings: look sensitivity, field of view, comfort options, UI size, sound volumes, difficulty and the
--- controls (FPS.Controls). Kept in a commented INI file (Config "Settings": Settings.ini in a packaged game,
+-- Player settings: look sensitivity, field of view, comfort options, UI size, sound volumes, the last match and
+-- Survival set up from the menu (with their difficulties) and the controls (FPS.Controls). Kept in a commented INI file (Config "Settings": Settings.ini in a packaged game,
 -- EditorSettings.ini in Editor Play) that players can edit by hand; a missing or unreadable value keeps its default
 -- and is logged. The player script reads Settings.values every frame, and Settings.apply pushes the rest (bus
--- volumes, UI size, difficulty) to the engine.
+-- volumes, UI size) to the engine. Difficulty is chosen per mode when it starts, not here.
 local Controls = require("FPS.Controls")
 local Difficulty = require("FPS.AI.Difficulty")
 local Menu = require("FPS.Menu")
@@ -19,8 +19,18 @@ Settings.defaults = {
     sfxVolume = 1.0,
     weaponsVolume = 1.0,
     musicVolume = 1.0,
-    difficulty = "regular",
     reducedMotion = false,
+    -- The last team deathmatch and Survival set up from the menu (FPS.TeamDeathmatch reads the match it starts from
+    -- Registry.matchSetup; Survival's enemies take the AI difficulty level set as it starts).
+    matchMap = "",
+    matchFriendlyBots = 5,
+    matchEnemyBots = 6,
+    matchFriendlyDifficulty = "regular",
+    matchEnemyDifficulty = "regular",
+    matchScoreLimit = 50,
+    matchTimeLimitMinutes = 10,
+    matchRespawnSeconds = 5,
+    survivalDifficulty = "regular",
 }
 
 Settings.values = {}
@@ -41,7 +51,6 @@ local BUSES = { masterVolume = "master", sfxVolume = "sfx", weaponsVolume = "wea
 Settings.file = {
     { name = "Gameplay", keys = {
         { key = "LookSensitivity", field = "sensitivity", min = 0.2, max = 3, comment = "Mouse and stick look speed, 0.2 to 3" },
-        { key = "Difficulty", field = "difficulty", comment = "recruit, regular, hardened or veteran" },
         { key = "ViewBob", field = "viewBob", min = 0, max = 1, comment = "Head bob while moving, 0 (off) to 1" },
         { key = "CameraShake", field = "cameraShake", min = 0, max = 1, comment = "Shake from blasts and landings, 0 (off) to 1" },
     } },
@@ -56,6 +65,21 @@ Settings.file = {
         { key = "EffectsVolume", field = "sfxVolume", min = 0, max = 1 },
         { key = "WeaponsVolume", field = "weaponsVolume", min = 0, max = 1 },
         { key = "MusicVolume", field = "musicVolume", min = 0, max = 1 },
+    } },
+    { name = "Match", keys = {
+        { key = "Map", field = "matchMap", comment = "Last team deathmatch set up against bots" },
+        { key = "FriendlyBots", field = "matchFriendlyBots", min = 0, max = 7 },
+        { key = "EnemyBots", field = "matchEnemyBots", min = 1, max = 8 },
+        { key = "FriendlyDifficulty", field = "matchFriendlyDifficulty", levels = true,
+          comment = "recruit, regular, hardened or veteran" },
+        { key = "EnemyDifficulty", field = "matchEnemyDifficulty", levels = true },
+        { key = "ScoreLimit", field = "matchScoreLimit", min = 10, max = 200 },
+        { key = "TimeLimitMinutes", field = "matchTimeLimitMinutes", min = 1, max = 60 },
+        { key = "RespawnSeconds", field = "matchRespawnSeconds", min = 1, max = 30 },
+    } },
+    { name = "Survival", keys = {
+        { key = "Difficulty", field = "survivalDifficulty", levels = true,
+          comment = "Last Survival difficulty: recruit, regular, hardened or veteran" },
     } },
 }
 
@@ -83,7 +107,7 @@ local function parse(entry, text)
         elseif lower == "false" or lower == "0" or lower == "no" or lower == "off" then
             return false
         end
-    elseif entry.field == "difficulty" then
+    elseif entry.levels then
         for _, level in ipairs(Difficulty.levels()) do
             if level == tostring(text):lower() then
                 return level
@@ -97,11 +121,17 @@ local function parse(entry, text)
 end
 
 local function readFile(document)
+    -- Older files kept one Difficulty under [Gameplay]; it starts each per-mode difficulty not saved yet.
+    local old = document.Gameplay and document.Gameplay.Difficulty
     for _, section in ipairs(Settings.file) do
         local values = document[section.name] or {}
         for _, entry in ipairs(section.keys) do
-            if values[entry.key] ~= nil then
-                local value = parse(entry, values[entry.key])
+            local saved = values[entry.key]
+            if saved == nil and entry.levels then
+                saved = old
+            end
+            if saved ~= nil then
+                local value = parse(entry, saved)
                 if value ~= nil then
                     Settings.values[entry.field] = value
                 end
@@ -187,7 +217,6 @@ function Settings.apply()
     if UI and UI.setScale then
         UI.setScale(Settings.values.uiScale)
     end
-    Difficulty.setLevel(Settings.values.difficulty)
     Menu.reducedMotion = Settings.values.reducedMotion
 end
 
@@ -209,10 +238,6 @@ end
 
 -- The settings page for FPS.Menu; leaving it saves.
 function Settings.page()
-    local levels = {}
-    for _, name in ipairs(Difficulty.levels()) do
-        levels[#levels + 1] = { name, name:upper() }
-    end
     return {
         title = "SETTINGS",
         items = {
@@ -228,9 +253,6 @@ function Settings.page()
             slider("EFFECTS VOLUME", "sfxVolume", 0, 1, 0.05),
             slider("WEAPONS VOLUME", "weaponsVolume", 0, 1, 0.05),
             slider("MUSIC VOLUME", "musicVolume", 0, 1, 0.05),
-            { label = "DIFFICULTY", kind = "choice", options = levels,
-              get = function() return Settings.values.difficulty end,
-              set = function(v) Settings.set("difficulty", v) end },
             { label = "REDUCE MOTION", kind = "choice", options = { { false, "OFF" }, { true, "ON" } },
               get = function() return Settings.values.reducedMotion end,
               set = function(v) Settings.set("reducedMotion", v) end },

@@ -1,5 +1,7 @@
 -- Team deathmatch with bots: the player and teamSize - 1 friendly soldiers (team 1) against teamSize enemy soldiers
--- (team 2). A kill scores for the killer's team, friendly fire is off, and the first team to scoreLimit or the one
+-- (team 2). A match set up in a menu (Registry.matchSetup: friendlyBots, enemyBots, friendlyDifficulty,
+-- enemyDifficulty, scoreLimit, timeLimitMinutes, respawnSeconds) replaces these for the level it starts; without
+-- one the level's own values are used. A kill scores for the killer's team, friendly fire is off, and the first team to scoreLimit or the one
 -- ahead when the time runs out wins. The dead come back after respawnSeconds at one of their team's spawn points,
 -- away from the other team. Hold Scoreboard (Tab) for the scoreboard. The match ends on a screen offering Play
 -- again and Quit to menu. Put it on any entity in a level with a navmesh and the player; set the player's
@@ -41,6 +43,7 @@ local phase = "waiting"
 local endMenu = nil
 local rng = 1
 local shownCountdown = nil
+local setup = {} -- the menu's match setup, when it started this one
 
 local PLAYER = "player"
 
@@ -111,10 +114,14 @@ local function spawnSoldier(soldier)
     if not spot then
         return
     end
+    local vars = { team = soldier.team, displayName = soldier.name, huntOnSpawn = true, huntWhenIdle = true }
+    if soldier.difficulty then
+        vars.difficulty = soldier.difficulty
+    end
     local entity = Scene.instantiate(soldier.prefab, {
         position = spot,
         rotation = { x = 0, y = math.deg(yaw) + 90, z = 0 },
-        vars = { team = soldier.team, displayName = soldier.name, huntOnSpawn = true, huntWhenIdle = true },
+        vars = vars,
     })
     soldier.respawnAt = nil
     if entity then
@@ -143,11 +150,15 @@ local function startMatch()
     byKey[player.key] = PLAYER
     Match.join(state, PLAYER, "You", soldiers[PLAYER].team)
     for team = 1, 2 do
-        local count = team == soldiers[PLAYER].team and teamSize - 1 or teamSize
+        local playerTeam = team == soldiers[PLAYER].team
+        local count, difficulty = setup.enemyBots or teamSize, setup.enemyDifficulty
+        if playerTeam then
+            count, difficulty = setup.friendlyBots or teamSize - 1, setup.friendlyDifficulty
+        end
         for i = 1, count do
             local id = string.format("%d-%d", team, i)
             local name = names[team][i] or string.format("%s %d", team == 1 and "Blue" or "Red", i)
-            soldiers[id] = { id = id, team = team, name = name, prefab = prefabs[team] }
+            soldiers[id] = { id = id, team = team, name = name, prefab = prefabs[team], difficulty = difficulty }
             Match.join(state, id, name, team)
             spawnSoldier(soldiers[id])
         end
@@ -166,7 +177,11 @@ local function finish(winner)
     Time.setScale(0)
     UI.setCursorMode(CursorMode.UI)
     endMenu = Menu.new("MatchEnd", { backdrop = 0.55, y = 300, hints = "ENTER  SELECT        W / S  MOVE" })
-    local items = { { label = "PLAY AGAIN", action = function() Time.setScale(1); Scene.reload() end } }
+    local items = { { label = "PLAY AGAIN", action = function()
+        Time.setScale(1)
+        Registry.matchSetup = next(setup) and setup or nil
+        Scene.reload()
+    end } }
     if mainMenuScene ~= "" then
         items[#items + 1] = { label = "QUIT TO MENU", action = function() Time.setScale(1); Scene.load(mainMenuScene) end }
     end
@@ -216,6 +231,12 @@ function onAwake()
     Registry.matchDirector = this
     Registry.friendlyFire = false
     state, soldiers, byKey, phase, endMenu, shownCountdown = nil, {}, {}, "waiting", nil, nil
+    -- Taken once (Play again hands it on), so opening the level by itself uses the level's own values.
+    setup = Registry.matchSetup or {}
+    Registry.matchSetup = nil
+    scoreLimit = setup.scoreLimit or scoreLimit
+    timeLimitMinutes = setup.timeLimitMinutes or timeLimitMinutes
+    respawnSeconds = setup.respawnSeconds or respawnSeconds
     spawns = { Waves.parsePoints(friendlySpawns), Waves.parsePoints(enemySpawns) }
     local routes = parseRoutes(routePoints)
     Registry.routes = #routes > 0 and { points = routes, chance = routeChance } or nil
