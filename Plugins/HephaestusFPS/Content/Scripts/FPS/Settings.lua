@@ -30,6 +30,7 @@ Settings.defaults = {
     matchScoreLimit = 50,
     matchTimeLimitMinutes = 10,
     matchRespawnSeconds = 5,
+    matchFriendlyFire = false,
     survivalDifficulty = "regular",
 }
 
@@ -76,6 +77,7 @@ Settings.file = {
         { key = "ScoreLimit", field = "matchScoreLimit", min = 10, max = 200 },
         { key = "TimeLimitMinutes", field = "matchTimeLimitMinutes", min = 1, max = 60 },
         { key = "RespawnSeconds", field = "matchRespawnSeconds", min = 1, max = 30 },
+        { key = "FriendlyFire", field = "matchFriendlyFire" },
     } },
     { name = "Survival", keys = {
         { key = "Difficulty", field = "survivalDifficulty", levels = true,

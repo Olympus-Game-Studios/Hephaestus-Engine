@@ -1,7 +1,7 @@
 -- Team deathmatch with bots: the player and teamSize - 1 friendly soldiers (team 1) against teamSize enemy soldiers
 -- (team 2). A match set up in a menu (Registry.matchSetup: friendlyBots, enemyBots, friendlyDifficulty,
--- enemyDifficulty, scoreLimit, timeLimitMinutes, respawnSeconds) replaces these for the level it starts; without
--- one the level's own values are used. A kill scores for the killer's team, friendly fire is off, and the first team to scoreLimit or the one
+-- enemyDifficulty, scoreLimit, timeLimitMinutes, respawnSeconds, friendlyFire) replaces these for the level it starts;
+-- without one the level's own values are used, with friendly fire off. A kill scores for the killer's team, friendly fire is off, and the first team to scoreLimit or the one
 -- ahead when the time runs out wins. The dead come back after respawnSeconds at one of their team's spawn points,
 -- away from the other team. Hold Scoreboard (Tab) for the scoreboard. The match ends on a screen offering Play
 -- again and Quit to menu. Put it on any entity in a level with a navmesh and the player; set the player's
@@ -229,7 +229,6 @@ end
 function onAwake()
     Registry.ensureSession()
     Registry.matchDirector = this
-    Registry.friendlyFire = false
     state, soldiers, byKey, phase, endMenu, shownCountdown = nil, {}, {}, "waiting", nil, nil
     -- Taken once (Play again hands it on), so opening the level by itself uses the level's own values.
     setup = Registry.matchSetup or {}
@@ -237,6 +236,7 @@ function onAwake()
     scoreLimit = setup.scoreLimit or scoreLimit
     timeLimitMinutes = setup.timeLimitMinutes or timeLimitMinutes
     respawnSeconds = setup.respawnSeconds or respawnSeconds
+    Registry.friendlyFire = setup.friendlyFire == true
     spawns = { Waves.parsePoints(friendlySpawns), Waves.parsePoints(enemySpawns) }
     local routes = parseRoutes(routePoints)
     Registry.routes = #routes > 0 and { points = routes, chance = routeChance } or nil

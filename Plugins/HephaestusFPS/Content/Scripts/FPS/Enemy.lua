@@ -258,7 +258,9 @@ local function fireShot(row, aimPoint, extraSpread)
                       tz / tracerLength, { speed = tracerSpeed, maxDistance = tracerLength })
     end
     local hitRow = hit and hit.entity and Registry.combatantOf(hit.entity)
-    local friendly = hitRow ~= nil and (hitRow.key == selfKey or Registry.sameTeam(hitRow, selfRow))
+    -- A teammate hit by a stray shot is spared unless friendly fire is on.
+    local friendly = hitRow ~= nil and (hitRow.key == selfKey
+        or (not Registry.friendlyFire and Registry.sameTeam(hitRow, selfRow)))
     local playerRow = Registry.player
     local hitPlayer = hitRow ~= nil and not friendly and hitRow == playerRow
     local hitSurface = hit and hit.entity and not hitRow and not Health.get(hit.entity)
