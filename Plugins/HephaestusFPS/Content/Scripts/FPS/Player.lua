@@ -645,6 +645,8 @@ function onUpdate(dt)
     Registry.player.slideBlend = slideBlend
     Registry.player.sliding = slide ~= nil
     Registry.player.climbing = mantle ~= nil and mantle.plan.kind == "mantle"
+    Registry.player.vaultProgress = mantle and mantle.plan.kind == "vault" and math.min(1, mantle.elapsed / mantle.seconds)
+        or nil
     local row = activeWeaponRow()
     if lookEnabled and inputEnabled and not menuOpen then
         local basis = Logic.yawBasis(yaw)
