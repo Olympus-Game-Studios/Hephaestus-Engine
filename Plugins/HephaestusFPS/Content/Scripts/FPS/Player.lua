@@ -70,7 +70,7 @@ Expose.number("mantleReach", 0.8)
 Expose.number("mantleMaxHeight", 2.0)
 Expose.number("vaultMaxHeight", 1.1) -- obstacles up to this high (metres) with open floor beyond are vaulted, not mantled
 Expose.number("vaultMaxDepth", 1.25) -- and no deeper than this from their front face (1.2 m cover blocks vault)
-Expose.bool("vaultWhenRunning", true) -- sprinting or sliding into a vaultable obstacle vaults it without pressing Jump
+Expose.bool("vaultWhenRunning", true) -- sprinting into a vaultable obstacle vaults it without pressing Jump (never while sliding)
 Expose.number("vaultMinSeconds", 0.35) -- a vault crosses its path at the speed the player came in with, within these
 Expose.number("vaultMaxSeconds", 0.55)
 Expose.number("vaultLookAheadSeconds", 0.15) -- a running vault starts this much travel before the obstacle, so it arcs up
@@ -683,12 +683,11 @@ function onUpdate(dt)
             local runScale = tactical and tacticalSprintMultiplier or sprintMultiplier
             slide = { elapsed = 0, dirX = vx / length, dirZ = vz / length, startScale = runScale * slideBoost }
         end
-        -- Jumping (or holding jump in the air) towards a ledge climbs onto it or vaults over it instead; running or
-        -- sliding into a low enough obstacle vaults it on its own. A slide carries on after the vault.
+        -- Jumping (or holding jump in the air) towards a ledge climbs onto it or vaults over it instead; sprinting into
+        -- a low enough obstacle vaults it on its own. A slide never vaults: jumping out of one can only climb.
         local climbPressed = jumpPressed or (not Character.isGrounded() and Input.isActionDown("Jump"))
-        local running = sprinting or slide ~= nil
         if not mantle and mantleEnabled and forward > 0.3 and not prone
-            and (climbPressed or (vaultWhenRunning and running and Character.isGrounded())) then
+            and (climbPressed or (vaultWhenRunning and sprinting and Character.isGrounded())) then
             local dirX, dirZ = basis.forward.x, basis.forward.z
             if slide then
                 dirX, dirZ = slide.dirX, slide.dirZ
@@ -697,8 +696,9 @@ function onUpdate(dt)
             local speed = math.sqrt((vel.x or 0) ^ 2 + (vel.z or 0) ^ 2)
             local feet = Transform.getPosition()
             local options = { reach = mantleReach + speed * vaultLookAheadSeconds, maxHeight = mantleMaxHeight,
-                              vaultMaxHeight = vaultMaxHeight, vaultDepth = vaultMaxDepth, vaultOnly = true }
-            local plan = Mantle.find(feet, dirX, dirZ, options)
+                              vaultMaxHeight = slide and -1 or vaultMaxHeight, vaultDepth = vaultMaxDepth,
+                              vaultOnly = true }
+            local plan = not slide and Mantle.find(feet, dirX, dirZ, options) or nil
             if not plan and climbPressed then
                 options.reach, options.vaultOnly = mantleReach, false
                 plan = Mantle.find(feet, dirX, dirZ, options)
@@ -708,9 +708,8 @@ function onUpdate(dt)
                 if plan.kind == "vault" then
                     seconds = Mantle.vaultDuration(plan, speed, vaultMinSeconds, vaultMaxSeconds)
                     playFootstep(1.3)
-                else
-                    slide = nil
                 end
+                slide = nil
                 mantle = { plan = plan, elapsed = 0, seconds = seconds }
                 jumpPressed = false
             end
@@ -719,7 +718,7 @@ function onUpdate(dt)
             mantle.elapsed = mantle.elapsed + dt
             local p = Mantle.position(mantle.plan, mantle.elapsed / mantle.seconds)
             Character.move(0, 0)
-            Character.setCrouched(slide ~= nil)
+            Character.setCrouched(false)
             Character.teleport(p.x, p.y, p.z)
             sprinting = false
             if mantle.elapsed >= mantle.seconds then

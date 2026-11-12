@@ -5,8 +5,7 @@
 -- physics-interpolated position, as the camera does) from slideLegsPrefab and sets the tuning below. The legs sit in the
 -- slide pose and rise into view as the slide starts; as it ends they play exitClip (the slide pose turned down about the
 -- hips) in step with the player's slide blend and stay put as the camera rises, so they sink out of view, then hide.
--- Through a vault they play vaultClip (from hanging out of view, a swing across the view and over) in step with it,
--- cross-fading from and back to the slide pose when the vault comes out of a slide. A mantle out of a slide hides them at once.
+-- Through a vault they play vaultClip (from hanging out of view, a swing across the view and over) in step with it. A mantle out of a slide hides them at once.
 local Registry = require("FPS.Registry")
 
 -- Metres along the player's facing from the camera to the model's origin. Looking down moves the legs back
@@ -22,7 +21,6 @@ Expose.string("exitClip", "LegsSlideExit") -- "" just drops the legs away
 Expose.number("exitClipSeconds", 0.3) -- the exit clip's length
 Expose.string("vaultClip", "LegsVault") -- "" shows no legs while vaulting
 Expose.number("vaultClipSeconds", 0.4) -- the vault clip's length
-Expose.number("blendSeconds", 0.1) -- cross-fade between the slide and vault clips
 
 local shown = false
 local mode = nil -- the clip the legs show: "slide", "exit" or "vault"
@@ -50,14 +48,9 @@ function onUpdate(dt)
     local wanted = vaulting and "vault" or (exiting and "exit" or "slide")
     local eased = vaulting and 1 or blend * blend * (3 - 2 * blend)
     local height = (player.eyeHeight or 0) - belowEye - hiddenDrop * (1 - eased)
-    -- The scrubbed clips play on (a paused clip would hold a cross-fade still) and are set to their place each frame.
+    -- The scrubbed clips play on (Play un-pauses them when it takes effect) and are set to their place each frame.
     if wanted ~= mode and animator then
-        local clip = ({ slide = slideClip, exit = exitClip, vault = vaultClip })[wanted]
-        if (mode == "slide" and wanted == "vault") or (mode == "vault" and wanted == "slide") then
-            animator:CrossFade(clip, blendSeconds)
-        else
-            animator:Play(clip)
-        end
+        animator:Play(({ slide = slideClip, exit = exitClip, vault = vaultClip })[wanted])
         mode = wanted
         exitHeight = height
     end
