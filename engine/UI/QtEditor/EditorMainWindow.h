@@ -327,6 +327,8 @@ private:
     void saveEditorViewState();
     void hideSelectedInEditor();
     void isolateSelectedInEditor();
+    /// The hierarchy eye: click hides or shows an entity in the editor, Alt+click isolates it (again to exit).
+    void toggleOutlinerVisibility(entt::entity entity, bool isolate);
     void toggleLockSelectedInEditor();
     void alignSelection(int axis);
     void distributeSelection(int axis);

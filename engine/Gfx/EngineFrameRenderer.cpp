@@ -228,6 +228,12 @@ static bool ContainsEntityId(const std::vector<uint32_t>& ids, uint32_t id)
     return std::find(ids.begin(), ids.end(), id) != ids.end();
 }
 
+// editorHiddenEntities is sorted (EditorContext::EditorHiddenIdsForRender) and can hold most of a scene while isolating.
+static bool ContainsSortedEntityId(const std::vector<uint32_t>& ids, uint32_t id)
+{
+    return std::binary_search(ids.begin(), ids.end(), id);
+}
+
 static std::vector<size_t> MeshHandlesForDraw(const MeshRendererComponent& renderer)
 {
     return RuntimeMeshPartHandles(renderer);
@@ -239,7 +245,7 @@ static bool IsEditorEntityVisible(uint32_t entityId,
     if (!config.isEditorMode || config.isPlaying) {
         return true;
     }
-    if (ContainsEntityId(config.editorHiddenEntities, entityId)) {
+    if (ContainsSortedEntityId(config.editorHiddenEntities, entityId)) {
         return false;
     }
     return config.editorIsolatedEntities.empty() ||

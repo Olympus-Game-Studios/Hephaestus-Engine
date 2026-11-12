@@ -701,6 +701,7 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/CharacterAnimationImportDialog.cpp
             engine/UI/QtEditor/CharacterAnimationImportDialog.h
             engine/UI/QtEditor/PrefabHierarchyPanel.cpp
+            engine/UI/QtEditor/HierarchyEye.cpp
             engine/UI/QtEditor/PrefabHierarchyPanel.h
             engine/UI/QtEditor/PrefabInspectorPanel.cpp
             engine/UI/QtEditor/PrefabInspectorPanel.h

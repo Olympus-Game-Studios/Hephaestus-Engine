@@ -1494,7 +1494,7 @@ void QtEditorEngine::selectEntitiesInViewportRect(
     std::unordered_set<entt::entity> seen;
     auto meshView = scene->GetRegistry().view<TransformComponent, MeshRendererComponent>();
     for (entt::entity handle : meshView) {
-        if (m_editorContext.IsEditorHidden(handle) ||
+        if (!m_editorContext.IsEditorEntityShown(handle) ||
             m_editorContext.IsEditorLocked(handle)) continue;
         Entity entity(handle, scene);
         const auto& renderer = meshView.get<MeshRendererComponent>(handle);
@@ -1747,7 +1747,7 @@ void QtEditorEngine::FocusAll()
     AABB combined;
     auto view = scene->GetRegistry().view<TransformComponent, MeshRendererComponent>();
     for (entt::entity handle : view) {
-        if (m_editorContext.IsEditorHidden(handle)) continue;
+        if (!m_editorContext.IsEditorEntityShown(handle)) continue;
         Entity entity(handle, scene);
         const auto& renderer = view.get<MeshRendererComponent>(handle);
         const AABB bounds = SceneAuthoring::TransformBounds(
@@ -2152,15 +2152,12 @@ void QtEditorEngine::renderFrame()
             m_renderConfig.selectedEntities.push_back(static_cast<uint32_t>(e));
         }
     }
-    m_renderConfig.editorHiddenEntities.assign(
-        m_editorContext.GetEditorHiddenIds().begin(),
-        m_editorContext.GetEditorHiddenIds().end());
+    // Hiding and isolation follow the hierarchy; the renderer gets every entity they leave out.
+    m_renderConfig.editorHiddenEntities = m_editorContext.EditorHiddenIdsForRender();
     m_renderConfig.editorLockedEntities.assign(
         m_editorContext.GetEditorLockedIds().begin(),
         m_editorContext.GetEditorLockedIds().end());
-    m_renderConfig.editorIsolatedEntities.assign(
-        m_editorContext.GetIsolatedIds().begin(),
-        m_editorContext.GetIsolatedIds().end());
+    m_renderConfig.editorIsolatedEntities.clear();
     
     // Sync gizmo settings
     m_renderConfig.gizmoMode = static_cast<int>(m_editorContext.GetGizmoMode());

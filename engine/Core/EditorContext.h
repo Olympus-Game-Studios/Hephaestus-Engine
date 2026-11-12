@@ -277,6 +277,11 @@ public:
     }
     void SetEditorHidden(entt::entity entity, bool hidden);
     void SetEditorLocked(entt::entity entity, bool locked);
+    /// Whether the editor shows an entity: not if it or any ancestor is hidden, and while isolating only if it or an
+    /// ancestor is isolated (isolating a weapon keeps its parts).
+    bool IsEditorEntityShown(entt::entity entity) const;
+    /// Every entity of the active scene the editor does not show, sorted (empty when nothing is hidden or isolated).
+    std::vector<uint32_t> EditorHiddenIdsForRender() const;
     void ShowAllEditorEntities() { m_editorHidden.clear(); m_isolated.clear(); }
     void IsolateEntities(const std::vector<entt::entity>& entities);
     void ExitIsolation() { m_isolated.clear(); }

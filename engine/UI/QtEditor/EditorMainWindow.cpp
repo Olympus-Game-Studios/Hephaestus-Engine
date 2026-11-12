@@ -48,6 +48,7 @@
 #include "EditorSystemUsage.h"
 #include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
+#include "HierarchyEye.h"
 #include "EditorPluginHost.h"
 #include "PluginManagerDialog.h"
 #include "../Shared/SettingsWindow.h"
@@ -317,7 +318,7 @@ QString OutlinerTypeLabel(const QString& iconName)
     return QCoreApplication::translate("EditorMainWindow", labels.value(iconName, QT_TRANSLATE_NOOP("EditorMainWindow", "Entity")));
 }
 
-/** Draws a row's trailing marker: the Prefab tag, or the hidden / locked icon. */
+/** Draws a row's visibility eye (HierarchyEye) and, left of it, its trailing marker: the Prefab tag or the lock. */
 class OutlinerRowDelegate final : public QStyledItemDelegate
 {
 public:
@@ -326,9 +327,10 @@ public:
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
     {
         QStyledItemDelegate::paint(painter, option, index);
+        HierarchyEye::Paint(painter, option, index);
         const QString trailing = index.data(kOutlinerTrailingRole).toString();
         if (trailing.isEmpty()) return;
-        const QRect area = option.rect.adjusted(0, 0, -8, 0);
+        const QRect area = option.rect.adjusted(0, 0, -(8 + HierarchyEye::kWidth), 0);
         if (trailing == QLatin1String("prefab")) {
             painter->save();
             painter->setPen(Theme::Color(Theme::Token::TextMuted));
@@ -339,9 +341,8 @@ public:
             painter->restore();
             return;
         }
-        const QString icon = trailing == QLatin1String("hidden") ? QStringLiteral("eye-off") : QStringLiteral("lock");
         const QRect iconRect(area.right() - 16, area.center().y() - 8, 16, 16);
-        Theme::Icon(icon, Theme::IconTone::Muted).paint(painter, iconRect);
+        Theme::Icon(QStringLiteral("lock"), Theme::IconTone::Muted).paint(painter, iconRect);
     }
 };
 
@@ -2117,6 +2118,9 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerTree->setObjectName("OutlinerTree");
     m_outlinerTree->setHeaderHidden(true);
     m_outlinerTree->setItemDelegate(new OutlinerRowDelegate(m_outlinerTree));
+    HierarchyEye::Install(m_outlinerTree, [this](QTreeWidgetItem* item, bool isolate) {
+        toggleOutlinerVisibility(static_cast<entt::entity>(item->data(0, Qt::UserRole).toUInt()), isolate);
+    }, true);
     m_outlinerTree->setIconSize(QSize(16, 16));
     m_outlinerTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_outlinerTree->setRootIsDecorated(true);
@@ -4095,8 +4099,14 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     item->setText(0, QString::fromStdString(name));
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
     if (ctx->IsEditorHidden(entity)) {
+        item->setData(0, HierarchyEye::kRole, static_cast<int>(HierarchyEye::State::Hidden));
+    } else if (!ctx->IsEditorEntityShown(entity)) {
+        item->setData(0, HierarchyEye::kRole, static_cast<int>(HierarchyEye::State::HiddenByParent));
+    } else {
+        item->setData(0, HierarchyEye::kRole, static_cast<int>(HierarchyEye::State::Shown));
+    }
+    if (!ctx->IsEditorEntityShown(entity)) {
         item->setForeground(0, Theme::Color(Theme::Token::TextDisabled));
-        item->setData(0, kOutlinerTrailingRole, QStringLiteral("hidden"));
         item->setToolTip(0, tr("Hidden in editor"));
     } else if (ctx->IsEditorLocked(entity)) {
         item->setForeground(0, Theme::Color(Theme::Token::TextMuted));
@@ -5330,6 +5340,26 @@ void EditorMainWindow::hideSelectedInEditor()
     saveEditorViewState();
     rebuildOutliner();
     refreshDetailsPanel();
+}
+
+void EditorMainWindow::toggleOutlinerVisibility(entt::entity entity, bool isolate)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || entity == entt::null) return;
+    if (isolate) {
+        const bool alreadyIsolated = ctx->GetIsolatedIds().size() == 1 &&
+                                     ctx->GetIsolatedIds().contains(static_cast<uint32_t>(entity));
+        if (alreadyIsolated) {
+            ctx->ExitIsolation();
+        } else {
+            ctx->IsolateEntities({ entity });
+        }
+    } else {
+        ctx->SetEditorHidden(entity, !ctx->IsEditorHidden(entity));
+        saveEditorViewState();
+    }
+    rebuildOutliner();
 }
 
 void EditorMainWindow::isolateSelectedInEditor()

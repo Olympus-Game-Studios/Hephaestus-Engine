@@ -119,7 +119,7 @@ struct FrameRenderConfig {
     // Selection for outline rendering (entt::entity as uint32_t)
     uint32_t selectedEntity = static_cast<uint32_t>(-1); // entt::null (primary)
     std::vector<uint32_t> selectedEntities;               // All selected entities for multi-select outlines
-    std::vector<uint32_t> editorHiddenEntities;
+    std::vector<uint32_t> editorHiddenEntities; ///< sorted ascending
     std::vector<uint32_t> editorIsolatedEntities;
     std::vector<uint32_t> editorLockedEntities;
     

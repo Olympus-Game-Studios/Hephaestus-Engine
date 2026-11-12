@@ -13,6 +13,7 @@
 #include <QMimeData>
 #include <functional>
 #include <string>
+#include <unordered_set>
 
 #include "../../Scene/PrefabAsset.h"
 
@@ -43,6 +44,8 @@ public:
     explicit PrefabHierarchyPanel(QWidget* parent = nullptr);
 
     void Rebuild(const PrefabAsset& asset, const std::string& selectedNodeId);
+    /// Editor-only visibility the rows' eyes show from the next Rebuild (node ids; isolated "" when not isolating).
+    void SetVisibility(std::unordered_set<std::string> hiddenNodes, std::string isolatedNode);
     void SetSelectedNodeId(const std::string& nodeId);
     std::string GetSelectedNodeId() const;
     std::string GetSelectedComponentType() const;
@@ -58,6 +61,8 @@ signals:
     void resetTransformRequested(const std::string& nodeId);
     void focusInViewportRequested(const std::string& nodeId);
     void reparentRequested(const std::string& nodeId, const std::string& newParentId);
+    void visibilityToggled(const std::string& nodeId, bool isolate);
+    void showAllRequested();
 
 private slots:
     void onSelectionChanged();
@@ -67,13 +72,16 @@ private slots:
 
 private:
     void populateItem(QTreeWidgetItem* parent, const PrefabAsset& asset,
-                      const std::string& nodeId, const std::string& selectedNodeId);
+                      const std::string& nodeId, const std::string& selectedNodeId,
+                      bool parentHidden, bool underIsolated);
     void appendComponentItems(QTreeWidgetItem* nodeItem, const PrefabNode& node);
     QTreeWidgetItem* selectedItem() const;
 
     PrefabHierarchyTree* m_tree = nullptr;
     QPushButton* m_addComponentBtn = nullptr;
     std::string m_rootNodeId;
+    std::unordered_set<std::string> m_hiddenNodes;
+    std::string m_isolatedNode;
 };
 
 } // namespace QtEditor

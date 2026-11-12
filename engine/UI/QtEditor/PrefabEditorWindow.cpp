@@ -341,6 +341,10 @@ void PrefabEditorWindow::setupConnections() {
             this, &PrefabEditorWindow::onHierarchyFocusInViewport);
     connect(m_hierarchyPanel, &PrefabHierarchyPanel::reparentRequested,
             this, &PrefabEditorWindow::onHierarchyReparent);
+    connect(m_hierarchyPanel, &PrefabHierarchyPanel::visibilityToggled,
+            this, &PrefabEditorWindow::onHierarchyVisibilityToggled);
+    connect(m_hierarchyPanel, &PrefabHierarchyPanel::showAllRequested,
+            this, &PrefabEditorWindow::onHierarchyShowAll);
 
     // Inspector signals
     connect(m_inspectorPanel, &PrefabInspectorPanel::nameChanged,
@@ -1078,7 +1082,42 @@ void PrefabEditorWindow::syncTransformFromViewportToDocument() {
 
 void PrefabEditorWindow::rebuildHierarchy() {
     if (!m_document) return;
+    m_hierarchyPanel->SetVisibility(m_hiddenNodes, m_isolatedNode);
     m_hierarchyPanel->Rebuild(m_document->GetAsset(), m_selectedNodeId);
+    applyEditorVisibility();
+}
+
+void PrefabEditorWindow::onHierarchyVisibilityToggled(const std::string& nodeId, bool isolate) {
+    if (isolate) {
+        m_isolatedNode = m_isolatedNode == nodeId ? std::string() : nodeId;
+    } else if (!m_hiddenNodes.erase(nodeId)) {
+        m_hiddenNodes.insert(nodeId);
+    }
+    rebuildHierarchy();
+}
+
+void PrefabEditorWindow::onHierarchyShowAll() {
+    m_hiddenNodes.clear();
+    m_isolatedNode.clear();
+    rebuildHierarchy();
+}
+
+// The preview's EditorContext hides by entity (and follows the hierarchy); nodes map to the current preview entities.
+void PrefabEditorWindow::applyEditorVisibility() {
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+    ctx->ShowAllEditorEntities();
+    for (const std::string& nodeId : m_hiddenNodes) {
+        if (Entity entity = findEntityByNodeId(nodeId)) {
+            ctx->SetEditorHidden(static_cast<entt::entity>(entity), true);
+        }
+    }
+    if (!m_isolatedNode.empty()) {
+        if (Entity entity = findEntityByNodeId(m_isolatedNode)) {
+            ctx->IsolateEntities({ static_cast<entt::entity>(entity) });
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
