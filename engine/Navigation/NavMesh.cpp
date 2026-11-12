@@ -18,6 +18,7 @@ namespace {
 
 constexpr int kMaxPathPolys = 256;
 constexpr unsigned short kWalkableFlag = 1;
+constexpr unsigned char kVaultArea = 1;
 
 struct HeightfieldDeleter { void operator()(rcHeightfield* p) const { rcFreeHeightField(p); } };
 struct CompactDeleter { void operator()(rcCompactHeightfield* p) const { rcFreeCompactHeightfield(p); } };
@@ -84,6 +85,120 @@ NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes)
         *skippedShapes = skipped;
     }
     return geometry;
+}
+
+namespace {
+
+struct BoxBounds {
+    Vec3 min;
+    Vec3 max;
+};
+
+bool Overlaps(const BoxBounds& a, const BoxBounds& b)
+{
+    return a.min.x < b.max.x && a.max.x > b.min.x && a.min.y < b.max.y && a.max.y > b.min.y &&
+           a.min.z < b.max.z && a.max.z > b.min.z;
+}
+
+} // namespace
+
+int AddVaultLinks(Scene& scene, const NavBuildSettings& s, NavGeometry& geometry)
+{
+    struct Box {
+        Vec3 centre;
+        Vec3 axisX;  // half extents along the box's own axes, in world space
+        Vec3 axisY;
+        Vec3 axisZ;
+        BoxBounds bounds;
+    };
+    std::vector<Box> boxes;
+    auto view = scene.GetRegistry().view<TransformComponent, RigidBodyComponent, PhysicsShapeComponent>();
+    for (auto handle : view) {
+        const auto& body = view.get<RigidBodyComponent>(handle);
+        const auto& shape = view.get<PhysicsShapeComponent>(handle);
+        if (!body.IsStatic() || body.isTrigger || shape.type != PhysicsShapeType::Box) {
+            continue;
+        }
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        Box box;
+        box.centre = Mat4::TransformPoint(world, shape.offset);
+        auto axis = [&](const Vec3& local) {
+            const Vec3 p = Mat4::TransformPoint(world, Vec3(shape.offset.x + local.x, shape.offset.y + local.y,
+                                                             shape.offset.z + local.z));
+            return Vec3(p.x - box.centre.x, p.y - box.centre.y, p.z - box.centre.z);
+        };
+        box.axisX = axis(Vec3(shape.extents.x, 0.0f, 0.0f));
+        box.axisY = axis(Vec3(0.0f, shape.extents.y, 0.0f));
+        box.axisZ = axis(Vec3(0.0f, 0.0f, shape.extents.z));
+        const Vec3 reach(std::fabs(box.axisX.x) + std::fabs(box.axisY.x) + std::fabs(box.axisZ.x),
+                         std::fabs(box.axisX.y) + std::fabs(box.axisY.y) + std::fabs(box.axisZ.y),
+                         std::fabs(box.axisX.z) + std::fabs(box.axisY.z) + std::fabs(box.axisZ.z));
+        box.bounds = {Vec3(box.centre.x - reach.x, box.centre.y - reach.y, box.centre.z - reach.z),
+                      Vec3(box.centre.x + reach.x, box.centre.y + reach.y, box.centre.z + reach.z)};
+        boxes.push_back(box);
+    }
+
+    int added = 0;
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        const Box& box = boxes[i];
+        const float halfHeight = std::sqrt(box.axisY.x * box.axisY.x + box.axisY.y * box.axisY.y +
+                                           box.axisY.z * box.axisY.z);
+        if (halfHeight < 1e-4f || std::fabs(box.axisY.y) / halfHeight < 0.98f) {
+            continue;  // tilted: not cover to vault
+        }
+        const float height = 2.0f * halfHeight;
+        if (height < s.vaultMinHeight || height > s.vaultMaxHeight) {
+            continue;
+        }
+        const float halfX = std::sqrt(box.axisX.x * box.axisX.x + box.axisX.z * box.axisX.z);
+        const float halfZ = std::sqrt(box.axisZ.x * box.axisZ.x + box.axisZ.z * box.axisZ.z);
+        const bool thinX = halfX <= halfZ;
+        const float halfDepth = thinX ? halfX : halfZ;
+        const float halfLength = thinX ? halfZ : halfX;
+        if (2.0f * halfDepth > s.vaultMaxDepth || halfDepth < 1e-4f) {
+            continue;
+        }
+        const Vec3& across = thinX ? box.axisX : box.axisZ;
+        const Vec3& along = thinX ? box.axisZ : box.axisX;
+        const Vec3 acrossDir(across.x / halfDepth, 0.0f, across.z / halfDepth);
+        const Vec3 alongDir(along.x / halfLength, 0.0f, along.z / halfLength);
+        const float floorY = box.centre.y - halfHeight;
+        const float topY = box.centre.y + halfHeight;
+        const float toEnd = halfDepth + s.vaultLinkReach;
+        const int count = std::max(1, static_cast<int>(std::floor(2.0f * halfLength / s.vaultLinkSpacing)));
+        for (int k = 0; k < count; ++k) {
+            const float t = (static_cast<float>(k) + 0.5f) / static_cast<float>(count) * 2.0f * halfLength -
+                            halfLength;
+            const Vec3 mid(box.centre.x + alongDir.x * t, floorY, box.centre.z + alongDir.z * t);
+            const Vec3 from(mid.x - acrossDir.x * toEnd, floorY, mid.z - acrossDir.z * toEnd);
+            const Vec3 to(mid.x + acrossDir.x * toEnd, floorY, mid.z + acrossDir.z * toEnd);
+            // A standing body crossing the top must not run into anything (a window's lintel, a wall behind).
+            const float r = s.agentRadius;
+            const BoxBounds corridor{
+                Vec3(std::min(from.x, to.x) - r, topY + 0.05f, std::min(from.z, to.z) - r),
+                Vec3(std::max(from.x, to.x) + r, topY + s.agentHeight, std::max(from.z, to.z) + r)};
+            bool blocked = false;
+            for (size_t j = 0; j < boxes.size() && !blocked; ++j) {
+                blocked = j != i && Overlaps(corridor, boxes[j].bounds);
+            }
+            // Both ends must stand on something level with the cover's foot (not a lintel, not a drop).
+            auto standsOn = [&](const Vec3& p) {
+                for (size_t j = 0; j < boxes.size(); ++j) {
+                    const BoxBounds& b = boxes[j].bounds;
+                    if (j != i && p.x >= b.min.x && p.x <= b.max.x && p.z >= b.min.z && p.z <= b.max.z &&
+                        std::fabs(b.max.y - floorY) <= s.agentMaxClimb) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            if (!blocked && standsOn(from) && standsOn(to)) {
+                geometry.links.push_back({from, to});
+                ++added;
+            }
+        }
+    }
+    return added;
 }
 
 NavMesh::~NavMesh()
@@ -209,6 +324,29 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     params.cs = cfg.cs;
     params.ch = cfg.ch;
     params.buildBvTree = true;
+    std::vector<float> linkVerts;
+    std::vector<float> linkRadii;
+    std::vector<unsigned char> linkDirs;
+    std::vector<unsigned char> linkAreas;
+    std::vector<unsigned short> linkFlags;
+    std::vector<unsigned int> linkIds;
+    for (const NavLink& link : geometry.links) {
+        linkVerts.insert(linkVerts.end(), {link.from.x, link.from.y, link.from.z, link.to.x, link.to.y, link.to.z});
+        linkRadii.push_back(s.agentRadius);
+        linkDirs.push_back(DT_OFFMESH_CON_BIDIR);
+        linkAreas.push_back(kVaultArea);
+        linkFlags.push_back(kWalkableFlag);
+        linkIds.push_back(static_cast<unsigned int>(linkIds.size()));
+    }
+    if (!geometry.links.empty()) {
+        params.offMeshConVerts = linkVerts.data();
+        params.offMeshConRad = linkRadii.data();
+        params.offMeshConDir = linkDirs.data();
+        params.offMeshConAreas = linkAreas.data();
+        params.offMeshConFlags = linkFlags.data();
+        params.offMeshConUserID = linkIds.data();
+        params.offMeshConCount = static_cast<int>(geometry.links.size());
+    }
 
     unsigned char* data = nullptr;
     int dataSize = 0;
@@ -229,6 +367,7 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
         error = "could not initialise the navmesh query";
         return false;
     }
+    m_vaultLinkCost = s.vaultLinkCost;
     return true;
 }
 
@@ -249,13 +388,18 @@ bool NavMesh::ClosestPoint(const Vec3& point, Vec3& out, const Vec3& searchExten
     return true;
 }
 
-bool NavMesh::FindPath(const Vec3& from, const Vec3& to, std::vector<Vec3>& corners) const
+bool NavMesh::FindPath(const Vec3& from, const Vec3& to, std::vector<Vec3>& corners,
+                       std::vector<unsigned char>* linkStarts) const
 {
     corners.clear();
+    if (linkStarts) {
+        linkStarts->clear();
+    }
     if (!m_query) {
         return false;
     }
     dtQueryFilter filter;
+    filter.setAreaCost(kVaultArea, m_vaultLinkCost);
     const float extents[3] = {2.0f, 4.0f, 2.0f};
     const float start[3] = {from.x, from.y, from.z};
     const float end[3] = {to.x, to.y, to.z};
@@ -281,15 +425,19 @@ bool NavMesh::FindPath(const Vec3& from, const Vec3& to, std::vector<Vec3>& corn
         m_query->closestPointOnPoly(polys[polyCount - 1], endPoint, target, nullptr);
     }
     float straight[kMaxPathPolys * 3];
+    unsigned char straightFlags[kMaxPathPolys];
     int straightCount = 0;
-    if (dtStatusFailed(m_query->findStraightPath(startPoint, target, polys, polyCount, straight, nullptr, nullptr,
-                                                 &straightCount, kMaxPathPolys)) ||
+    if (dtStatusFailed(m_query->findStraightPath(startPoint, target, polys, polyCount, straight, straightFlags,
+                                                 nullptr, &straightCount, kMaxPathPolys)) ||
         straightCount == 0) {
         return false;
     }
     corners.reserve(static_cast<size_t>(straightCount));
     for (int i = 0; i < straightCount; ++i) {
         corners.emplace_back(straight[i * 3], straight[i * 3 + 1], straight[i * 3 + 2]);
+        if (linkStarts) {
+            linkStarts->push_back((straightFlags[i] & DT_STRAIGHTPATH_OFFMESH_CONNECTION) ? 1 : 0);
+        }
     }
     return true;
 }

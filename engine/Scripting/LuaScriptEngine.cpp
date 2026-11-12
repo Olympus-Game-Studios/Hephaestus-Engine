@@ -5287,8 +5287,20 @@ int LuaScriptEngine::Lua_Animator_SetLayer(lua_State* L) {
         }
     }
     lua_pop(L, 1);
+    lua_getfield(L, 3, "phase");
+    const bool hasPhase = lua_isnumber(L, -1) != 0;
+    const float phase = hasPhase ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+    lua_pop(L, 1);
     std::string error = character ? std::string() : std::string("No character");
     if (character && Hephaestus::CharacterAnimationSystem::SetLayer(*character, layer, error)) {
+        if (hasPhase) {
+            // Phase 1 would wrap to 0, so a clip played through to its end holds its last pose.
+            for (CharacterAnimationLayer& stored : character->layers) {
+                if (stored.name == layer.name) {
+                    stored.phase = std::clamp(phase, 0.0f, 0.9999f);
+                }
+            }
+        }
         lua_pushboolean(L, true);
         return 1;
     }
@@ -9134,14 +9146,17 @@ Hephaestus::Navigation::NavMesh* LuaScriptEngine::EnsureNavMesh() {
     if (!m_NavBuildAttempted && m_Scene) {
         m_NavBuildAttempted = true;
         int skipped = 0;
-        const auto geometry = Hephaestus::Navigation::CollectSceneGeometry(*m_Scene, &skipped);
+        auto geometry = Hephaestus::Navigation::CollectSceneGeometry(*m_Scene, &skipped);
+        const Hephaestus::Navigation::NavBuildSettings settings;
+        const int links = Hephaestus::Navigation::AddVaultLinks(*m_Scene, settings, geometry);
         auto mesh = std::make_unique<Hephaestus::Navigation::NavMesh>();
         std::string error;
-        if (mesh->Build(geometry, Hephaestus::Navigation::NavBuildSettings{}, error)) {
+        if (mesh->Build(geometry, settings, error)) {
             Hephaestus::EngineLog::Write(
                 Hephaestus::EngineLogLevel::Info,
                 "Navmesh built: " + std::to_string(mesh->PolygonCount()) + " polygons from " +
-                    std::to_string(geometry.triangles.size() / 3) + " triangles" +
+                    std::to_string(geometry.triangles.size() / 3) + " triangles, " + std::to_string(links) +
+                    " vault links" +
                     (skipped ? ", " + std::to_string(skipped) + " non-box static shapes left out" : ""),
                 "Navigation");
             m_NavMesh = std::move(mesh);
@@ -9224,14 +9239,19 @@ int LuaScriptEngine::Lua_Nav_findPath(lua_State* L) {
     Vec3 to;
     auto* mesh = engine ? engine->EnsureNavMesh() : nullptr;
     std::vector<Vec3> corners;
+    std::vector<unsigned char> linkStarts;
     if (!mesh || !engine->ReadNavPoint(L, 1, from) || !engine->ReadNavPoint(L, 2, to) ||
-        !mesh->FindPath(from, to, corners)) {
+        !mesh->FindPath(from, to, corners, &linkStarts)) {
         lua_pushnil(L);
         return 1;
     }
     lua_createtable(L, static_cast<int>(corners.size()), 0);
     for (size_t i = 0; i < corners.size(); ++i) {
         PushVec3Table(L, corners[i]);
+        if (linkStarts[i]) {
+            lua_pushboolean(L, 1);
+            lua_setfield(L, -2, "link");
+        }
         lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
     }
     return 1;

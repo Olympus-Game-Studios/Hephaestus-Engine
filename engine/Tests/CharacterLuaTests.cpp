@@ -106,6 +106,41 @@ bool WriteFile(const fs::path& path, const std::string& contents) {
     return static_cast<bool>(out);
 }
 
+bool TestLayerPhase(const fs::path& root) {
+    bool ok = true;
+    ok &= Check(WriteFile(root / "assets" / "scripts" / "LayerPhase.lua", R"(
+function onUpdate(dt)
+    local animator = this:GetAnimator()
+    _G.setOk = animator:SetLayer("Legs", { clips = { "Idle" }, mask = "Child", rate = 0, phase = _G.phase or 0.25 })
+end
+)"), "write LayerPhase script");
+    Scene scene("LayerPhase");
+    Entity entity = scene.CreateEntity("Soldier");
+    auto& character = entity.AddComponent<CharacterComponent>();
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, skeleton, {MakeClip(skeleton, "Idle", true, 1.0f)},
+                                                      error),
+                "bind runtime");
+    entity.AddComponent<LuaScriptComponent>().scriptPath = "assets/scripts/LayerPhase.lua";
+    LuaScriptEngine engine;
+    engine.Initialize(&scene, nullptr);
+    engine.SetProjectRoot(root);
+    engine.OnSimulationStarted();
+    engine.Update(scene, 0.016f);
+    CharacterAnimationSystem::Tick(scene, 0.5f);
+    ok &= Check(engine.ExecuteString("assert(_G.setOk == true)"), "SetLayer with a phase succeeds");
+    ok &= Check(character.layers.size() == 1 && std::fabs(character.layers[0].phase - 0.25f) < 1e-5f,
+                "a layer set to a phase with rate 0 stays there");
+    ok &= Check(engine.ExecuteString("_G.phase = 1"), "set phase 1");
+    engine.Update(scene, 0.016f);
+    CharacterAnimationSystem::Tick(scene, 0.5f);
+    ok &= Check(character.layers.size() == 1 && character.layers[0].phase > 0.99f,
+                "phase 1 holds the clip's last pose instead of wrapping to the start");
+    return ok;
+}
+
 bool TestAnimatorSetTime(const fs::path& root) {
     bool ok = true;
     ok &= Check(WriteFile(root / "assets" / "scripts" / "SetTime.lua", R"(
@@ -509,6 +544,7 @@ int main() {
     fs::create_directories(root / "assets" / "scripts");
     ok &= TestSlotsAndAnimator(root);
     ok &= TestAnimatorSetTime(root);
+    ok &= TestLayerPhase(root);
     ok &= TestControllerDisabled(root);
     ok &= TestBrokenControllerIsolation(root);
     ok &= TestSceneReloadRequestLifecycle();

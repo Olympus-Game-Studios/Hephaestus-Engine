@@ -103,6 +103,68 @@ int main()
     NavMesh empty;
     Check(!empty.Build(NavGeometry{}, NavBuildSettings{}, error) && !empty.IsReady(), "empty geometry is rejected");
 
+    // A 1 m high, 0.3 m thick wall right across a floor: the only way over is a vault link.
+    Scene vaultScene("VaultScene");
+    auto addStatic = [&](Scene& target, const char* name, const Vec3& position, const Vec3& half) {
+        Entity entity = target.CreateEntity(name);
+        entity.GetComponent<TransformComponent>().position = position;
+        auto& body = entity.AddComponent<RigidBodyComponent>();
+        body.SetMotion(RigidBodyMotion::Static);
+        body.mass = 0.0f;
+        entity.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(half));
+    };
+    addStatic(vaultScene, "Floor", Vec3(0.0f, -0.5f, 0.0f), Vec3(10.0f, 0.5f, 10.0f));
+    addStatic(vaultScene, "HalfWall", Vec3(0.0f, 0.5f, 0.0f), Vec3(0.15f, 0.5f, 10.0f));
+    NavGeometry vaultGeometry = Hephaestus::Navigation::CollectSceneGeometry(vaultScene);
+    const NavBuildSettings settings;
+    const int links = Hephaestus::Navigation::AddVaultLinks(vaultScene, settings, vaultGeometry);
+    Check(links == 13 && vaultGeometry.links.size() == 13, "a 20 m half wall gets a vault link every 1.5 m");
+    const auto& first = vaultGeometry.links.front();
+    Check(std::fabs(first.from.x + 0.75f) < 1e-3f && std::fabs(first.to.x - 0.75f) < 1e-3f &&
+              std::fabs(first.from.y) < 1e-3f,
+          "a vault link runs across the wall, 0.6 m out from each face, on the floor");
+    NavMesh vaultMesh;
+    std::vector<unsigned char> linkStarts;
+    Check(vaultMesh.Build(vaultGeometry, settings, error) &&
+              vaultMesh.FindPath(Vec3(-5.0f, 0.0f, 1.0f), Vec3(5.0f, 0.0f, 1.0f), path, &linkStarts) &&
+              path.size() == linkStarts.size(),
+          "a path across a wall the navmesh cannot walk round is found");
+    size_t linkAt = path.size();
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        if (linkStarts[i]) {
+            linkAt = i;
+            break;
+        }
+    }
+    Check(linkAt + 1 < path.size() && path[linkAt].x < -0.5f && path[linkAt + 1].x > 0.5f,
+          "the path marks the corner where it vaults, and the next corner is over the wall");
+
+    Scene shortScene("ShortWallScene");
+    addStatic(shortScene, "Floor", Vec3(0.0f, -0.5f, 0.0f), Vec3(10.0f, 0.5f, 10.0f));
+    addStatic(shortScene, "HalfWall", Vec3(0.0f, 0.5f, 0.0f), Vec3(0.15f, 0.5f, 1.0f));
+    NavGeometry shortGeometry = Hephaestus::Navigation::CollectSceneGeometry(shortScene);
+    Hephaestus::Navigation::AddVaultLinks(shortScene, settings, shortGeometry);
+    NavMesh shortMesh;
+    bool vaulted = false;
+    NavBuildSettings costly = settings;
+    costly.vaultLinkCost = 20.0f;
+    Check(shortMesh.Build(shortGeometry, costly, error) &&
+              shortMesh.FindPath(Vec3(-3.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 0.0f), path, &linkStarts),
+          "a path past a short half wall is found");
+    for (unsigned char start : linkStarts) {
+        vaulted = vaulted || start != 0;
+    }
+    Check(!shortGeometry.links.empty() && !vaulted, "with costly vault links a short half wall is walked round");
+
+    Scene lintelScene("LintelScene");
+    addStatic(lintelScene, "Floor", Vec3(0.0f, -0.5f, 0.0f), Vec3(10.0f, 0.5f, 10.0f));
+    addStatic(lintelScene, "HalfWall", Vec3(0.0f, 0.5f, 0.0f), Vec3(0.15f, 0.5f, 1.0f));
+    addStatic(lintelScene, "Lintel", Vec3(0.0f, 2.5f, 0.0f), Vec3(0.15f, 0.5f, 1.0f));
+    addStatic(lintelScene, "TallBox", Vec3(5.0f, 1.0f, 5.0f), Vec3(1.0f, 1.0f, 1.0f));
+    NavGeometry lintelGeometry = Hephaestus::Navigation::CollectSceneGeometry(lintelScene);
+    Check(Hephaestus::Navigation::AddVaultLinks(lintelScene, settings, lintelGeometry) == 0,
+          "no vault links under a lintel or over cover too tall to vault");
+
     if (!g_pass) {
         return 1;
     }

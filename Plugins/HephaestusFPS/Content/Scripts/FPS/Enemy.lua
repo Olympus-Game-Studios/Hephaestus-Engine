@@ -14,6 +14,7 @@ local Cover = require("FPS.AI.Cover")
 local Brain = require("FPS.AI.Brain")
 local Tactics = require("FPS.AI.Tactics")
 local Smoke = require("FPS.AI.Smoke")
+local Mantle = require("FPS.Mantle")
 local Tracers = require("FPS.Tracers")
 
 Expose.number("maxHealth", 100)
@@ -56,6 +57,15 @@ Expose.string("runStrafeLeftClip", "JogStrafeLeft")
 Expose.string("runStrafeRightClip", "JogStrafeRight")
 Expose.number("walkClipSpeed", 1.6) -- metres per second the walk clips cover, so the feet do not slide
 Expose.number("runClipSpeed", 4.0)
+-- Vaulting (along navmesh vault links over low cover) and sliding, played on the hips and legs only so the upper
+-- body keeps aiming. The clips are in place: the soldier is moved here at its own pace.
+Expose.string("vaultClip", "RunningJump") -- "" vaults without the legs animating
+Expose.number("vaultClipSeconds", 0.9)
+Expose.string("slideClip", "RunningSlide") -- "" never slides
+Expose.number("slideClipSeconds", 1.6)
+Expose.number("slideChancePerSecond", 0.25) -- chance each second of running a long straight stretch
+Expose.number("slideMinRun", 8) -- metres of straight path ahead needed to slide (a slide covers about 6.6)
+Expose.number("slideCooldown", 8)
 Expose.string("fragGrenadePrefab", "")
 Expose.number("grenadeDamage", 150)
 Expose.number("throwAngleDegrees", 40)
@@ -90,6 +100,8 @@ local fire = { magazine = 30, reloading = 0, reaction = 0, burstLeft = 0, shotTi
 local currentClip = nil
 local legsLayer = true -- false once the strafe clips turn out to be missing
 local speedScale = 0
+local move = nil -- a vault or slide in progress
+local slideCooldownLeft = 0
 local wishX, wishZ = 0, 0
 local faceTarget = nil
 local dead = false
@@ -879,6 +891,112 @@ local function updateLegs(vx, vz, speed)
     end
 end
 
+-- One of the in-place vault or slide clips on the hips and legs, at phase (0 to 1) through it.
+local function legsMove(clip, phase)
+    local animator = this:GetAnimator()
+    if not animator or not legsLayer or clip == "" then
+        return
+    end
+    local ok, err = animator:SetLayer("Legs", { clips = { clip }, mask = "Hips", exclude = "Spine",
+                                                excludeBlend = 0.5, fade = 0.1, rate = 0, phase = phase })
+    if not ok then
+        engine_log("[FPS.Enemy] " .. clip .. " is off: " .. tostring(err))
+        if clip == vaultClip then
+            vaultClip = ""
+        else
+            slideClip = ""
+        end
+    end
+end
+
+-- Over the low cover a navmesh vault link crosses: the same path as the player's vault when the cover is found,
+-- otherwise up as the body reaches the cover, over, and down to the link's far end (links reach 0.6 m out from each
+-- face, and the body is 0.3 m wide each way).
+local function startVault(link, speed)
+    local p = position()
+    local dx, dz = link.to.x - link.from.x, link.to.z - link.from.z
+    local length = math.sqrt(dx * dx + dz * dz)
+    if length < 1e-3 then
+        Mover.finishLink(mover)
+        return
+    end
+    dx, dz = dx / length, dz / length
+    -- The link reaches 0.6 m out from each face, so the cover is about that much less deep than the link is long.
+    local plan = Mantle.find(p, dx, dz, { reach = length, radius = 0.3, vaultMaxHeight = 1.15,
+                                          vaultDepth = math.max(0.2, length - 1.15), vaultOnly = true })
+    if not plan then
+        local mx, mz = (link.from.x + link.to.x) / 2, (link.from.z + link.to.z) / 2
+        local hit = Physics.raycast(mx, link.from.y + 2.5, mz, 0, -1, 0, 2.5, nil, true)
+        local topY = (hit and hit.point and hit.point.y or link.from.y + 1.0) + 0.05
+        plan = { kind = "vault", fromLink = true, height = topY - p.y, linear = true, points = {
+            { x = p.x, y = p.y, z = p.z },
+            { x = link.from.x + dx * 0.3, y = topY, z = link.from.z + dz * 0.3 },
+            { x = link.to.x - dx * 0.3, y = topY, z = link.to.z - dz * 0.3 },
+            { x = link.to.x, y = link.to.y, z = link.to.z } } }
+    end
+    move = { kind = "vault", plan = plan, link = link, elapsed = 0, dirX = dx, dirZ = dz,
+             seconds = Mantle.vaultDuration(plan, math.max(speed, runClipSpeed), 0.5, vaultClipSeconds) }
+    if debugAI then
+        engine_log(string.format("[FPS.Enemy] %s vaults %.1f m cover at %.1f, %.1f (%s)", this:GetName(),
+                                 plan.height, p.x, p.z, plan.fromLink and "over the link" or "over the cover"))
+    end
+end
+
+-- Runs the vault or slide in progress; clears `move` when it ends.
+local function updateMove(dt)
+    move.elapsed = move.elapsed + dt
+    local t = math.min(1, move.elapsed / move.seconds)
+    if move.kind == "vault" then
+        local q = Mantle.position(move.plan, t)
+        Character.move(0, 0)
+        Character.teleport(q.x, q.y, q.z)
+        legsMove(vaultClip, t)
+        if t >= 1 then
+            if mover.link == move.link then
+                Mover.finishLink(mover)
+            end
+            move = nil
+        end
+        return
+    end
+    Character.move(move.dirX, move.dirZ)
+    -- Low between the clip's drop and its getting up again, like the player's slide.
+    Character.setCrouched(t > 0.1 and t < 0.75)
+    legsMove(slideClip, t)
+    local velocity = Character.getVelocity() or {}
+    local speed = math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2)
+    if t >= 1 or (move.elapsed > 0.3 and speed < 1) then
+        Character.setCrouched(false)
+        move = nil
+        slideCooldownLeft = slideCooldown
+    end
+end
+
+-- Sometimes slides when running a long straight stretch of its path, facing the way it runs.
+local function maybeSlide(p, speed, dt)
+    slideCooldownLeft = slideCooldownLeft - dt
+    if slideClip == "" or slideCooldownLeft > 0 or speed < 3.2 or not mover.path or mover.arrived or mover.link then
+        return
+    end
+    local corner = mover.path[mover.index]
+    if not corner or corner.link then
+        return
+    end
+    local dx, dz = corner.x - p.x, corner.z - p.z
+    local run = math.sqrt(dx * dx + dz * dz)
+    if run < slideMinRun then
+        return
+    end
+    local facing = (math.atan(-dz, dx) - yaw + math.pi) % (2 * math.pi) - math.pi
+    if math.abs(facing) > math.rad(30) or random() >= slideChancePerSecond * dt then
+        return
+    end
+    move = { kind = "slide", elapsed = 0, seconds = slideClipSeconds, dirX = dx / run, dirZ = dz / run }
+    if debugAI then
+        engine_log(string.format("[FPS.Enemy] %s slides at %.1f, %.1f", this:GetName(), p.x, p.z))
+    end
+end
+
 local function parsePatrolPoints()
     local list = {}
     for x, z in string.gmatch(patrolPoints or "", "(-?[%d%.]+)%s*,%s*(-?[%d%.]+)") do
@@ -1021,18 +1139,29 @@ function onUpdate(dt)
 
     local p = position()
     wishX, wishZ = 0, 0
-    if speedScale > 0 then
-        local arrived
-        wishX, wishZ, arrived = Mover.update(mover, p, dt, 0.5)
-        if arrived then
-            speedScale = 0
+    if move then
+        wishX, wishZ = move.dirX, move.dirZ
+        updateMove(dt)
+    else
+        if speedScale > 0 then
+            local arrived
+            wishX, wishZ, arrived = Mover.update(mover, p, dt, 0.5)
+            if arrived then
+                speedScale = 0
+            elseif mover.link then
+                startVault(mover.link, selfRow.speed or 0)
+            end
+        end
+        if not move then
+            Character.move(wishX, wishZ)
         end
     end
-    Character.move(wishX, wishZ)
     Character.setSpeedMultiplier(math.max(speedScale, 0.01))
 
     local targetYaw = yaw
-    if faceTarget then
+    if move and move.kind == "vault" then
+        targetYaw = math.atan(-move.dirZ, move.dirX)
+    elseif faceTarget then
         targetYaw = math.atan(-(faceTarget.z - p.z), faceTarget.x - p.x)
     elseif wishX ~= 0 or wishZ ~= 0 then
         targetYaw = math.atan(-wishZ, wishX)
@@ -1046,7 +1175,12 @@ function onUpdate(dt)
     local speed = math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2)
     selfRow.speed = speed
     playClip(speed < 0.4 and idleClip or (speed < 3.2 and walkClip or runClip))
-    updateLegs(velocity.x or 0, velocity.z or 0, speed)
+    if not move then
+        maybeSlide(p, speed, dt)
+    end
+    if not move then
+        updateLegs(velocity.x or 0, velocity.z or 0, speed)
+    end
 end
 
 function onHit(amount, zone, distance, attacker)

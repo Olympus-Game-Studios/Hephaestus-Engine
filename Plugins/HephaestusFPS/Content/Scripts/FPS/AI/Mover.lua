@@ -1,5 +1,6 @@
 -- Follows navmesh paths: plans with Nav.findPath, steers through the corners, and plans again when the goal moves
--- or the walker gets stuck.
+-- or the walker gets stuck. Where a path vaults low cover (a corner marked `link`), the walker stops there and
+-- `mover.link` holds the jump's two ends; the caller crosses it and then calls Mover.finishLink.
 local Mover = {}
 
 local CORNER_REACHED = 0.35
@@ -7,7 +8,7 @@ local STUCK_SECONDS = 1.0
 local STUCK_SPEED = 0.25
 
 function Mover.new()
-    return { path = nil, index = 1, goal = nil, arrived = true, stuckTime = 0, lastX = nil, lastZ = nil }
+    return { path = nil, index = 1, goal = nil, arrived = true, stuckTime = 0, lastX = nil, lastZ = nil, link = nil }
 end
 
 -- Plans a path to goal from position. Returns false when no path exists.
@@ -17,6 +18,7 @@ function Mover.setGoal(mover, position, goal)
     mover.index = 2
     mover.arrived = mover.path == nil
     mover.stuckTime = 0
+    mover.link = nil
     return mover.path ~= nil
 end
 
@@ -24,6 +26,17 @@ function Mover.stop(mover)
     mover.path = nil
     mover.goal = nil
     mover.arrived = true
+    mover.link = nil
+end
+
+-- After crossing mover.link: carries on from the corner it landed on.
+function Mover.finishLink(mover)
+    if mover.link then
+        mover.index = mover.index + 2
+        mover.link = nil
+        mover.lastX = nil
+        mover.stuckTime = 0
+    end
 end
 
 -- Plans again only when the goal has moved more than tolerance.
@@ -51,6 +64,10 @@ function Mover.update(mover, position, dt, arriveDistance)
         local reach = last and (arriveDistance or CORNER_REACHED) or CORNER_REACHED
         if dx * dx + dz * dz > reach * reach then
             break
+        end
+        if corner.link and path[mover.index + 1] then
+            mover.link = { from = corner, to = path[mover.index + 1] }
+            return 0, 0, false
         end
         mover.index = mover.index + 1
     end
