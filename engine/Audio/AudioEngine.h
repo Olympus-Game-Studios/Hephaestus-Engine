@@ -30,6 +30,10 @@ public:
         float volumeJitter = 0.0f; ///< volume varies by up to this fraction each play
         float pitchJitter = 0.0f;  ///< pitch varies by up to this fraction each play
         bool loop = false;
+        /// With loop: the stretch that repeats, in seconds (the sound plays from its start, then loops from
+        /// loopStart once it reaches loopEnd). loopEnd <= 0 is the end of the sound.
+        float loopStart = 0.0f;
+        float loopEnd = 0.0f;
         std::string bus = "sfx";
         int priority = 0; ///< a full voice budget never drops a sound for one of lower priority
         bool spatial = false;
@@ -53,6 +57,8 @@ public:
     SoundHandle Play(const std::string& path, bool loop = false, float volume = 1.0f);
     SoundHandle Play(const std::string& path, const PlayParams& params);
     bool Stop(SoundHandle handle);
+    /// Fades the sound out over fadeSeconds, then releases it (0 stops at once).
+    bool Stop(SoundHandle handle, float fadeSeconds);
     bool Pause(SoundHandle handle);
     bool Resume(SoundHandle handle);
     bool SetVolume(SoundHandle handle, float volume);

@@ -1,3 +1,4 @@
+local SlideEffects = require("FPS.SlideEffects")
 local Registry = require("FPS.Registry")
 local Logic = require("FPS.Logic")
 local Gunplay = require("FPS.Gunplay")
@@ -59,6 +60,17 @@ Expose.number("slideExitSeconds", 0.3) -- how long the camera takes to come back
 -- The player's own legs, seen while sliding: a character prefab with FPS/SlideLegs.lua ("" for none) and where it
 -- sits relative to the camera and the player's facing.
 Expose.string("slideLegsPrefab", "")
+-- The slide's sound and dust (FPS.SlideEffects): the sound plays from its start; while the slide lasts past
+-- slideSoundLoopEnd it repeats from slideSoundLoopStart (0 and 0 loop the whole sound), and it fades over
+-- slideSoundFadeSeconds when the slide ends. slideDustPrefab is a looping Particle Emitter with FPS/SlideDust.lua,
+-- emitting up to slideDustRate a second at full slide speed.
+Expose.string("slideSound", "")
+Expose.number("slideSoundVolume", 0.8)
+Expose.number("slideSoundLoopStart", 0)
+Expose.number("slideSoundLoopEnd", 0)
+Expose.number("slideSoundFadeSeconds", 0.2)
+Expose.string("slideDustPrefab", "")
+Expose.number("slideDustRate", 50)
 Expose.number("slideLegsForward", -0.1)
 Expose.number("slideLegsRight", -0.12)
 Expose.number("slideLegsBelowEye", 1.24) -- metres from the camera down to the model's origin, so the hips stay under it
@@ -176,6 +188,7 @@ local slide = nil
 local slideCooldownRemaining = 0
 local slideBlend = 0
 local slideLegs = nil
+local slideEffects = {}
 local tactical = false
 local tacticalCharge = 0
 local tacticalBlend = 0
@@ -644,6 +657,13 @@ function onUpdate(dt)
     Registry.player.eyeHeight = viewHeight
     Registry.player.slideBlend = slideBlend
     Registry.player.sliding = slide ~= nil
+    SlideEffects.update(slideEffects, slide ~= nil, {
+        entity = this, sound = slideSound, volume = slideSoundVolume, loopStart = slideSoundLoopStart,
+        loopEnd = slideSoundLoopEnd, fadeSeconds = slideSoundFadeSeconds, dustPrefab = slideDustPrefab,
+        dustOffset = { x = 0.9, y = 0.05, z = 0.35 }, dustRotation = { x = 0, y = 0, z = -50 },
+        dustRate = slideDustRate, speed = Registry.player.speed,
+        fullSpeed = 8,
+    })
     Registry.player.climbing = mantle ~= nil and mantle.plan.kind == "mantle"
     Registry.player.vaultProgress = mantle and mantle.plan.kind == "vault" and math.min(1, mantle.elapsed / mantle.seconds)
         or nil
@@ -1111,6 +1131,7 @@ function respawn(x, y, z, facingYaw)
 end
 
 function onDestroy()
+    SlideEffects.stop(slideEffects)
     if slideLegs and slideLegs:IsValid() then
         Scene.destroy(slideLegs)
     end

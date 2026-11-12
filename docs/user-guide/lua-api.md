@@ -72,6 +72,7 @@ For the script's own Particle Emitter.
 | --- | --- |
 | `Particles.play()` / `Particles.stop()` | Start emitting from the beginning (with its Burst), or stop emitting and let live particles finish. |
 | `Particles.burst(count)` | Emit `count` particles at once (the emitter's Burst if left out), playing or not. |
+| `Particles.setRate(perSecond)` | Change how many particles a second it emits while playing. |
 | `Particles.isPlaying()` / `Particles.count()` | Whether it is emitting, and how many particles are alive. |
 
 ## Time and application
@@ -214,8 +215,8 @@ From `this:GetCharacter()`: `c:GetSocket(name)` (world space) and `c:GetSocketLo
 | Function | Does |
 | --- | --- |
 | `Audio.play(path, loop, volume)` | Play a `.wav`, `.mp3` or `.flac` in 2D. `loop` defaults to false, `volume` (0 to 1) to 1. Returns a handle, or `0` if it failed. |
-| `Audio.play(path, options)` | Play with a table of `volume`, `pitch`, `loop`, `bus` (`sfx`, `weapons`, `music`, `ui`), `priority`, `pitchJitter`, `volumeJitter` and, for 3D, `position = {x, y, z}`, `minDistance` and `maxDistance`. |
-| `Audio.stop(h)` / `Audio.pause(h)` / `Audio.resume(h)` | Control a sound. |
+| `Audio.play(path, options)` | Play with a table of `volume`, `pitch`, `loop`, `bus` (`sfx`, `weapons`, `music`, `ui`), `priority`, `pitchJitter`, `volumeJitter` and, for 3D, `position = {x, y, z}`, `minDistance` and `maxDistance`. With `loop`, `loopStart` and `loopEnd` (seconds) make it play from the start, then repeat just that stretch once it reaches `loopEnd` (0 is the end). |
+| `Audio.stop(h)` / `Audio.pause(h)` / `Audio.resume(h)` | Control a sound. `Audio.stop(h, fadeSeconds)` fades it out first. |
 | `Audio.setVolume(h, volume)` / `Audio.setPitch(h, pitch)` | Change its volume or pitch (1 is normal speed). |
 | `Audio.setPosition(h, x, y, z)` | Move a sound, making it 3D. |
 | `Audio.isPlaying(h)` | Whether it's still playing. |

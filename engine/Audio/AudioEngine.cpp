@@ -48,6 +48,7 @@ struct AudioEngine::Impl {
         float baseVolume = 1.0f;
         float gain = 1.0f;
         bool paused = false;
+        bool fadingOut = false; ///< stopping with a fade; released once it has stopped
         uint64_t startOrder = 0;
     };
 
@@ -139,6 +140,8 @@ struct AudioEngine::Impl {
         std::vector<SoundHandle> finished;
         for (const auto& [handle, voice] : voices) {
             if (!voice->paused && !voice->params.loop && ma_sound_at_end(&voice->sound)) {
+                finished.push_back(handle);
+            } else if (voice->fadingOut && !ma_sound_is_playing(&voice->sound)) {
                 finished.push_back(handle);
             }
         }
@@ -327,6 +330,19 @@ AudioEngine::SoundHandle AudioEngine::Play(const std::string& path, const PlayPa
     const float pitch = Hephaestus::AudioMath::ApplyJitter(params.pitch, params.pitchJitter, impl.Unit());
     ma_sound_set_pitch(&voice->sound, std::max(0.01f, pitch));
     ma_sound_set_looping(&voice->sound, params.loop ? MA_TRUE : MA_FALSE);
+    if (params.loop && (params.loopStart > 0.0f || params.loopEnd > 0.0f)) {
+        ma_uint32 sampleRate = 0;
+        ma_uint64 length = 0;
+        if (ma_sound_get_data_format(&voice->sound, nullptr, nullptr, &sampleRate, nullptr, 0) == MA_SUCCESS &&
+            ma_sound_get_length_in_pcm_frames(&voice->sound, &length) == MA_SUCCESS && sampleRate > 0 && length > 0) {
+            const auto frames = [sampleRate](float seconds) {
+                return static_cast<ma_uint64>(std::max(0.0f, seconds) * static_cast<float>(sampleRate));
+            };
+            const ma_uint64 end = params.loopEnd > 0.0f ? std::min(length, frames(params.loopEnd)) : length;
+            const ma_uint64 begin = std::min(frames(params.loopStart), end > 0 ? end - 1 : 0);
+            ma_data_source_set_loop_point_in_pcm_frames(ma_sound_get_data_source(&voice->sound), begin, end);
+        }
+    }
     impl.ApplyVoiceVolume(*voice);
     voice->startOrder = impl.nextStartOrder++;
     if (ma_sound_start(&voice->sound) != MA_SUCCESS) {
@@ -342,6 +358,18 @@ bool AudioEngine::Stop(SoundHandle handle)
 {
     if (!m_Impl || m_Impl->voices.find(handle) == m_Impl->voices.end()) return false;
     m_Impl->Release(handle);
+    return true;
+}
+
+bool AudioEngine::Stop(SoundHandle handle, float fadeSeconds)
+{
+    if (fadeSeconds <= 0.0f) return Stop(handle);
+    if (!m_Impl) return false;
+    const auto it = m_Impl->voices.find(handle);
+    if (it == m_Impl->voices.end()) return false;
+    if (it->second->paused) return Stop(handle);
+    ma_sound_stop_with_fade_in_milliseconds(&it->second->sound, static_cast<ma_uint64>(fadeSeconds * 1000.0f));
+    it->second->fadingOut = true;
     return true;
 }
 

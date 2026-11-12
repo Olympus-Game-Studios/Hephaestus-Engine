@@ -3,6 +3,7 @@
 -- grenades and warns nearby teammates. How well it does all of this comes from FPS.AI.Difficulty, so a settings
 -- menu can change it.
 -- Needs a Character Controller, a Character (for animation) and hit zone children (FPS.HitZone with no owner).
+local SlideEffects = require("FPS.SlideEffects")
 local Registry = require("FPS.Registry")
 local Health = require("FPS.Health")
 local Gunplay = require("FPS.Gunplay")
@@ -66,6 +67,17 @@ Expose.number("slideClipSeconds", 1.6)
 Expose.number("slideChancePerSecond", 0.25) -- chance each second of running a long straight stretch
 Expose.number("slideMinRun", 8) -- metres of straight path ahead needed to slide (a slide covers about 6.6)
 Expose.number("slideCooldown", 8)
+-- The slide's sound and dust (FPS.SlideEffects): the sound plays from its start; while the slide lasts past
+-- slideSoundLoopEnd it repeats from slideSoundLoopStart (0 and 0 loop the whole sound), and it fades over
+-- slideSoundFadeSeconds when the slide ends. slideDustPrefab is a looping Particle Emitter with FPS/SlideDust.lua,
+-- emitting up to slideDustRate a second at full slide speed.
+Expose.string("slideSound", "")
+Expose.number("slideSoundVolume", 0.8)
+Expose.number("slideSoundLoopStart", 0)
+Expose.number("slideSoundLoopEnd", 0)
+Expose.number("slideSoundFadeSeconds", 0.2)
+Expose.string("slideDustPrefab", "")
+Expose.number("slideDustRate", 30)
 Expose.string("fragGrenadePrefab", "")
 Expose.number("grenadeDamage", 150)
 Expose.number("throwAngleDegrees", 40)
@@ -101,6 +113,7 @@ local currentClip = nil
 local legsLayer = true -- false once the strafe clips turn out to be missing
 local speedScale = 0
 local move = nil -- a vault or slide in progress
+local slideEffects = {}
 local slideCooldownLeft = 0
 local wishX, wishZ = 0, 0
 local faceTarget = nil
@@ -1085,6 +1098,19 @@ local function fall()
 end
 
 function onUpdate(dt)
+    local sliding = not dead and move ~= nil and move.kind == "slide"
+    if sliding or slideEffects.sliding then
+        local p = Transform.getPosition()
+        local velocity = Character.getVelocity() or {}
+        SlideEffects.update(slideEffects, sliding, {
+            entity = this, sound = slideSound, volume = slideSoundVolume, loopStart = slideSoundLoopStart,
+            loopEnd = slideSoundLoopEnd, fadeSeconds = slideSoundFadeSeconds, spatial = true,
+            position = { x = p.x, y = p.y, z = p.z }, minDistance = 2, maxDistance = 35,
+            dustPrefab = slideDustPrefab, dustOffset = { x = 0.6, y = 0.05, z = 0 }, dustRotation = { x = 0, y = 0, z = -50 },
+            dustRate = slideDustRate,
+            speed = math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2), fullSpeed = 6,
+        })
+    end
     if dead then
         if ragdollPending then
             ragdollPending = false
@@ -1252,6 +1278,7 @@ function onDeath(instigator)
 end
 
 function onDestroy()
+    SlideEffects.stop(slideEffects)
     Registry.removeCorpse(selfKey)
     if Registry.flanker == selfKey then
         Registry.flanker = nil

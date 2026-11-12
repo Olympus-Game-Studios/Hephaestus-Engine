@@ -532,6 +532,7 @@ private:
     static int Lua_Nav_randomPoint(lua_State* L);
     static int Lua_Particles_stop(lua_State* L);
     static int Lua_Particles_burst(lua_State* L);
+    static int Lua_Particles_setRate(lua_State* L);
     static int Lua_Particles_isPlaying(lua_State* L);
     static int Lua_Particles_count(lua_State* L);
 

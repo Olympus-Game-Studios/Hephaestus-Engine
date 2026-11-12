@@ -166,6 +166,21 @@ bool TestEngine(const fs::path& folder)
     std::this_thread::sleep_for(std::chrono::milliseconds(600));
     audio.Update();
     ok &= Check(audio.GetActiveVoiceCount() == 0, "finished one-shot voices are released");
+
+    AudioEngine::PlayParams region;
+    region.loop = true;
+    region.loopStart = 0.1f;
+    region.loopEnd = 0.2f;
+    const auto looped = audio.Play("tone.wav", region);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    audio.Update();
+    ok &= Check(audio.IsPlaying(looped), "a sound looping over a region keeps playing past its length");
+    ok &= Check(audio.Stop(looped, 0.1f) && audio.GetActiveVoiceCount() == 1,
+                "a faded stop keeps the voice while it fades");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    audio.Update();
+    ok &= Check(!audio.IsPlaying(looped) && audio.GetActiveVoiceCount() == 0,
+                "a faded stop releases the voice once the fade is done");
     audio.Shutdown();
     ok &= Check(!audio.IsBackendAvailable() && audio.Play("tone.wav") == AudioEngine::InvalidHandle,
                 "a shut-down engine plays nothing");

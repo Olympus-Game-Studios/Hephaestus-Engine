@@ -1266,6 +1266,8 @@ void LuaScriptEngine::RegisterParticleBindings() {
     lua_setfield(m_State, -2, "stop");
     lua_pushcfunction(m_State, Lua_Particles_burst);
     lua_setfield(m_State, -2, "burst");
+    lua_pushcfunction(m_State, Lua_Particles_setRate);
+    lua_setfield(m_State, -2, "setRate");
     lua_pushcfunction(m_State, Lua_Particles_isPlaying);
     lua_setfield(m_State, -2, "isPlaying");
     lua_pushcfunction(m_State, Lua_Particles_count);
@@ -1339,6 +1341,25 @@ int LuaScriptEngine::Lua_Particles_burst(lua_State* L) {
     Hephaestus::Particles::Burst(emitter, world, static_cast<int>(luaL_optinteger(L, 1, emitter.burst > 0 ? emitter.burst : 1)));
     lua_pushboolean(L, true);
     return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_setRate(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const float rate = static_cast<float>(luaL_checknumber(L, 1));
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        return 0;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (registry.all_of<ParticleEmitterComponent>(handle)) {
+        registry.get<ParticleEmitterComponent>(handle).rate = std::max(0.0f, rate);
+    }
+    return 0;
 #else
     (void)L;
     return 0;
@@ -6523,6 +6544,8 @@ int LuaScriptEngine::Lua_Audio_play(lua_State* L) {
         number("pitchJitter", params.pitchJitter);
         number("minDistance", params.minDistance);
         number("maxDistance", params.maxDistance);
+        number("loopStart", params.loopStart);
+        number("loopEnd", params.loopEnd);
         lua_getfield(L, 2, "loop");
         params.loop = lua_toboolean(L, -1) != 0;
         lua_pop(L, 1);
@@ -6571,7 +6594,8 @@ int LuaScriptEngine::Lua_Audio_stop(lua_State* L) {
     }
 
     uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
-    lua_pushboolean(L, engine->m_AudioEngine->Stop(handle));
+    const float fadeSeconds = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+    lua_pushboolean(L, engine->m_AudioEngine->Stop(handle, fadeSeconds));
     return 1;
 #else
     (void)L;
