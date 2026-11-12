@@ -457,6 +457,7 @@ private:
      * Register camera bindings
      */
     void RegisterCameraBindings();
+    void RegisterGraphicsBindings();
 
     /**
      * Register physics bindings
@@ -574,6 +575,9 @@ private:
     static int Lua_Camera_getRotation(lua_State* L);
     static int Lua_Camera_translate(lua_State* L);
     static int Lua_Camera_worldToScreen(lua_State* L);
+    static int Lua_Graphics_setMaxTextureSize(lua_State* L);
+    static int Lua_Graphics_getMaxTextureSize(lua_State* L);
+    static int Lua_Graphics_setScopeLens(lua_State* L);
 
     static int Lua_Physics_isAvailable(lua_State* L);
     static int Lua_Physics_hasBody(lua_State* L);

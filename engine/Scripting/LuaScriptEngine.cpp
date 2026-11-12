@@ -34,6 +34,7 @@
 #include "../Assets/AssetMountRegistry.h"
 #include "../Assets/AssetPathPolicy.h"
 #include "../Assets/CharacterRuntime.h"
+#include "../Gfx/EngineFrameRenderer.h"
 #include "../Animation/CharacterPlayback.h"
 #include "../Scene/CharacterComponent.h"
 #include "../Core/EngineLog.h"
@@ -955,6 +956,9 @@ void LuaScriptEngine::OnSimulationStarted() {
 
 void LuaScriptEngine::OnSimulationStopped() {
     m_NavMesh.reset();
+    if (m_FrameRenderer) {
+        m_FrameRenderer->SetScopeLens({});
+    }
     m_NavBuildAttempted = false;
     m_TimeScale = 1.0f;
 #if LUA_AVAILABLE
@@ -1182,6 +1186,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterExposeBindings();
     RegisterApplicationBindings();
     RegisterCameraBindings();
+    RegisterGraphicsBindings();
     RegisterPhysicsBindings();
     RegisterCharacterBindings();
     RegisterAudioBindings();
@@ -1526,6 +1531,81 @@ int LuaScriptEngine::Lua_Application_quit(lua_State* L) {
     (void)L;
     return 0;
 #endif
+}
+
+void LuaScriptEngine::RegisterGraphicsBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Graphics_setMaxTextureSize);
+    lua_setfield(m_State, -2, "setMaxTextureSize");
+    lua_pushcfunction(m_State, Lua_Graphics_getMaxTextureSize);
+    lua_setfield(m_State, -2, "getMaxTextureSize");
+    lua_pushcfunction(m_State, Lua_Graphics_setScopeLens);
+    lua_setfield(m_State, -2, "setScopeLens");
+    lua_setglobal(m_State, "Graphics");
+#endif
+}
+
+int LuaScriptEngine::Lua_Graphics_setMaxTextureSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const lua_Integer pixels = luaL_checkinteger(L, 1);
+    if (pixels < 0) {
+        return luaL_error(L, "Graphics.setMaxTextureSize: size must be 0 (no limit) or more");
+    }
+    if (engine && engine->m_FrameRenderer) {
+        engine->m_FrameRenderer->SetMaxMaterialTextureSize(static_cast<uint32_t>(pixels));
+    }
+#else
+    (void)L;
+#endif
+    return 0;
+}
+
+int LuaScriptEngine::Lua_Graphics_getMaxTextureSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushinteger(L, engine && engine->m_FrameRenderer ? engine->m_FrameRenderer->GetMaxMaterialTextureSize() : 0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Graphics_setScopeLens(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Hephaestus::EngineFrameRenderer::ScopeLens lens;
+    if (!lua_isnoneornil(L, 1)) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        auto number = [L](const char* key, float& out) {
+            lua_getfield(L, 1, key);
+            if (lua_isnumber(L, -1)) {
+                out = static_cast<float>(lua_tonumber(L, -1));
+            }
+            lua_pop(L, 1);
+        };
+        lens.radius = 0.45f;
+        number("radius", lens.radius);
+        number("distortion", lens.distortion);
+        number("aberration", lens.aberration);
+        number("edgeDarkening", lens.edgeDarkening);
+        number("ringWidth", lens.ringWidth);
+        number("opacity", lens.opacity);
+        lua_getfield(L, 1, "reticle");
+        if (!lua_isnil(L, -1)) {
+            lens.reticle = lua_toboolean(L, -1) != 0;
+        }
+        lua_pop(L, 1);
+    }
+    if (engine && engine->m_FrameRenderer) {
+        engine->m_FrameRenderer->SetScopeLens(lens);
+    }
+#else
+    (void)L;
+#endif
+    return 0;
 }
 
 void LuaScriptEngine::RegisterCameraBindings() {

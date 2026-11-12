@@ -147,6 +147,8 @@ struct MeshRendererComponent {
     std::vector<size_t> meshPartHandles;
     /// Stamped only by CharacterRuntime bind. Never authored or serialized.
     bool runtimeGenerated = false;
+    /// Set by the renderer once a hidden mesh's material textures are loaded. Never authored or serialized.
+    bool texturesWarmed = false;
 
     MeshRendererComponent() 
         : localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}

@@ -2,7 +2,7 @@
 -- Survival set up from the menu (with their difficulties) and the controls (FPS.Controls). Kept in a commented INI file (Config "Settings": Settings.ini in a packaged game,
 -- EditorSettings.ini in Editor Play) that players can edit by hand; a missing or unreadable value keeps its default
 -- and is logged. The player script reads Settings.values every frame, and Settings.apply pushes the rest (bus
--- volumes, UI size) to the engine. Difficulty is chosen per mode when it starts, not here.
+-- volumes, UI size, texture quality) to the engine. Difficulty is chosen per mode when it starts, not here.
 local Controls = require("FPS.Controls")
 local Difficulty = require("FPS.AI.Difficulty")
 local Menu = require("FPS.Menu")
@@ -20,6 +20,7 @@ Settings.defaults = {
     weaponsVolume = 1.0,
     musicVolume = 1.0,
     reducedMotion = false,
+    textureQuality = "medium", -- low, medium or high (Settings.TEXTURE_SIZES)
     -- The last team deathmatch and Survival set up from the menu (FPS.TeamDeathmatch reads the match it starts from
     -- Registry.matchSetup; Survival's enemies take the AI difficulty level set as it starts).
     matchMap = "",
@@ -40,6 +41,9 @@ for key, value in pairs(Settings.defaults) do
 end
 Settings.gameFieldOfView = 80
 
+-- The longest side material textures load at for each Texture Quality (0 = the file's own size).
+Settings.TEXTURE_SIZES = { low = 1024, medium = 2048, high = 0 }
+
 -- The field of view in use: the player's choice, or the game's own until they choose one.
 function Settings.fieldOfView()
     local chosen = Settings.values.fieldOfView
@@ -59,6 +63,8 @@ Settings.file = {
         { key = "FieldOfView", field = "fieldOfView", min = 0, max = 110,
           comment = "Degrees, 60 to 110; 0 uses the game's own" },
         { key = "UIScale", field = "uiScale", min = 0.75, max = 1.5, comment = "Game UI size, 0.75 to 1.5" },
+        { key = "TextureQuality", field = "textureQuality", choices = { "low", "medium", "high" },
+          comment = "low (1024), medium (2048) or high (full size) textures" },
         { key = "ReduceMotion", field = "reducedMotion", comment = "true makes menu highlights jump instead of slide" },
     } },
     { name = "Audio", keys = {
@@ -108,6 +114,12 @@ local function parse(entry, text)
             return true
         elseif lower == "false" or lower == "0" or lower == "no" or lower == "off" then
             return false
+        end
+    elseif entry.choices then
+        for _, choice in ipairs(entry.choices) do
+            if choice == tostring(text):lower() then
+                return choice
+            end
         end
     elseif entry.levels then
         for _, level in ipairs(Difficulty.levels()) do
@@ -220,6 +232,9 @@ function Settings.apply()
         UI.setScale(Settings.values.uiScale)
     end
     Menu.reducedMotion = Settings.values.reducedMotion
+    if Graphics and Graphics.setMaxTextureSize then
+        Graphics.setMaxTextureSize(Settings.TEXTURE_SIZES[Settings.values.textureQuality] or 0)
+    end
 end
 
 function Settings.set(key, value)
@@ -251,6 +266,10 @@ function Settings.page()
             slider("VIEW BOB", "viewBob", 0, 1, 0.1),
             slider("CAMERA SHAKE", "cameraShake", 0, 1, 0.1),
             slider("UI SIZE", "uiScale", 0.75, 1.5, 0.05),
+            { label = "TEXTURE QUALITY", kind = "choice",
+              options = { { "low", "LOW" }, { "medium", "MEDIUM" }, { "high", "HIGH" } },
+              get = function() return Settings.values.textureQuality end,
+              set = function(v) Settings.set("textureQuality", v) end },
             slider("MASTER VOLUME", "masterVolume", 0, 1, 0.05),
             slider("EFFECTS VOLUME", "sfxVolume", 0, 1, 0.05),
             slider("WEAPONS VOLUME", "weaponsVolume", 0, 1, 0.05),

@@ -139,6 +139,13 @@ These control a free script camera, separate from Camera components. Call `Camer
 
 If the script's entity has a Camera component, these move that entity instead.
 
+## Graphics
+
+| Function | Does |
+| --- | --- |
+| `Graphics.setMaxTextureSize(pixels)` / `Graphics.getMaxTextureSize()` | Loads material textures at most this many pixels on their longer side, halving larger ones (0, the default, keeps every texture at its full size). Textures already loaded are reloaded at the new size, which takes a moment, so call it from a settings change rather than every frame. For a texture quality setting. |
+| `Graphics.setScopeLens(options)` / `Graphics.setScopeLens(nil)` | Draws a full-screen rifle scope over the view: the scene through a round lens with barrel distortion, colour fringing and darker edges, a dark tube around it, black outside and a mil-dot reticle with a red centre dot. `options`: `radius` (lens radius as a fraction of the screen height, 0.45), `distortion` (0.12), `aberration` (0.006), `edgeDarkening` (0.45), `ringWidth` (tube width as a fraction of the radius, 0.14), `opacity` (0 to 1, to fade it in and out), `reticle` (true). `nil` turns it off; it also goes when the scene changes or play stops. Zoom with the camera's field of view. |
+
 ## Physics
 
 | Function | Does |

@@ -55,12 +55,69 @@ function Hud.mount(path, enabled)
     for i = 1, Hud.MAX_DAMAGE_ARROWS do
         Hud.damageArrows[i] = { arrow = UI.getWidget(handle, "DamageArrow" .. i) }
     end
+    Hud.scopeUi = nil
+end
+
+-- Matches the lens radius the weapon gives the renderer (a fraction of the screen height).
+Hud.SCOPE_RADIUS = 0.47
+
+local function scopeText(root, size, bold, alpha)
+    local widget = UI.createText(root, "")
+    UI.setAnchor(widget, "TopLeft")
+    UI.setStyle(widget, { textColor = { r = 1, g = 1, b = 1, a = alpha }, backgroundColor = { r = 0, g = 0, b = 0, a = 0 },
+                          fontSize = size, fontBold = bold, fontFamily = "Roboto", textAlignment = "center",
+                          cornerRadius = 0 })
+    UI.setTextAlignment(widget, "center")
+    UI.setTextShadow(widget, true)
+    return widget
+end
+
+local function showScope(scope, enabled)
+    local on = enabled and scope ~= nil
+    if not on then
+        if Hud.scopeUi then
+            UI.setScreenVisible(Hud.scopeUi.screen, false)
+        end
+        return
+    end
+    if not Hud.scopeUi then
+        local screen = UI.createScreen("FPS.Scope")
+        local root = UI.getRoot(screen)
+        Hud.scopeUi = { screen = screen, magnification = scopeText(root, 30, true, 0.9),
+                        hint = scopeText(root, 16, true, 0.7) }
+    end
+    local ui = Hud.scopeUi
+    UI.setScreenVisible(ui.screen, true)
+    local width, height = 1920, 1080
+    if UI.getLayoutSize then
+        local w, h = UI.getLayoutSize()
+        width, height = (w and w > 0) and w or width, (h and h > 0) and h or height
+    end
+    local cx, cy, r = width / 2, height / 2, Hud.SCOPE_RADIUS * height
+    UI.setPosition(ui.magnification, cx + r * 0.55 - 60, cy + r * 0.55 - 20)
+    UI.setSize(ui.magnification, 120, 40)
+    UI.setText(ui.magnification, string.format("%gx", scope.magnification or 1))
+    UI.setPosition(ui.hint, cx - 300, cy + r * 0.8 - 12)
+    UI.setSize(ui.hint, 600, 24)
+    local hint = "ZOOM  WHEEL / D-PAD        HOLD BREATH  SPRINT"
+    if scope.holdingBreath then
+        hint = "HOLDING BREATH"
+    elseif scope.breathSpent then
+        hint = "OUT OF BREATH"
+    end
+    UI.setText(ui.hint, hint)
+    UI.setOpacity(ui.magnification, scope.lens or 1)
+    UI.setOpacity(ui.hint, scope.lens or 1)
 end
 
 function Hud.unmount()
     if Hud.handle and destroy and destroy.ui then
         destroy.ui(Hud.handle)
     end
+    if Hud.scopeUi then
+        UI.setScreenVisible(Hud.scopeUi.screen, false)
+    end
+    Hud.scopeUi = nil
     Hud.handle = nil
     Hud.widgets = {}
     Hud.warnings = {}
@@ -265,6 +322,7 @@ function Hud.refresh(info)
     vis(Hud.widgets.AmmoText, enabled and info.showAmmo)
     vis(Hud.widgets.WeaponName, enabled and info.showAmmo)
     vis(Hud.widgets.Prompt, enabled and info.showPrompt and info.prompt ~= nil)
+    showScope(info.scope, enabled)
 
     Hud.markerRemaining = math.max(0, Hud.markerRemaining - (info.dt or 0))
     local marking = enabled and Hud.markerRemaining > 0

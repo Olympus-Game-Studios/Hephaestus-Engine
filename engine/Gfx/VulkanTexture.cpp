@@ -44,6 +44,53 @@ static void EndSingleTimeCommands(VkDevice device, VkCommandPool commandPool, Vk
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 
+void CappedTextureExtent(uint32_t width, uint32_t height, uint32_t maxDimension, uint32_t& outWidth, uint32_t& outHeight)
+{
+    while (maxDimension > 0 && std::max(width, height) > maxDimension && width > 1 && height > 1) {
+        width /= 2;
+        height /= 2;
+    }
+    outWidth = width;
+    outHeight = height;
+}
+
+bool DownscaleRgba8ToFit(const unsigned char* pixels, uint32_t width, uint32_t height, uint32_t maxDimension,
+                         std::vector<unsigned char>& out, uint32_t& outWidth, uint32_t& outHeight)
+{
+    uint32_t targetWidth = width;
+    uint32_t targetHeight = height;
+    CappedTextureExtent(width, height, maxDimension, targetWidth, targetHeight);
+    if (targetWidth == width && targetHeight == height) {
+        return false;
+    }
+    std::vector<unsigned char> current(pixels, pixels + static_cast<size_t>(width) * height * 4);
+    while (width > targetWidth || height > targetHeight) {
+        const uint32_t nextWidth = width / 2;
+        const uint32_t nextHeight = height / 2;
+        std::vector<unsigned char> next(static_cast<size_t>(nextWidth) * nextHeight * 4);
+        for (uint32_t y = 0; y < nextHeight; ++y) {
+            for (uint32_t x = 0; x < nextWidth; ++x) {
+                for (uint32_t c = 0; c < 4; ++c) {
+                    uint32_t sum = 0;
+                    for (uint32_t dy = 0; dy < 2; ++dy) {
+                        for (uint32_t dx = 0; dx < 2; ++dx) {
+                            sum += current[(static_cast<size_t>(y * 2 + dy) * width + x * 2 + dx) * 4 + c];
+                        }
+                    }
+                    next[(static_cast<size_t>(y) * nextWidth + x) * 4 + c] = static_cast<unsigned char>((sum + 2) / 4);
+                }
+            }
+        }
+        current = std::move(next);
+        width = nextWidth;
+        height = nextHeight;
+    }
+    out = std::move(current);
+    outWidth = width;
+    outHeight = height;
+    return true;
+}
+
 bool VulkanTexture::LoadFromFile(
     VmaAllocator allocator,
     VkDevice device,
@@ -52,7 +99,8 @@ bool VulkanTexture::LoadFromFile(
     VkQueue graphicsQueue,
     const std::string& filepath,
     bool generateMipmaps,
-    bool srgb)
+    bool srgb,
+    uint32_t maxDimension)
 {
     const VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     // Load image using stb_image
@@ -65,6 +113,13 @@ bool VulkanTexture::LoadFromFile(
 
     width = static_cast<uint32_t>(texWidth);
     height = static_cast<uint32_t>(texHeight);
+    sourceWidth = width;
+    sourceHeight = height;
+    std::vector<unsigned char> halved;
+    const stbi_uc* source = pixels;
+    if (DownscaleRgba8ToFit(pixels, width, height, maxDimension, halved, width, height)) {
+        source = halved.data();
+    }
     
     // Calculate mip levels
     if (generateMipmaps) {
@@ -87,10 +142,12 @@ bool VulkanTexture::LoadFromFile(
     // Copy pixel data to staging buffer
     void* data;
     vmaMapMemory(allocator, stagingBuffer.allocation, &data);
-    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    memcpy(data, source, static_cast<size_t>(imageSize));
     vmaUnmapMemory(allocator, stagingBuffer.allocation);
 
     stbi_image_free(pixels);
+    halved.clear();
+    halved.shrink_to_fit();
 
     // Create image
     VkImageCreateInfo imageInfo{};

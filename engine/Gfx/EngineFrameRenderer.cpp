@@ -141,8 +141,15 @@ struct ToneMapPush {
     float scanlines;
     float time;
     float bloomIntensity;
+    float lensRadius;
+    float lensDistortion;
+    float lensAberration;
+    float lensEdge;
+    float lensRing;
+    float lensOpacity;
+    float lensReticle;
 };
-static_assert(sizeof(ToneMapPush) == 60, "ToneMapPush must match tonemap.frag");
+static_assert(sizeof(ToneMapPush) == 88, "ToneMapPush must match tonemap.frag");
 
 struct BloomPush {
     float sourceTexel[2];
@@ -3653,7 +3660,8 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
     try {
         if (!newSlot.texture.LoadFromFile(m_device->allocator, m_device->device,
                                            m_device->physicalDevice, m_device->commandPool,
-                                           m_device->graphicsQueue, resolvedPath.string(), true, !linear)) {
+                                           m_device->graphicsQueue, resolvedPath.string(), true, !linear,
+                                           m_maxMaterialTextureSize)) {
             std::cerr << "[EngineFrameRenderer] Failed to load texture: " << resolvedPath << "\n";
             return m_defaultMaterialTextureSlot;
         }
@@ -3666,6 +3674,8 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
     newSlot.descriptor.imageView = newSlot.texture.imageView;
     newSlot.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     newSlot.key = key;
+    newSlot.resolvedPath = resolvedPath.string();
+    newSlot.linear = linear;
     newSlot.valid = true;
 
     uint32_t slotIndex = static_cast<uint32_t>(m_materialTextureSlots.size());
@@ -3680,6 +3690,52 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
 
     std::cout << "[EngineFrameRenderer] Loaded material texture [" << slotIndex << "]: " << resolvedPath << "\n";
     return slotIndex;
+}
+
+void EngineFrameRenderer::SetMaxMaterialTextureSize(uint32_t pixels)
+{
+    if (pixels == m_maxMaterialTextureSize) {
+        return;
+    }
+    m_maxMaterialTextureSize = pixels;
+    if (!m_device) {
+        return;
+    }
+    bool waited = false;
+    uint32_t reloaded = 0;
+    for (uint32_t index = 0; index < m_materialTextureSlots.size(); ++index) {
+        auto& slot = m_materialTextureSlots[index];
+        if (!slot.valid || slot.resolvedPath.empty()) {
+            continue;
+        }
+        uint32_t wantedWidth = 0;
+        uint32_t wantedHeight = 0;
+        CappedTextureExtent(slot.texture.sourceWidth, slot.texture.sourceHeight, pixels, wantedWidth, wantedHeight);
+        if (wantedWidth == slot.texture.width && wantedHeight == slot.texture.height) {
+            continue;
+        }
+        if (!waited) {
+            vkDeviceWaitIdle(m_device->device);
+            waited = true;
+        }
+        VulkanTexture resized;
+        if (!resized.LoadFromFile(m_device->allocator, m_device->device, m_device->physicalDevice,
+                                   m_device->commandPool, m_device->graphicsQueue, slot.resolvedPath, true,
+                                   !slot.linear, pixels)) {
+            std::cerr << "[EngineFrameRenderer] Failed to reload texture at a new size: " << slot.resolvedPath << "\n";
+            continue;
+        }
+        slot.texture.Destroy(m_device->allocator, m_device->device);
+        slot.texture = resized;
+        ++reloaded;
+        slot.descriptor.sampler = slot.texture.sampler;
+        slot.descriptor.imageView = slot.texture.imageView;
+        for (auto& pending : m_pendingTextureSlotUpdates) {
+            pending.push_back(index);
+        }
+    }
+    std::cout << "[EngineFrameRenderer] Material texture size limit " << pixels << " (0 = full size); reloaded "
+              << reloaded << " texture(s)\n";
 }
 
 void EngineFrameRenderer::updateEnvironmentReflectionDescriptor(uint32_t imageIndex)
@@ -4401,6 +4457,31 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             }
             
             if (!renderer.visible) {
+                // Load a hidden mesh's textures now (with the scene) rather than on the frame it first shows.
+                if (!renderer.texturesWarmed && renderer.HasValidMesh()) {
+                    renderer.texturesWarmed = true;
+                    const int slots = std::max(1, std::max(renderer.submeshCount,
+                                                           static_cast<int>(renderer.appliedMaterialPaths.size())));
+                    for (int slot = 0; slot < slots; ++slot) {
+                        if (const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, slot)) {
+                            if (mat->useAlbedoTexture && !mat->albedoTexturePath.empty()) {
+                                ensureMaterialTextureSlot(mat->albedoTexturePath);
+                            }
+                            if (mat->useNormalTexture && !mat->normalTexturePath.empty()) {
+                                ensureMaterialTextureSlot(mat->normalTexturePath, true);
+                            }
+                            if (mat->useRoughnessTexture && !mat->roughnessTexturePath.empty()) {
+                                ensureMaterialTextureSlot(mat->roughnessTexturePath, true);
+                            }
+                            if (mat->useMetallicTexture && !mat->metallicTexturePath.empty()) {
+                                ensureMaterialTextureSlot(mat->metallicTexturePath, true);
+                            }
+                            if (mat->useAoTexture && !mat->aoTexturePath.empty()) {
+                                ensureMaterialTextureSlot(mat->aoTexturePath, true);
+                            }
+                        }
+                    }
+                }
                 skippedCount++;
                 continue;
             }
@@ -6032,7 +6113,7 @@ bool EngineFrameRenderer::createToneMapResources()
         return false;
     }
 
-    VkDescriptorSetLayoutBinding bindings[2]{};
+    VkDescriptorSetLayoutBinding bindings[3]{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
     bindings[0].descriptorCount = 1;
@@ -6041,8 +6122,10 @@ bool EngineFrameRenderer::createToneMapResources()
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[2] = bindings[1];
+    bindings[2].binding = 2;
     VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutCI.bindingCount = 2;
+    layoutCI.bindingCount = 3;
     layoutCI.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &m_toneMap.setLayout) != VK_SUCCESS) {
         cleanupToneMapResources();
@@ -6050,7 +6133,7 @@ bool EngineFrameRenderer::createToneMapResources()
     }
 
     VkDescriptorPoolSize poolSizes[2] = {{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1},
-                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
+                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2}};
     VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolCI.maxSets = 1;
     poolCI.poolSizeCount = 2;
@@ -6083,8 +6166,12 @@ bool EngineFrameRenderer::createToneMapResources()
     bloomWrite.dstBinding = 1;
     bloomWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bloomWrite.pImageInfo = &bloomInfo;
-    const VkWriteDescriptorSet writes[2] = {write, bloomWrite};
-    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    VkDescriptorImageInfo sceneInfo{m_bloom.sampler, m_swapchain->hdrImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet sceneWrite = bloomWrite;
+    sceneWrite.dstBinding = 2;
+    sceneWrite.pImageInfo = &sceneInfo;
+    const VkWriteDescriptorSet writes[3] = {write, bloomWrite, sceneWrite};
+    vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
 
     VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ToneMapPush)};
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -6457,6 +6544,13 @@ void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd, Scene* scene, uint3
     push.scanlines = post.scanlines;
     push.time = static_cast<float>(m_toneMap.frame++ % 997u) / 997.0f;
     push.bloomIntensity = m_toneMap.bloomThisFrame ? post.bloomIntensity : 0.0f;
+    push.lensRadius = std::max(m_scopeLens.radius, 0.0f);
+    push.lensDistortion = m_scopeLens.distortion;
+    push.lensAberration = m_scopeLens.aberration;
+    push.lensEdge = m_scopeLens.edgeDarkening;
+    push.lensRing = m_scopeLens.ringWidth;
+    push.lensOpacity = m_scopeLens.opacity;
+    push.lensReticle = m_scopeLens.reticle ? 1.0f : 0.0f;
     vkCmdPushConstants(cmd, m_toneMap.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(push), &push);
     vkCmdDraw(cmd, 3, 1, 0, 0);

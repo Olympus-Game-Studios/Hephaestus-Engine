@@ -214,6 +214,30 @@ public:
     void SetProjectRoot(const std::string& root);
     const std::string& GetProjectRoot() const { return m_projectRoot; }
 
+    /**
+     * @brief Caps material textures to this many pixels on their longer side (0 = their full size). Textures
+     * already loaded are reloaded at the new size, so this waits for the GPU to go idle when anything changes.
+     */
+    void SetMaxMaterialTextureSize(uint32_t pixels);
+    uint32_t GetMaxMaterialTextureSize() const { return m_maxMaterialTextureSize; }
+
+    /**
+     * @brief A full-screen rifle scope drawn by the tone map pass: the scene through a round lens (barrel
+     * distortion, colour fringing and darker edges), a dark tube around it, black outside and an optional
+     * mil-dot reticle. A radius of 0 turns it off.
+     */
+    struct ScopeLens {
+        float radius = 0.0f;         ///< lens radius as a fraction of the screen height
+        float distortion = 0.12f;    ///< barrel distortion at the lens edge
+        float aberration = 0.006f;   ///< colour fringing at the edge, as a fraction of the radius
+        float edgeDarkening = 0.45f; ///< 0 to 1
+        float ringWidth = 0.14f;     ///< the tube's width, as a fraction of the radius
+        float opacity = 1.0f;        ///< fades the whole scope in and out
+        bool reticle = true;
+    };
+    void SetScopeLens(const ScopeLens& lens) { m_scopeLens = lens; }
+    const ScopeLens& GetScopeLens() const { return m_scopeLens; }
+
     // --- Runtime HUI Overlay ---
 
     /**
@@ -545,7 +569,11 @@ private:
         VulkanTexture texture;
         VkDescriptorImageInfo descriptor{};
         std::string key;
+        std::string resolvedPath;
+        bool linear = false;
     };
+    uint32_t m_maxMaterialTextureSize = 0;
+    ScopeLens m_scopeLens;
     std::vector<MaterialTextureSlot> m_materialTextureSlots;
     std::unordered_map<std::string, uint32_t> m_materialTextureLookup;
     std::vector<std::vector<uint32_t>> m_pendingTextureSlotUpdates;

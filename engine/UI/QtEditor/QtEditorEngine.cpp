@@ -3198,6 +3198,11 @@ void QtEditorEngine::StopPlayMode()
 
     m_playModeManager.StopPlayMode();
     LuaDebugger::Instance().StopFinished();
+    if (m_frameRenderer) {
+        // Play's texture quality setting and scope are the game's; the editor shows textures at full size.
+        m_frameRenderer->SetMaxMaterialTextureSize(0);
+        m_frameRenderer->SetScopeLens({});
+    }
     m_editorContext.SyncSelectionFromScene();
 
     if (m_luaScriptEngine) {

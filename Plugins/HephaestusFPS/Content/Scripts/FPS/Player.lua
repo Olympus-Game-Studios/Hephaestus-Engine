@@ -806,9 +806,13 @@ function onUpdate(dt)
                 commands.slot = slot
             end
         end
-        commands.fragHeld = Input.isActionDown("ThrowFrag")
-        commands.smokeHeld = Input.isActionDown("ThrowSmoke")
-        if Input.isActionPressed("ThrowFrag") then
+        -- A scope takes the D-pad for its zoom, so grenades wait until it is lowered.
+        local scoped = row and (row.scopeLens or 0) > 0
+        commands.fragHeld = Input.isActionDown("ThrowFrag") and not scoped
+        commands.smokeHeld = Input.isActionDown("ThrowSmoke") and not scoped
+        if scoped then
+            commands.throwKind = nil
+        elseif Input.isActionPressed("ThrowFrag") then
             commands.throwKind = "frag"
         elseif Input.isActionPressed("ThrowSmoke") then
             commands.throwKind = "smoke"
@@ -983,6 +987,10 @@ function onLateUpdate(dt)
         weapon = Registry.weaponSnapshot(weaponEntity),
         prompt = Interactable.prompt(),
         adsBlend = row and row.adsBlend or 0,
+        scope = row and row.scope and (row.scopeLens or 0) > 0 and {
+            lens = row.scopeLens, magnification = row.magnification, holdingBreath = row.holdingBreath,
+            breathSpent = row.breathSpent,
+        } or nil,
         grenades = (fragGrenadePrefab ~= "" or smokeGrenadePrefab ~= "") and grenades or nil,
         dt = lastDt,
     })

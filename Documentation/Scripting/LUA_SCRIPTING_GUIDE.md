@@ -362,6 +362,11 @@ Camera.setRotation(math.rad(0.0), math.rad(180.0), 0.0)
 - `Camera.translate(dx, dy, dz)` → offsets camera in world space
 - `Camera.setRotation(rx, ry, rz)` / `Camera.getRotation()` (radians, pitch/yaw/roll)
 
+### Graphics
+
+- `Graphics.setMaxTextureSize(pixels)` / `Graphics.getMaxTextureSize()` → largest material texture side in pixels (0 = full size); loaded textures reload at the new size
+- `Graphics.setScopeLens({ radius, distortion, aberration, edgeDarkening, ringWidth, opacity, reticle })` → full-screen scope lens drawn over the view; `Graphics.setScopeLens(nil)` removes it
+
 ### Audio
 
 ```lua

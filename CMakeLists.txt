@@ -1444,6 +1444,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND IniFileTests
     )
 
+    add_executable(TextureDownscaleTests
+        engine/Tests/TextureDownscaleTests.cpp
+    )
+    target_link_libraries(TextureDownscaleTests PRIVATE HephaestusRuntime)
+    target_include_directories(TextureDownscaleTests PRIVATE engine)
+    add_test(
+        NAME TextureDownscale
+        COMMAND TextureDownscaleTests
+    )
+
     add_executable(AppPathsTests
         engine/Tests/AppPathsTests.cpp
     )

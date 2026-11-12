@@ -30,6 +30,8 @@ Controls.rows = {
     { label = "WEAPON 4", name = "Weapon4" },
     { label = "FRAG GRENADE", name = "ThrowFrag" },
     { label = "SMOKE GRENADE", name = "ThrowSmoke" },
+    { label = "SCOPE ZOOM IN", name = "ZoomIn" },
+    { label = "SCOPE ZOOM OUT", name = "ZoomOut" },
     { label = "SCOREBOARD", name = "Scoreboard" },
 }
 

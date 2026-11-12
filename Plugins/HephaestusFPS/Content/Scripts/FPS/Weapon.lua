@@ -95,6 +95,8 @@ Expose.string("reloadPart2Sound", "")
 Expose.number("reloadPart2Time", 0.9)
 Expose.string("boltSound", "")
 Expose.number("boltTime", 1.45)
+Expose.string("cycleSound", "") -- played cycleSoundDelay seconds after each shot (a bolt action's bolt)
+Expose.number("cycleSoundDelay", 0.35)
 Expose.string("emptySound", "")
 Expose.string("definition", "")
 Expose.string("viewModelPrefab", "")
@@ -108,6 +110,7 @@ local Ballistics = require("FPS.Ballistics")
 local Health = require("FPS.Health")
 local Impacts = require("FPS.Impacts")
 local Tracers = require("FPS.Tracers")
+local Settings = require("FPS.Settings")
 
 local Weapon = {}
 local SHOULDER_REACH = 0.4 -- metres from the grip back to the shoulders in the view frame
@@ -127,7 +130,18 @@ local TUNING = {
     "muzzleSmokePrefab", "tracerPrefab", "casingPrefab", "maxCasings", "casingEjectSpeed", "noiseRadius",
     "sprintToFireSeconds", "tacticalSprintToFireSeconds", "proneSpreadScale", "proneRecoilScale", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
-    "reloadPart2Sound", "boltSound",
+    "reloadPart2Sound", "boltSound", "cycleSound", "cycleSoundDelay",
+}
+
+-- A scope (the definition's `scope` table) replaces the sights once aimed: the view model is hidden and the tone
+-- map draws a lens (Graphics.setScopeLens) while the camera zooms to the chosen magnification. Fields, all optional:
+-- magnifications ({ 2, 4, 6, 8 }), defaultIndex, radius (lens radius, fraction of the screen height), distortion,
+-- aberration, edgeDarkening, ringWidth, lensStart (aim blend where the lens starts to fade in), swayDegrees (breathing
+-- sway while scoped), holdBreathSeconds (how long Sprint holds the breath), breathRecoverSeconds, sensitivityScale.
+local SCOPE_DEFAULTS = {
+    magnifications = { 2, 4, 6, 8 }, defaultIndex = 2, radius = 0.47, distortion = 0.12, aberration = 0.006,
+    edgeDarkening = 0.45, ringWidth = 0.14, lensStart = 0.7, swayDegrees = 0.45, holdBreathSeconds = 4,
+    breathRecoverSeconds = 3, sensitivityScale = 1,
 }
 
 local function rad(value)
@@ -222,6 +236,18 @@ function Weapon.register(entity, options)
     Logic.fillWeapon(row)
     row.maxReserve = row.reserve -- ammo pickups refill up to the starting reserve
     row.rng = Gunplay.newRng((row.recoilSeed or 1) * 7919 + 13)
+    local scope = setting(options, "scope", nil)
+    if type(scope) == "table" then
+        row.scope = setmetatable({}, { __index = function(_, k)
+            if scope[k] ~= nil then
+                return scope[k]
+            end
+            return SCOPE_DEFAULTS[k]
+        end })
+        row.scopeIndex = math.max(1, math.min(#row.scope.magnifications, row.scope.defaultIndex))
+        row.breath = row.scope.holdBreathSeconds
+        row.swayYaw, row.swayPitch = 0, 0
+    end
     row.hitscan = setting(options, "hitscan", true) ~= false
     row.fireLayers = setting(options, "fireLayers", nil)
     row.pattern = Gunplay.parsePattern(setting(options, "recoilPattern", ""))
@@ -410,6 +436,104 @@ local function spawnCasing(row, input)
     end
 end
 
+local function setLens(row, opacity)
+    if not Graphics or not Graphics.setScopeLens then
+        return
+    end
+    if opacity > 0 then
+        local scope = row.scope
+        Graphics.setScopeLens({ radius = scope.radius, distortion = scope.distortion, aberration = scope.aberration,
+                                edgeDarkening = scope.edgeDarkening, ringWidth = scope.ringWidth, opacity = opacity })
+        row.lensShown = true
+    elseif row.lensShown then
+        Graphics.setScopeLens(nil)
+        row.lensShown = false
+    end
+end
+
+-- Leaves the scope at once: the lens goes, the view model comes back and any breathing sway is taken out of the aim.
+local function leaveScope(row)
+    if not row.scope then
+        return
+    end
+    setLens(row, 0)
+    if row.partsHidden then
+        setPartsVisible(row.equipped)
+        row.partsHidden = false
+    end
+    if Registry.player and ((row.swayYaw or 0) ~= 0 or (row.swayPitch or 0) ~= 0) then
+        Registry.player.pendingPitch = (Registry.player.pendingPitch or 0) - row.swayPitch
+        Registry.player.pendingYaw = (Registry.player.pendingYaw or 0) - row.swayYaw
+    end
+    row.swayYaw, row.swayPitch = 0, 0
+    row.scopeLens = 0
+    row.scoped = false
+end
+
+-- Zoom steps, the zoomed field of view and look speed, the lens fading in over the end of the aim, and breathing
+-- sway on the aim itself (Sprint holds the breath for a while, then the sway comes back stronger until it recovers).
+local function updateScope(row, input, aiming, dt)
+    local scope = row.scope
+    local steps = scope.magnifications
+    if aiming then
+        local step = (Input.isActionPressed("ZoomIn") and 1 or 0) - (Input.isActionPressed("ZoomOut") and 1 or 0)
+        local wheel = Input.getScrollDelta and Input.getScrollDelta().y or 0
+        if wheel > 0 then
+            step = step + 1
+        elseif wheel < 0 then
+            step = step - 1
+        end
+        local index = math.max(1, math.min(#steps, row.scopeIndex + step))
+        if index ~= row.scopeIndex then
+            row.scopeIndex = index
+            playOptional(scope.zoomSound, 0.5)
+        end
+    end
+    local magnification = steps[row.scopeIndex]
+    local base = math.rad(Settings.fieldOfView())
+    local zoomed = 2 * math.atan(math.tan(base / 2) / magnification)
+    row.adsFov = math.deg(zoomed)
+    row.adsSensitivityScale = math.tan(zoomed / 2) / math.tan(base / 2) * scope.sensitivityScale
+    row.magnification = magnification
+
+    local start = scope.lensStart
+    local lens = Gunplay.clamp((row.adsBlend - start) / math.max(1 - start, 1e-3), 0, 1)
+    row.scopeLens = lens
+    row.scoped = lens >= 1
+    local hide = lens > 0.5
+    if hide ~= (row.partsHidden or false) then
+        setPartsVisible(not hide)
+        row.partsHidden = hide
+    end
+    setLens(row, lens)
+
+    local holding = lens > 0 and Input.isActionDown("Sprint") and not row.breathSpent and row.breath > 0
+    if holding then
+        row.breath = math.max(0, row.breath - dt)
+        if row.breath <= 0 then
+            row.breathSpent = true
+        end
+    else
+        row.breath = math.min(scope.holdBreathSeconds,
+                              row.breath + dt * scope.holdBreathSeconds / math.max(scope.breathRecoverSeconds, 0.1))
+        if row.breathSpent and row.breath >= scope.holdBreathSeconds then
+            row.breathSpent = false
+        end
+    end
+    row.holdingBreath = holding
+    row.scopeTime = (row.scopeTime or 0) + dt
+    local amount = math.rad(scope.swayDegrees) * lens * (holding and 0.1 or (row.breathSpent and 1.8 or 1))
+        * (input.prone and 0.35 or 1)
+    local t = row.scopeTime
+    local yaw = amount * (0.8 * math.sin(t * 0.9) + 0.2 * math.sin(t * 2.3 + 0.7))
+    local pitch = amount * (0.6 * math.sin(t * 1.4 + 1.1) + 0.25 * math.sin(t * 3.1))
+    if Registry.player then
+        Registry.player.pendingPitch = (Registry.player.pendingPitch or 0) + (pitch - row.swayPitch)
+        Registry.player.pendingYaw = (Registry.player.pendingYaw or 0) + (yaw - row.swayYaw)
+    end
+    row.swayYaw, row.swayPitch = yaw, pitch
+end
+
 local function hideFlashes(row)
     for _, flash in ipairs(row.flashes or {}) do
         flash:Call("hideFlash")
@@ -540,6 +664,9 @@ local function fireShot(row, input, owner)
     end
 
     playShot(row)
+    if row.cycleSound and row.cycleSound ~= "" then
+        row.cycleAt = row.now + (row.cycleSoundDelay or 0.35)
+    end
     if owner and Registry.player and Registry.key(owner) == Registry.player.key then
         Registry.reportNoise(input.ox, input.oy, input.oz, row.noiseRadius or 60, "player")
     end
@@ -699,6 +826,13 @@ function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
     local curves = Gunplay.adsCurves(row.adsLinear)
     row.adsBlend = curves.weapon
     row.adsFovBlend = curves.fov
+    if row.scope then
+        updateScope(row, input, wantAds, dt)
+    end
+    if row.cycleAt and row.now >= row.cycleAt then
+        row.cycleAt = nil
+        playOptional(row.cycleSound, 0.9)
+    end
     row.bloom = Gunplay.decayBloom(row.bloom, row, dt)
 
     if reload == true or reload == 1 then
@@ -754,6 +888,8 @@ function unequip()
         row.bufferedPress = false
         row.recoilPitchAccum = 0
         row.recoilYawAccum = 0
+        row.cycleAt = nil
+        leaveScope(row)
         if Registry.activeWeaponId == row.key then
             Registry.activeWeaponId = nil
         end
@@ -775,6 +911,10 @@ function onUpdate(dt)
 end
 
 function onDestroy()
+    local row = Weapon.get(this)
+    if row then
+        leaveScope(row)
+    end
     Weapon.unregister(this)
 end
 
