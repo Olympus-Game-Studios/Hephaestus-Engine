@@ -1,48 +1,61 @@
--- A scrolling credits page for FPS.Menu: Credits.page(sections) where sections is { { heading = "MUSIC", lines =
--- { "...", ... } }, ... }, shown in order and followed by the engine and the libraries the game player ships with
--- (the "Game" rows of the engine's third-party notices). It scrolls up by itself and starts again after the end;
--- MenuUp and MenuDown (or the mouse wheel) scroll by hand and hold the automatic scroll for a few seconds. Enter, Escape
--- or BACK leave it. Reduce Motion (Menu.reducedMotion) turns the automatic scroll off.
+-- A scrolling credits page for FPS.Menu: Credits.page(sections), shown in order and followed by the engine and the
+-- libraries the game player ships with (the "Game" rows of the engine's third-party notices). A section is
+--   { heading = "AUDIO", entries = { { role = "MUSIC", names = { "..." }, note = "..." }, ... } }
+-- where each entry shows its role in small muted capitals, its names below in larger text and its note (a link or
+-- licence) in small muted text under them; any of the three may be left out. The text holds at the top, scrolls up to
+-- the end, holds and starts again. MenuUp and MenuDown (or the mouse wheel) scroll by hand within the same range (the
+-- first line never goes below the top, the last never above the bottom) and the automatic scroll carries on from there
+-- after a few seconds. Enter, Escape or BACK leave it. Reduce Motion (Menu.reducedMotion) turns the automatic scroll off.
 local Menu = require("FPS.Menu")
 
 local Credits = {}
 
 Credits.engine = {
-    { heading = "BUILT WITH", lines = { "Hephaestus Engine", "Rendered with Vulkan" } },
-    { heading = "ENGINE LIBRARIES", lines = {
-        "Lua 5.4 - MIT",
-        "Vulkan Memory Allocator - MIT",
-        "Jolt Physics - MIT",
-        "EnTT - MIT",
-        "GLFW - zlib",
-        "JSON for Modern C++ (nlohmann/json) - MIT",
-        "ufbx - MIT or public domain",
-        "stb_image and stb_truetype - MIT or public domain",
-        "miniaudio - MIT No Attribution",
-        "Recast & Detour - zlib",
-        "Roboto - Apache 2.0",
-        "Full licence texts are in ThirdPartyNotices.txt beside the game",
+    { heading = "ENGINE", entries = {
+        { role = "BUILT WITH", names = { "Hephaestus Engine" } },
+        { role = "GRAPHICS", names = { "Vulkan" } },
+    } },
+    { heading = "THIRD-PARTY LIBRARIES", entries = {
+        { role = "SCRIPTING", names = { "Lua 5.4" }, note = "MIT" },
+        { role = "GPU MEMORY", names = { "Vulkan Memory Allocator" }, note = "MIT" },
+        { role = "PHYSICS", names = { "Jolt Physics" }, note = "MIT" },
+        { role = "ENTITY COMPONENT SYSTEM", names = { "EnTT" }, note = "MIT" },
+        { role = "WINDOWS AND INPUT", names = { "GLFW" }, note = "zlib" },
+        { role = "JSON", names = { "JSON for Modern C++ (nlohmann/json)" }, note = "MIT" },
+        { role = "FBX IMPORT", names = { "ufbx" }, note = "MIT or public domain" },
+        { role = "IMAGES AND FONTS", names = { "stb_image and stb_truetype" }, note = "MIT or public domain" },
+        { role = "AUDIO", names = { "miniaudio" }, note = "MIT No Attribution" },
+        { role = "NAVIGATION", names = { "Recast & Detour" }, note = "zlib" },
+        { role = "TYPEFACE", names = { "Roboto" }, note = "Apache 2.0" },
+        { note = "Full licence texts are in ThirdPartyNotices.txt beside the game" },
     } },
 }
 
-local SPEED = 45 -- pixels a second
+local SPEED = 45 -- units a second
 local HOLD_SECONDS = 4 -- after scrolling by hand
-local LOOP_PAUSE = 2 -- at the end, before starting again
-local OPEN_HOLD = 2 -- seconds the first lines stay put when the page opens
+local END_HOLD = 3 -- at the end, before starting again
+local OPEN_HOLD = 2 -- at the start
 local WIDTH = 960
-local HEADING_SIZE, LINE_SIZE = 24, 22
-local LINE_GAP, SECTION_GAP = 36, 32
-local FADE = 60 -- pixels at the top and bottom where lines fade in and out
+local STEP = 108 -- how far one press of Up or Down, or one wheel notch, scrolls
+local FADE = 48 -- units at the top and bottom where lines fade in and out
 local POOL = 40
+-- Each kind of line: font size, height taken, bold, colour key in Menu.theme.
+local KINDS = {
+    heading = { size = 26, height = 44, bold = true, color = "accent" },
+    role = { size = 16, height = 24, bold = true, color = "muted" },
+    name = { size = 24, height = 34, bold = false, color = "text" },
+    note = { size = 16, height = 24, bold = false, color = "muted" },
+}
+local ENTRY_GAP, SECTION_GAP = 22, 56
 
 local view = {}
 
--- Splits text at spaces so each piece fits `width` at `size`; a single word wider than that stays whole.
-local function wrap(text, size, bold, width)
+-- Splits text at spaces so each piece fits `width`; a single word wider than that stays whole.
+local function wrap(text, kind, width)
     local out, line = {}, nil
     for word in text:gmatch("%S+") do
         local candidate = line and (line .. " " .. word) or word
-        if line and (UI.measureText(candidate, size, bold, Menu.theme.font) or 0) > width then
+        if line and (UI.measureText(candidate, kind.size, kind.bold, Menu.theme.font) or 0) > width then
             out[#out + 1] = line
             line = word
         else
@@ -53,21 +66,36 @@ local function wrap(text, size, bold, width)
     return out
 end
 
--- Flattens the sections into placed lines: { text, y, size, bold, accent }.
+-- Flattens the sections into placed lines { text, y, kind } and the total height.
 local function layout(sections, width)
     local lines, y = {}, 0
+    local function add(text, kindName)
+        local kind = KINDS[kindName]
+        for _, piece in ipairs(wrap(text, kind, width)) do
+            lines[#lines + 1] = { text = piece, y = y, kind = kind }
+            y = y + kind.height
+        end
+    end
     for s, section in ipairs(sections) do
         if s > 1 then
             y = y + SECTION_GAP
         end
         if section.heading and section.heading ~= "" then
-            lines[#lines + 1] = { text = section.heading, y = y, size = HEADING_SIZE, bold = true, accent = true }
-            y = y + LINE_GAP + 6
+            add(section.heading, "heading")
+            y = y + 8
         end
-        for _, entry in ipairs(section.lines or {}) do
-            for _, piece in ipairs(wrap(entry, LINE_SIZE, false, width)) do
-                lines[#lines + 1] = { text = piece, y = y, size = LINE_SIZE, bold = false }
-                y = y + LINE_GAP
+        for e, entry in ipairs(section.entries or {}) do
+            if e > 1 then
+                y = y + ENTRY_GAP
+            end
+            if entry.role then
+                add(entry.role, "role")
+            end
+            for _, name in ipairs(entry.names or {}) do
+                add(name, "name")
+            end
+            if entry.note then
+                add(entry.note, "note")
             end
         end
     end
@@ -88,13 +116,23 @@ local function build(menu)
     for i = 1, POOL do
         local widget = UI.createText(root, "")
         UI.setAnchor(widget, "TopLeft")
-        UI.setStyle(widget, { textColor = Menu.theme.text, backgroundColor = Menu.theme.clear, fontSize = LINE_SIZE,
-                              fontBold = false, fontFamily = Menu.theme.font, textAlignment = "center",
-                              cornerRadius = 0 })
+        UI.setStyle(widget, { textColor = Menu.theme.text, backgroundColor = Menu.theme.clear,
+                              fontSize = KINDS.name.size, fontBold = false, fontFamily = Menu.theme.font,
+                              textAlignment = "center", cornerRadius = 0 })
         UI.setTextAlignment(widget, "center")
         ui.pool[i] = widget
     end
     return ui
+end
+
+-- The scroll range: at the least the first line sits at the top of the view (just inside the fade), at the most
+-- the last line sits at its bottom. Text shorter than the view never scrolls.
+local function minOffset()
+    return view.region.height - FADE
+end
+
+local function maxOffset()
+    return math.max(minOffset(), view.length + FADE)
 end
 
 -- Places the pool over the lines in view at the current scroll offset, fading them at the region's edges.
@@ -102,18 +140,19 @@ local function draw()
     local ui, region = view.ui, view.region
     local used = 0
     for _, line in ipairs(view.lines) do
+        local kind = line.kind
         local y = region.top + region.height - view.offset + line.y
-        if y + LINE_GAP > region.top and y < region.top + region.height and used < POOL then
+        if y + kind.height > region.top and y < region.top + region.height and used < POOL then
             used = used + 1
             local widget = ui.pool[used]
-            local color = line.accent and Menu.theme.accent or Menu.theme.text
+            local color = Menu.theme[kind.color]
             UI.setText(widget, line.text)
-            UI.setFontSize(widget, line.size)
-            UI.setFontBold(widget, line.bold)
+            UI.setFontSize(widget, kind.size)
+            UI.setFontBold(widget, kind.bold)
             UI.setTextColor(widget, color.r, color.g, color.b, color.a)
             UI.setPosition(widget, region.x, y)
-            UI.setSize(widget, region.width, LINE_GAP)
-            local edge = math.min(y - region.top, region.top + region.height - (y + LINE_GAP))
+            UI.setSize(widget, region.width, kind.height)
+            local edge = math.min(y - region.top, region.top + region.height - (y + kind.height))
             UI.setOpacity(widget, math.max(0, math.min(1, edge / FADE)))
             UI.setVisible(widget, true)
         end
@@ -128,16 +167,14 @@ local function fit(menu)
     local width = math.min(WIDTH, screenWidth() - 2 * menu.x)
     local x = math.floor((screenWidth() - width) / 2)
     local top = menu.y
-    view.region = { x = x, top = top, width = width, height = math.max(LINE_GAP, menu.backY - 24 - top) }
+    view.region = { x = x, top = top, width = width, height = math.max(3 * FADE, menu.backY - 24 - top) }
     view.lines, view.length = layout(view.sections, width)
     view.backY = menu.backY
+    if view.offset then
+        view.offset = math.max(minOffset(), math.min(maxOffset(), view.offset))
+    end
     UI.setPosition(view.ui.backdrop, x - 24, top - 12)
     UI.setSize(view.ui.backdrop, width + 48, view.region.height + 24)
-end
-
--- The furthest the text scrolls: its end has left the top of the region.
-local function maxOffset()
-    return view.length + view.region.height
 end
 
 local custom = {}
@@ -146,10 +183,10 @@ function custom.show(menu)
     menu.creditsUi = menu.creditsUi or build(menu)
     view.ui = menu.creditsUi
     UI.setVisible(view.ui.backdrop, true)
+    view.offset = nil
     fit(menu)
-    -- Starts with the first lines at the top (below the fade), so the screen is never empty when it opens.
-    view.offset = math.max(0, math.min(view.region.height - FADE, maxOffset()))
-    view.hold, view.pause = OPEN_HOLD, 0
+    view.offset = minOffset()
+    view.hold = OPEN_HOLD
     view.savedHints = menu.hintText
     Menu.setHints(menu, "UP / DOWN  SCROLL        ENTER / ESC  BACK")
     Menu.selectBack(menu, true)
@@ -178,8 +215,8 @@ function custom.update(menu)
     end
     if step ~= 0 then
         local before = view.offset
-        view.offset = math.max(0, math.min(maxOffset(), view.offset + step * LINE_GAP * 3))
-        view.hold, view.pause = HOLD_SECONDS, 0
+        view.offset = math.max(minOffset(), math.min(maxOffset(), view.offset + step * STEP))
+        view.hold = HOLD_SECONDS
         if view.offset ~= before then
             Menu.tick(menu)
         end
@@ -187,12 +224,12 @@ function custom.update(menu)
         view.hold = view.hold - dt
     elseif not Menu.reducedMotion then
         if view.offset >= maxOffset() then
-            view.pause = view.pause + dt
-            if view.pause >= LOOP_PAUSE then
-                view.offset, view.pause = 0, 0
-            end
+            view.offset, view.hold = minOffset(), OPEN_HOLD
         else
             view.offset = math.min(maxOffset(), view.offset + SPEED * dt)
+            if view.offset >= maxOffset() then
+                view.hold = END_HOLD
+            end
         end
     end
     draw()
