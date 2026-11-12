@@ -190,6 +190,12 @@ public:
                      const FrameRenderConfig& config, float deltaTime);
 
     /**
+     * @brief Seconds between the last two frames' pacing points (where waiting for the GPU and the swapchain
+     * returns), or 0 when the last RenderFrame did not reach it. Gameplay stepped by it moves evenly on screen.
+     */
+    double PacedFrameSeconds() const { return m_pacedFrameSeconds; }
+
+    /**
      * @brief Shutdown and cleanup all resources.
      */
     void Shutdown();
@@ -528,6 +534,9 @@ private:
     };
     std::unordered_map<uint32_t, CharacterBoneGpu> m_characterBonePalettes;
     uint64_t m_frameSerial = 0;
+    std::chrono::steady_clock::time_point m_lastPacedTime{};
+    bool m_hasPacedTime = false;
+    double m_pacedFrameSeconds = 0.0;
     void releaseCharacterBonePalette(CharacterBoneGpu& gpu);
 
     // Material texture slots

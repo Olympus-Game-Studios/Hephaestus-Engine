@@ -1440,6 +1440,10 @@ int main(int argc, char* argv[]) {
         auto currentTime = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
+        // The renderer's paced interval is when frames are shown; this clock also counts the last frame's CPU work.
+        if (frameRenderer.PacedFrameSeconds() > 0.0) {
+            deltaTime = static_cast<float>(frameRenderer.PacedFrameSeconds());
+        }
         uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
 
 #if HEPHAESTUS_RUNTIME_AUTOMATION

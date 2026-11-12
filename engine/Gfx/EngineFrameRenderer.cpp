@@ -671,6 +671,7 @@ void EngineFrameRenderer::recordHUIOverlay(VkCommandBuffer cmd, uint32_t imageIn
 bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera, 
                                        const FrameRenderConfig& config, float deltaTime)
 {
+    m_pacedFrameSeconds = 0.0;
     if (!m_initialized) return false;
     if (m_deviceLost) {
         return false;
@@ -825,6 +826,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (imageIndex < m_imagesInFlight.size()) {
         m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
     }
+    const auto pacedNow = std::chrono::steady_clock::now();
+    m_pacedFrameSeconds = m_hasPacedTime ? std::chrono::duration<double>(pacedNow - m_lastPacedTime).count() : 0.0;
+    m_lastPacedTime = pacedNow;
+    m_hasPacedTime = true;
     flushPendingTextureDescriptorUpdates(imageIndex);
     
     vkResetFences(m_device->device, 1, &m_inFlightFences[m_currentFrame]);

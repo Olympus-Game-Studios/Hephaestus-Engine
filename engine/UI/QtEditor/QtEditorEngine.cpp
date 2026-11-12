@@ -1882,10 +1882,13 @@ void QtEditorEngine::onTick()
         return;
     }
     
-    // Calculate delta time
-    float currentTime = m_frameTimer.elapsed() / 1000.0f;
+    // Calculate delta time; the renderer's paced interval (when frames are shown) when it has one.
+    float currentTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
     float dt = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
+    if (m_frameRenderer && m_frameRenderer->PacedFrameSeconds() > 0.0) {
+        dt = static_cast<float>(m_frameRenderer->PacedFrameSeconds());
+    }
     
     if (m_presentPending) {
         applyPresentationTarget();
@@ -2110,7 +2113,7 @@ void QtEditorEngine::renderFrame()
     }
     
     // Calculate delta time for this frame
-    float currentTime = m_frameTimer.elapsed() / 1000.0f;
+    float currentTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
     float deltaTime = currentTime - m_lastFrameTime;
     
     // Sync EditorContext viewport settings to FrameRenderConfig
@@ -3272,7 +3275,7 @@ bool QtEditorEngine::IsRealtime() const
 void QtEditorEngine::SetRealtime(bool realtime)
 {
     m_playModeManager.SetRealtime(realtime);
-    m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
+    m_lastFrameTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
 }
 
 bool QtEditorEngine::reloadRuntimeScene(const std::string& scenePath, std::string& outError)
@@ -3477,7 +3480,7 @@ bool QtEditorEngine::StepFrames(std::uint32_t count, float fixedDt, std::string&
 
     // Reset the frame timer so the next free-running tick applies a normal dt
     // instead of a large delta accumulated across the stepped frames.
-    m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
+    m_lastFrameTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
     return true;
 }
 
