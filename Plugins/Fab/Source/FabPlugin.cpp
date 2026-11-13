@@ -186,7 +186,8 @@ private:
             }
             *handled = true;
             socket->disconnectFromHost();
-            HandlePayload(document.object());
+            KeepLastMessage(text);
+            HandlePayload(document.isArray() ? document.array() : document.object()["Assets"].toArray());
         };
         connect(socket, &QTcpSocket::readyRead, this, [socket, buffer, tryHandle] {
             buffer->append(socket->readAll());
@@ -202,10 +203,23 @@ private:
         });
     }
 
-    void HandlePayload(const QJsonObject& payload) {
-        const QJsonArray assets = payload["Assets"].toArray();
+    // The last export, kept in the project's .hephaestus folder for diagnosing an import that went wrong.
+    void KeepLastMessage(const QByteArray& text) {
+        if (!*m_context.Project().ProjectRoot()) {
+            return;
+        }
+        const QDir project(QString::fromUtf8(m_context.Project().ProjectRoot()));
+        project.mkpath(".hephaestus");
+        QFile file(project.filePath(".hephaestus/fab-launcher-last.json"));
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            file.write(text);
+        }
+    }
+
+    // Fab in Launcher sends a bare array of assets; Epic's Unreal receiver also reads {"Assets": [...]}.
+    void HandlePayload(const QJsonArray& assets) {
         if (assets.isEmpty()) {
-            Status(tr("A Fab Launcher export arrived with no assets."));
+            Status(tr("A Fab Launcher export arrived with no assets (saved in .hephaestus/fab-launcher-last.json)."));
             return;
         }
         for (const QJsonValue& value : assets) {

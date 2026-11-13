@@ -155,9 +155,9 @@ int main(int argc, char** argv) {
     IHephaestusPlugin* plugin = exports->create();
     ok &= Check(plugin->OnLoad(context), "the plugin loads");
 
-    const QJsonObject payload = {
-        {"Assets",
-         QJsonArray{QJsonObject{
+    // Fab in Launcher 0.115 sends a bare array, after an empty connection that only checks the port is open.
+    const QJsonArray payload = {
+         QJsonObject{
              {"id", "0f6e3b2a-test"},
              {"path", QString::fromStdString(download.generic_string())},
              {"native_files", QJsonArray{}},
@@ -172,10 +172,17 @@ int main(int argc, char** argv) {
                                                                       {"listingType", "3d-model"},
                                                                       {"category", QJsonObject{{"slug", "props"}}}}}}},
                           {"launcher", QJsonObject{{"version", "test"}, {"listening_port", launcher.serverPort()}}},
-                          {"megascans", QJsonObject{}}}}}}}};
+                          {"megascans", QJsonObject{}}}}}};
+    {
+        QTcpSocket probe;
+        probe.connectToHost(QHostAddress::LocalHost, 47213);
+        ok &= Check(probe.waitForConnected(3000), "the plugin listens on the configured local port");
+        probe.disconnectFromHost();
+        WaitFor(app, [] { return false; }, 100);
+    }
     QTcpSocket sender;
     sender.connectToHost(QHostAddress::LocalHost, 47213);
-    ok &= Check(sender.waitForConnected(3000), "the plugin listens on the configured local port");
+    ok &= Check(sender.waitForConnected(3000), "the plugin accepts the export after the probe");
     // The launcher may split a large document across writes; send it in two parts with a terminating NUL.
     const QByteArray text = QJsonDocument(payload).toJson(QJsonDocument::Compact) + '\0';
     sender.write(text.left(text.size() / 2));
@@ -189,6 +196,7 @@ int main(int argc, char** argv) {
                 "an export is imported into assets/Imported/Fab/<listing title>");
     ok &= Check(fs::exists(project / "assets/Imported/Fab/Rusty Barrel/credits.json"),
                 "the export gets a credit with the default Fab licence");
+    ok &= Check(fs::exists(project / ".hephaestus/fab-launcher-last.json"), "the last export is kept for diagnosis");
     while (!statusReply.isEmpty() && statusReply.back() == '\0') {
         statusReply.chop(1);
     }
