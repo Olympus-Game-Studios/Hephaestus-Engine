@@ -285,7 +285,7 @@ bool TestImportZippedTextureSet(const fs::path& scratch) {
     const fs::path zip = scratch / "Rock.zip";
     WriteZip(zip, {
         {"Rock/T_Rock_4K_Albedo.png", Rgba(90, 80, 70, 255)},
-        {"Rock/T_Rock_4K_Normal_DX.png", Rgba(128, 100, 255, 255)},
+        {"Rock/T_Rock_4K_normdx.png", Rgba(128, 100, 255, 255)},
         {"Rock/T_Rock_4K_ORM.png", Rgba(30, 150, 0, 255)},
         {"Rock/Rock_Displacement.exr", std::vector<uint8_t>(16, 7)},
         {"Rock/readme.txt", std::vector<uint8_t>(readme.begin(), readme.end())},

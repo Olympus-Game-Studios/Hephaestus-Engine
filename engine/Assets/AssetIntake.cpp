@@ -145,8 +145,8 @@ MapKind Classify(const std::string& stem, std::string& outBase, bool& outDirectX
         return MapKind::None;
     }
     std::string last = tokens.back();
-    if (last == "normaldx" || last == "normalgl") {
-        outDirectX = last == "normaldx";
+    if (last == "normaldx" || last == "normalgl" || last == "normdx" || last == "normgl") {
+        outDirectX = last == "normaldx" || last == "normdx";
         last = "normal";
     }
     static const std::map<std::string, MapKind> kinds = {
