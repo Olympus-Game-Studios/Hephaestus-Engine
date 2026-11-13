@@ -312,9 +312,7 @@ public:
         auto* launcherIntro = new QLabel(
             tr("In the launcher, open Fab's settings and set the export target to Custom (socket port). Then "
                "Export on any listing in your library lands in the open project as prefabs with materials and a "
-               "credit.
-
-Tip: many sellers keep textures in additional content. For the best result click "
+               "credit.\n\nTip: many sellers keep textures in additional content. For the best result click "
                "Download only, then the ... menu > Download additional content, then Export."),
             this);
         launcherIntro->setWordWrap(true);
