@@ -23,6 +23,7 @@
 #include <QMimeData>
 #include <QPointer>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTcpServer>
@@ -121,13 +122,18 @@ bool HasImages(const QString& folder) {
     return it.hasNext();
 }
 
-/// The listing's folder in the launcher's library (…/FabLibrary/<listing>-<id>), which also holds the listing's
-/// additional files the launcher extracted beside the export; empty when path is not inside a FabLibrary.
+/// The listing's folder in the launcher's download location ("<title>-<8 hex digits>", the export path itself or up
+/// to three folders above it, wherever the user keeps downloads), which also holds the listing's additional files
+/// the launcher extracted beside the export; empty when none is found.
 QString ListingFolder(const QString& path) {
+    static const QRegularExpression listingName(QStringLiteral("-[0-9a-fA-F]{8}$"));
     QDir dir(path);
-    for (QDir parent = dir; parent.cdUp(); dir = parent) {
-        if (parent.dirName().compare("FabLibrary", Qt::CaseInsensitive) == 0) {
+    for (int depth = 0; depth < 4; ++depth) {
+        if (listingName.match(dir.dirName()).hasMatch()) {
             return dir.absolutePath();
+        }
+        if (!dir.cdUp()) {
+            break;
         }
     }
     return {};

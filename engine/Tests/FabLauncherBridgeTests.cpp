@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
     fs::create_directories(project / "assets");
     // Laid out like the launcher's library: the export folder holds only the model, and the listing's additional
     // files (extracted beside it) hold the textures.
-    const fs::path listing = scratch / "FabLibrary" / "Rusty Barrel-1a2b3c4d";
+    const fs::path listing = scratch / "FabDownloads" / "Rusty Barrel-1a2b3c4d"; // a custom download location
     const fs::path download = listing / "source";
     fs::create_directories(download);
     std::ofstream(download / "Rusty_Barrel.obj") << "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nf 1/1 2/1 3/1\n";
