@@ -106,6 +106,16 @@ function dropWeapon(vx, vy, vz, lifeSeconds)
                                     vars = vars })
 end
 
+-- Puts the weapon away for good: hidden, no longer held, and never dropped. Scripts cannot destroy one node of a
+-- prefab instance on its own (Scene.destroy takes the whole instance), so a character swapping weapons stows this one.
+function stowWeapon()
+    dropped = true
+    Mesh.setVisible(false)
+    if ownerKey then
+        Registry.muzzles[ownerKey] = nil
+    end
+end
+
 function onDestroy()
     if ownerKey then
         Registry.muzzles[ownerKey] = nil

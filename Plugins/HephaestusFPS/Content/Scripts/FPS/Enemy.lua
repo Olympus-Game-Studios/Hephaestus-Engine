@@ -4,6 +4,7 @@
 -- menu can change it.
 -- Needs a Character Controller, a Character (for animation) and hit zone children (FPS.HitZone with no owner).
 local SlideEffects = require("FPS.SlideEffects")
+local Roles = require("FPS.AI.Roles")
 local Registry = require("FPS.Registry")
 local Health = require("FPS.Health")
 local Gunplay = require("FPS.Gunplay")
@@ -87,6 +88,12 @@ Expose.bool("huntOnSpawn", false)
 Expose.number("ragdollImpulse", 45)
 Expose.number("ragdollBlastImpulse", 220)
 Expose.bool("debugAI", false)
+-- Role (FPS.AI.Roles): "rifleman" uses the weapon settings above, "sniper" swaps the held rifle for sniperWeaponPrefab
+-- (a FPS/HeldWeapon.lua prefab) and fights from overwatch with the role's weapon numbers.
+Expose.string("role", "rifleman")
+Expose.string("sniperWeaponPrefab", "")
+Expose.string("sniperFireSound", "")
+Expose.string("sniperCycleSound", "") -- the bolt, a moment after each sniper shot
 
 local Enemy = {}
 
@@ -129,6 +136,11 @@ local deathZone = nil
 local children = {}
 local selfRow = nil
 local target = nil -- the combatant row this soldier is fighting
+local roleDef = Roles.rifleman
+local weapon = {} -- damage, range, magazineSize, reloadSeconds, fireSound for the role
+local sniper = false
+local suppression = 0
+local cycleAt = nil
 local killer = nil
 
 local function random()
@@ -236,9 +248,19 @@ end
 
 -- Fire control ------------------------------------------------------------------------------------------------
 local function aimError(row)
-    local settle = math.min(1, visibleTime / math.max(skill.aimSettleSeconds, 0.01))
-    local errorDegrees = Gunplay.lerp(skill.aimErrorDegrees, skill.aimErrorMinDegrees, settle)
+    local settle = math.min(1, visibleTime / math.max(skill.aimSettleSeconds * (roleDef.aimSettleScale or 1), 0.01))
+    local errorDegrees = Gunplay.lerp(skill.aimErrorDegrees, skill.aimErrorMinDegrees * (roleDef.aimErrorScale or 1),
+                                      settle)
     return errorDegrees + skill.movingTargetErrorDegrees * (row.speed or 0)
+        + suppression * Roles.suppression.aimErrorDegrees
+end
+
+-- Pins the bot being fired at: its aim gets worse and it heads for cover (see `suppression`).
+local function suppress(row, scale)
+    if row and row.bot and row.key and Registry.suppression then
+        local s = Roles.suppression
+        Registry.suppression[row.key] = math.min(s.max, (Registry.suppression[row.key] or 0) + s.perShot * scale)
+    end
 end
 
 -- aimPoint (optional) shoots there instead of at the player, with extraSpread degrees more error: blind fire.
@@ -258,11 +280,11 @@ local function fireShot(row, aimPoint, extraSpread)
     end
     dx, dy, dz = Gunplay.spreadDirection(dx / length, dy / length, dz / length,
                                          math.rad(aimError(row) + (extraSpread or 0)), random(), random())
-    local hit = Physics.raycast(muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, range, "Character", true, ignore)
+    local hit = Physics.raycast(muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, weapon.range, "Character", true, ignore)
     -- What the player sees: a flash at the rifle's real muzzle and a tracer from there to where the shot ends.
     local barrel = Registry.muzzles[selfKey] or muzzle
     Impacts.spawnEffect(muzzleFlashPrefab, barrel.x, barrel.y, barrel.z, dx, dy, dz)
-    local reach = hit and (hit.distance or range) or range
+    local reach = hit and (hit.distance or weapon.range) or weapon.range
     local ex, ey, ez = muzzle.x + dx * reach, muzzle.y + dy * reach, muzzle.z + dz * reach
     local tx, ty, tz = ex - barrel.x, ey - barrel.y, ez - barrel.z
     local tracerLength = math.sqrt(tx * tx + ty * ty + tz * tz)
@@ -282,7 +304,8 @@ local function fireShot(row, aimPoint, extraSpread)
         playerRow.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, reach,
                               hitPlayer and true or false, hitSurface and true or false)
     end
-    local amount = damage * skill.damageScale
+    local amount = weapon.damage * skill.damageScale
+    suppress(row, (aimPoint and 2 or 1) * (sniper and 2 or 1))
     if hitPlayer then
         Registry.notePlayerHit(barrel.x, barrel.y, barrel.z, Registry.clock or 0)
         Health.applyDamage(playerRow.entity, amount, this)
@@ -301,11 +324,15 @@ local function fireShot(row, aimPoint, extraSpread)
         engine_log(string.format("[FPS.Enemy] %s shot %s", this:GetName(),
                                  hit and hit.entity and isTarget(hit.entity) and "hit player" or "missed"))
     end
-    if fireSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
-        Audio.play(fireSound, { volume = fireVolume, bus = "sfx", priority = 2, pitchJitter = 0.04,
-                                position = muzzle, minDistance = 3, maxDistance = 150 })
+    if weapon.fireSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
+        Audio.play(weapon.fireSound, { volume = fireVolume, bus = "sfx", priority = 2, pitchJitter = 0.04,
+                                       position = muzzle, minDistance = 3, maxDistance = sniper and 250 or 150 })
     end
-    Registry.reportNoise(muzzle.x, muzzle.y, muzzle.z, 40, "enemy", team)
+    if sniper then
+        cycleAt = 0.35
+        fire.shotsHere = (fire.shotsHere or 0) + 1
+    end
+    Registry.reportNoise(muzzle.x, muzzle.y, muzzle.z, roleDef.noiseRadius or 40, "enemy", team)
 end
 
 -- Bursts at the player while canShoot, after the reaction delay; reloads when the magazine is empty. aimPoint and
@@ -314,7 +341,7 @@ local function updateFiring(dt, canShoot, row, aimPoint, extraSpread)
     if fire.reloading > 0 then
         fire.reloading = fire.reloading - dt
         if fire.reloading <= 0 then
-            fire.magazine = magazineSize
+            fire.magazine = weapon.magazineSize
         end
         return
     end
@@ -323,7 +350,7 @@ local function updateFiring(dt, canShoot, row, aimPoint, extraSpread)
         return
     end
     if fire.magazine <= 0 then
-        fire.reloading = reloadSeconds
+        fire.reloading = weapon.reloadSeconds
         return
     end
     if fire.reaction > 0 then
@@ -335,7 +362,7 @@ local function updateFiring(dt, canShoot, row, aimPoint, extraSpread)
         return
     end
     if fire.burstLeft <= 0 then
-        fire.burstLeft = skill.burstMin + math.floor(random() * (skill.burstMax - skill.burstMin + 1))
+        fire.burstLeft = sniper and 1 or skill.burstMin + math.floor(random() * (skill.burstMax - skill.burstMin + 1))
         fire.shotTimer = 0
     end
     fire.shotTimer = fire.shotTimer - dt
@@ -346,7 +373,8 @@ local function updateFiring(dt, canShoot, row, aimPoint, extraSpread)
         fire.shotTimer = fire.shotTimer + 1 / math.max(skill.roundsPerSecond, 0.1)
     end
     if fire.burstLeft <= 0 then
-        fire.pause = skill.burstPauseSeconds * (0.7 + 0.6 * random())
+        fire.pause = sniper and roleDef.shotInterval * (0.9 + 0.3 * random())
+            or skill.burstPauseSeconds * (0.7 + 0.6 * random())
     end
 end
 
@@ -582,6 +610,10 @@ local states = {}
 
 states.patrol = {
     enter = function(_, brain)
+        if sniper and huntWhenIdle then
+            brain.sniperRedirect = true
+            return
+        end
         local point, routed = nextPatrolPoint()
         brain.routed = routed
         if point then
@@ -590,6 +622,9 @@ states.patrol = {
         brain.waitTimer = nil
     end,
     update = function(_, brain, dt)
+        if brain.sniperRedirect then
+            return "overwatch"
+        end
         local next, a, b = reactions(brain.routed and not mover.arrived)
         if next then
             return next, a, b
@@ -618,6 +653,10 @@ states.patrol = {
 
 states.investigate = {
     enter = function(_, brain, target, run, route)
+        if sniper then
+            brain.sniperRedirect = true
+            return
+        end
         brain.route = route
         brain.target = target or lastKnown
         brain.lookTime = 0
@@ -628,6 +667,9 @@ states.investigate = {
     update = function(_, brain, dt)
         if danger then
             return "evade"
+        end
+        if brain.sniperRedirect then
+            return "overwatch"
         end
         if awareness >= 1 and visible then
             return "combat"
@@ -666,14 +708,22 @@ states.combat = {
         if danger then
             return "evade"
         end
+        if sniper then
+            return "overwatch"
+        end
         local row = opponent()
         if not row then
             awareness = 0
             return "patrol"
         end
+        if suppression > Roles.suppression.coverAbove and brain.time > 0.5 then
+            brain.coverTried = false
+            brain.pinned = true
+        end
         if not brain.coverTried and lastKnown then
             brain.coverTried = true
-            if random() < skill.coverChance then
+            if brain.pinned or random() < skill.coverChance then
+                brain.pinned = false
                 local threatEye = { x = lastKnown.x, y = lastKnown.y + (row.eyeHeight or 1.6), z = lastKnown.z }
                 local spot = Cover.find(position(), threatEye, { radius = coverSearchRadius, samples = 14,
                                                                  eyeHeight = eyeHeight },
@@ -821,6 +871,189 @@ states.flank = {
         if Registry.flanker == selfKey then
             Registry.flanker = nil
         end
+    end,
+}
+
+-- Sniper overwatch ---------------------------------------------------------------------------------------------
+local function flatDistance(a, b)
+    return math.sqrt((a.x - b.x) ^ 2 + (a.z - b.z) ^ 2)
+end
+
+-- Where the enemy is: where it was last seen while that is fresh, else the nearest hostile (as hunting bots know).
+local function threatPoint()
+    if lastKnown and awareness >= 1 and lostTime < 5 then
+        return lastKnown
+    end
+    local row = nearestHostile()
+    local feet = row and feetOf(row)
+    return feet and { x = feet.x, y = feet.y, z = feet.z } or lastKnown
+end
+
+-- A spot overwatchMin to overwatchMax from the threat, on this side of it: cover with a peek spot that sees the
+-- threat if there is one, else a point in that range that sees it (higher ground preferred), else the middle.
+local function findOverwatch(threat)
+    local p = position()
+    local dx, dz = p.x - threat.x, p.z - threat.z
+    local d = math.sqrt(dx * dx + dz * dz)
+    if d < 1e-3 then
+        dx, dz, d = 1, 0, 1
+    end
+    local want = (roleDef.overwatchMin + roleDef.overwatchMax) * 0.5
+    local center = Nav.closestPoint({ x = threat.x + dx / d * want, y = p.y, z = threat.z + dz / d * want }) or p
+    local threatEye = { x = threat.x, y = threat.y + 1.6, z = threat.z }
+    local spot = Cover.find(center, threatEye, { radius = roleDef.overwatchSearchRadius, samples = 18,
+                                                 eyeHeight = eyeHeight, minThreatDistance = roleDef.overwatchMin },
+                            function(c, r) return Nav.randomPoint(c, r) end, nearestNav, blocked)
+    if spot and spot.peek and flatDistance(spot.point, threat) <= roleDef.overwatchMax + 5 then
+        return spot
+    end
+    local best, bestScore = nil, -math.huge
+    for _ = 1, 14 do
+        local q = Nav.randomPoint(center, roleDef.overwatchSearchRadius)
+        if q then
+            local qd = flatDistance(q, threat)
+            if qd >= roleDef.overwatchMin and qd <= roleDef.overwatchMax
+                and not blocked({ x = q.x, y = q.y + eyeHeight, z = q.z }, threatEye) then
+                local score = (q.y - threat.y) * 2 - math.abs(qd - want) * 0.1
+                if score > bestScore then
+                    best, bestScore = { point = q }, score
+                end
+            end
+        end
+    end
+    return best or spot or { point = center }
+end
+
+-- Someone a teammate is fighting that this soldier can see from here, and where to aim at them.
+local function coverFireTarget()
+    local from = eye()
+    for _, ally in pairs(Registry.combatants) do
+        if ally.key ~= selfKey and ally.bot and ally.engaged and Registry.sameTeam(ally, selfRow) then
+            local row = Registry.combatants[ally.engaged]
+            local feet = row and hostile(row) and feetOf(row)
+            if feet then
+                local chest = { x = feet.x, y = feet.y + (row.eyeHeight or 1.6) * 0.75, z = feet.z }
+                if flatDistance(feet, from) <= weapon.range and Perception.clearLine(from, chest, ignore, function(entity)
+                    local owner = Registry.combatantOf(entity)
+                    return owner ~= nil and owner.key == row.key
+                end) then
+                    return row, chest
+                end
+            end
+        end
+    end
+    return nil
+end
+
+states.overwatch = {
+    enter = function(_, brain)
+        brain.phase, brain.phaseTime, brain.idle = "find", 0, 0
+        brain.relocate = false
+        brain.coverFireTimer = roleDef.coverFireInterval
+    end,
+    update = function(_, brain, dt)
+        if danger then
+            return "evade"
+        end
+        brain.phaseTime = brain.phaseTime + dt
+        local row = opponent()
+        local p = position()
+        -- Someone close and in sight: back off away from them, then find a new spot.
+        if row and visible and lastKnown and brain.phase ~= "fallback"
+            and flatDistance(p, lastKnown) < roleDef.keepAwayDistance then
+            local d = math.max(flatDistance(p, lastKnown), 0.1)
+            local away = { x = p.x + (p.x - lastKnown.x) / d * 14, y = p.y, z = p.z + (p.z - lastKnown.z) / d * 14 }
+            local q = Nav.closestPoint(away) or Nav.randomPoint(p, 12)
+            if q then
+                moveTo(q, true)
+                brain.phase, brain.phaseTime = "fallback", 0
+            end
+        end
+        if brain.phase == "fallback" then
+            faceTarget = nil
+            updateFiring(dt, false, row)
+            if mover.arrived or brain.phaseTime > 5 then
+                brain.phase = "find"
+            end
+            return nil
+        end
+        if brain.phase == "find" then
+            local threat = threatPoint()
+            if not threat then
+                stopMoving()
+                return nil
+            end
+            brain.threat = threat
+            brain.spot = findOverwatch(threat)
+            moveTo(brain.spot.point, true)
+            brain.phase, brain.phaseTime, brain.idle = "moving", 0, 0
+            fire.shotsHere = 0
+            if debugAI then
+                engine_log(string.format("[FPS.Enemy] %s overwatch at %.1f, %.1f, %.0f m from the enemy%s",
+                                         this:GetName(), brain.spot.point.x, brain.spot.point.z,
+                                         flatDistance(brain.spot.point, threat), brain.spot.peek and " (cover)" or ""))
+            end
+            return nil
+        end
+        faceTarget = (visible and lastKnown) or brain.coverAim or brain.threat
+        if brain.phase == "moving" then
+            updateFiring(dt, false, row)
+            if mover.arrived or brain.phaseTime > 12 then
+                stopMoving()
+                brain.phase, brain.phaseTime = "hide", 0
+            end
+        elseif brain.phase == "hide" then
+            -- The bolt and reloads happen behind cover.
+            updateFiring(dt, false, row)
+            if brain.phaseTime > roleDef.hideSeconds and fire.reloading <= 0 then
+                if brain.spot.peek then
+                    moveTo(brain.spot.peek, false)
+                end
+                brain.phase, brain.phaseTime = "peek", 0
+            end
+        elseif brain.phase == "peek" then
+            local ready = not brain.spot.peek or mover.arrived
+            if ready then
+                stopMoving()
+            end
+            if visible and row then
+                brain.idle = 0
+                brain.coverAim = nil
+                updateFiring(dt, ready, row)
+            else
+                updateFiring(dt, false, row)
+                brain.idle = brain.idle + dt
+                -- Cover fire: a shot at whoever a teammate is fighting, if it can be seen from here.
+                brain.coverFireTimer = brain.coverFireTimer - dt
+                if ready and brain.coverFireTimer <= 0 and fire.magazine > 0 and fire.reloading <= 0 then
+                    if brain.coverAim and brain.coverRow and hostile(brain.coverRow) then
+                        fireShot(brain.coverRow, brain.coverAim, roleDef.coverFireSpreadDegrees)
+                        fire.magazine = fire.magazine - 1
+                        brain.coverAim, brain.coverRow = nil, nil
+                        brain.coverFireTimer = roleDef.coverFireInterval
+                    else
+                        -- Turn onto them first; the shot comes on the next check.
+                        brain.coverRow, brain.coverAim = coverFireTarget()
+                        brain.coverFireTimer = brain.coverAim and 0.5 or 1
+                    end
+                end
+            end
+            if (fire.shotsHere or 0) >= roleDef.relocateAfterShots or brain.relocate then
+                brain.relocate = false
+                brain.phase = "find"
+            elseif brain.idle > roleDef.rescanSeconds then
+                brain.phase = "find"
+            elseif fire.magazine <= 0 or (brain.phaseTime > roleDef.peekSeconds and not visible and not brain.coverAim) then
+                if fire.magazine <= 0 and fire.reloading <= 0 then
+                    fire.reloading = weapon.reloadSeconds
+                end
+                if brain.spot.peek then
+                    moveTo(brain.spot.point, false)
+                end
+                brain.phase, brain.phaseTime = "hide", 0
+            end
+        end
+        return nil
     end,
 }
 
@@ -1030,13 +1263,29 @@ function onAwake()
     target, killer = nil, nil
     Health.attach(this, { maxHealth = maxHealth })
     skill = Difficulty.resolve(difficulty, parseOverrides(skillOverrides))
+    roleDef = Roles.get(role)
+    sniper = roleDef == Roles.sniper
+    weapon = { damage = roleDef.damage or damage, range = roleDef.range or range,
+               magazineSize = roleDef.magazineSize or magazineSize,
+               reloadSeconds = roleDef.reloadSeconds or reloadSeconds,
+               fireSound = sniper and sniperFireSound ~= "" and sniperFireSound or fireSound }
+    if roleDef.sightRangeScale then
+        local seen = {}
+        for k, v in pairs(skill) do
+            seen[k] = v
+        end
+        seen.sightRange = skill.sightRange * roleDef.sightRangeScale
+        skill = seen
+    end
+    selfRow.role = roleDef.name
+    suppression, cycleAt = 0, nil
     rng = (selfKey or 1) * 7919 % 2147483647 + 1
     home = position()
     patrolList = parsePatrolPoints()
     patrolIndex = 0
     yaw = Transform.getRotation().y - math.rad(modelYawOffsetDegrees)
     mover = Mover.new()
-    fire = { magazine = magazineSize, reloading = 0, reaction = 0, burstLeft = 0, shotTimer = 0, pause = 0 }
+    fire = { magazine = weapon.magazineSize, reloading = 0, reaction = 0, burstLeft = 0, shotTimer = 0, pause = 0 }
     grenadesLeft = skill.grenadeCount
     grenadeCooldown = skill.grenadeCooldownSeconds * 0.5
     tacticsTimer = 0
@@ -1127,6 +1376,15 @@ function onUpdate(dt)
         if not Nav.isReady() then
             return
         end
+        if sniper and sniperWeaponPrefab ~= "" then
+            for _, entity in ipairs(Scene.findAllWithPrefix(this:GetName() .. "_Rifle")) do
+                local parent = entity:GetParent()
+                if parent and Registry.key(parent) == selfKey then
+                    entity:Call("stowWeapon")
+                end
+            end
+            Scene.instantiate(sniperWeaponPrefab, { parent = this, position = { x = 0, y = 1.2, z = 0.3 } })
+        end
         refreshIgnore()
         children = {}
         for _, entity in ipairs(Scene.findAllWithPrefix("")) do
@@ -1137,8 +1395,10 @@ function onUpdate(dt)
         end
         local row = huntOnSpawn and (opponent() or nearestHostile())
         local feet = row and feetOf(row)
-        local route = huntOnSpawn and routeSpot()
-        if route then
+        local route = huntOnSpawn and not sniper and routeSpot()
+        if sniper then
+            brain = Brain.new(this, states, "overwatch")
+        elseif route then
             -- Into a lane first; the hunt starts from there.
             brain = Brain.new(this, states, "investigate", route, true, true)
         elseif feet then
@@ -1153,6 +1413,23 @@ function onUpdate(dt)
     end
     perceptionTimer = perceptionTimer - dt
     grenadeCooldown = grenadeCooldown - dt
+    if Registry.suppression then
+        suppression = math.max(0, (Registry.suppression[selfKey] or 0) - Roles.suppression.decayPerSecond * dt)
+        Registry.suppression[selfKey] = suppression
+    end
+    if cycleAt then
+        cycleAt = cycleAt - dt
+        if cycleAt <= 0 then
+            cycleAt = nil
+            if sniperCycleSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
+                local p = position()
+                Audio.play(sniperCycleSound, { volume = 0.7, bus = "sfx", priority = 1,
+                                               position = { x = p.x, y = p.y + eyeHeight, z = p.z },
+                                               minDistance = 2, maxDistance = 30 })
+            end
+        end
+    end
+    selfRow.engaged = awareness >= 1 and target and target.key or nil
     if perceptionTimer <= 0 then
         perceive(perceptionInterval - perceptionTimer)
         perceptionTimer = perceptionInterval
@@ -1239,6 +1516,8 @@ function onHit(amount, zone, distance, attacker)
     fire.pause = math.max(fire.pause, 0.25)
     if brain and (brain.current == "patrol" or brain.current == "investigate") then
         Brain.change(brain, "combat")
+    elseif brain and brain.current == "overwatch" then
+        brain.relocate = true
     end
 end
 
@@ -1293,7 +1572,8 @@ end
 
 -- What the enemy is doing, for debugging and tests.
 function getAIState()
-    return brain and brain.current or "none", awareness, visible, fire.magazine
+    return brain and brain.current or "none", awareness, visible, fire.magazine, roleDef.name, suppression,
+        brain and brain.phase or ""
 end
 
 return Enemy

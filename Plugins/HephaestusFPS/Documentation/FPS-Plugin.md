@@ -141,6 +141,17 @@ Everything about how well enemies fight comes from `FPS.AI.Difficulty`. It has f
 
 A settings menu can change all enemies at once: `Difficulty.setLevel("hardened")` picks a preset, `Difficulty.setOverride("damageScale", 0.5)` changes one value on top of any preset (`nil` removes it), and `Difficulty.clearOverrides()` removes them all. Enemies read their settings when they spawn. One enemy can use its own level with its `difficulty` variable, and its own values with `skillOverrides` (`"aggression=0.9;grenadeAwareness=false"`), which win over everything else.
 
+### Roles
+
+An enemy's `role` variable picks how it fights on top of its difficulty, from `FPS.AI.Roles`:
+
+- `rifleman` (the default) uses the enemy's own rifle and behaviour.
+- `sniper` hangs back on overwatch. It finds a spot `overwatchMin` to `overwatchMax` metres (20 to 50) from the enemy on its own side, preferring cover with a peek spot that sees them, else higher ground in sight of them. It works the bolt and reloads behind cover, peeks for `peekSeconds` to fire single aimed shots, and moves to a new spot after `relocateAfterShots` shots, when it is hit, or after `rescanSeconds` with nothing to shoot. With no target of its own it gives cover fire: a shot every `coverFireInterval` seconds at whoever a teammate is fighting, if it can see them. Anyone within `keepAwayDistance` makes it fall back first. It sees `sightRangeScale` times further than a rifleman, aims tighter but settles slower, and its `damage` (110) is multiplied by the difficulty's `damageScale` like any other enemy's, so a recruit sniper does 55 and a hardened one kills with a body shot.
+
+To show the sniper in its hands, set the enemy's `sniperWeaponPrefab` to a held weapon prefab (a `HeldWeapon.lua` root with the mesh). The enemy then stows its own `<name>_Rifle` child (`stowWeapon` hides it for good) and holds the sniper instead, dropping it when it dies. `sniperFireSound` and `sniperCycleSound` are its shot and bolt sounds. Team deathmatch makes one in `Roles.sniperEvery` (4) of each team's bots a sniper, at least one in teams of `Roles.sniperMinTeam` (3) or more.
+
+Every bot is also suppressed by fire aimed at it: each shot at it adds `Roles.suppression.perShot` (double for cover fire and blind fire at a spot, and double again from a sniper), which wears off at `decayPerSecond`. Suppression adds up to `aimErrorDegrees` to its aim, and above `coverAbove` a bot in the open breaks off to take cover. Change these tables, or add a role table with a `name`, to tune them.
+
 ### Adding behaviour
 
 The enemy is a state machine (`FPS.AI.Brain`). Each state in `Enemy.lua`'s `states` table has `enter`, `update` and `exit` functions, and `update` returns the name of the next state, so a new behaviour is a new state. The parts it uses are separate modules you can use for other kinds of enemy: `FPS.AI.Tactics` (flank spots and grenade throws), `FPS.AI.Perception` (sight and hearing), `FPS.AI.Mover` (following navmesh paths), `FPS.AI.Cover` (finding cover) and the noise and danger lists in `FPS.Registry` (`reportNoise`, `setDanger`, `clearDanger`).

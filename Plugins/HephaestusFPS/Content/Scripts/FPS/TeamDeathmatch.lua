@@ -6,6 +6,7 @@
 -- away from the other team. Hold Scoreboard (Tab) for the scoreboard. The match ends on a screen offering Play
 -- again and Quit to menu. Put it on any entity in a level with a navmesh and the player; set the player's
 -- restartEnabled off, since this screen replaces its restart prompt.
+local Roles = require("FPS.AI.Roles")
 local Registry = require("FPS.Registry")
 local Hud = require("FPS.Hud")
 local Match = require("FPS.Match")
@@ -118,6 +119,9 @@ local function spawnSoldier(soldier)
     if soldier.difficulty then
         vars.difficulty = soldier.difficulty
     end
+    if soldier.role then
+        vars.role = soldier.role
+    end
     local entity = Scene.instantiate(soldier.prefab, {
         position = spot,
         rotation = { x = 0, y = math.deg(yaw) + 90, z = 0 },
@@ -155,10 +159,13 @@ local function startMatch()
         if playerTeam then
             count, difficulty = setup.friendlyBots or teamSize - 1, setup.friendlyDifficulty
         end
+        -- The last few bots of each team are snipers (FPS.AI.Roles), the rest riflemen.
+        local snipers = Roles.sniperCount(count)
         for i = 1, count do
             local id = string.format("%d-%d", team, i)
             local name = names[team][i] or string.format("%s %d", team == 1 and "Blue" or "Red", i)
-            soldiers[id] = { id = id, team = team, name = name, prefab = prefabs[team], difficulty = difficulty }
+            soldiers[id] = { id = id, team = team, name = name, prefab = prefabs[team], difficulty = difficulty,
+                             role = i > count - snipers and "sniper" or nil }
             Match.join(state, id, name, team)
             spawnSoldier(soldiers[id])
         end

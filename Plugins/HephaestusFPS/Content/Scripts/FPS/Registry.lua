@@ -62,6 +62,7 @@ function Registry.ensureSession()
     Registry.matchDirector = nil
     Registry.routes = nil
     Registry.flanker = nil
+    Registry.suppression = {}
     Registry.lastBlast = nil
     Registry.liveGrenades = {}
     Registry.smokeClouds = {}
