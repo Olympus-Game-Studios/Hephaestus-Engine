@@ -275,6 +275,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/SceneAutomation.cpp
     engine/Automation/ScriptAutomation.cpp
     engine/Automation/ToolRegistry.cpp
+    engine/Automation/PluginToolBridge.cpp
     engine/Automation/UIAutomation.cpp
     engine/Automation/PhysicsAutomation.cpp
     engine/Automation/ViewportAutomation.cpp

@@ -427,7 +427,8 @@ EditorMainWindow::EditorMainWindow(QWidget* parent,
             rebuildOutliner();
             refreshDetailsPanel();
             updateUndoRedoActions();
-        });
+        },
+        m_automationService ? &m_automationService->Registry() : nullptr);
     m_pluginSystem->SetContextFactory([this](const Plugins::PluginManifest& manifest) {
         return m_pluginHost->CreateContext(manifest);
     });

@@ -106,6 +106,21 @@ struct AssetPackImportResult {
     char message[2048] = {}; // the error on failure, otherwise the warnings, one per line
 };
 
+/// Called on the editor's main thread with the tool's arguments as a JSON object. The plugin answers with
+/// IAutomationToolService::CompleteCall(callId, ...), before returning or later (after network work, for
+/// example). MCP clients give up on a call after about 30 seconds, so longer work should start a job and
+/// return at once, with another tool to ask how it is going.
+using AutomationToolCallback = void (*)(const char* argumentsJson, std::uint64_t callId, void* userData);
+
+struct AutomationToolDescriptor {
+    const char* name = nullptr;            // [A-Za-z0-9_.-], e.g. "sketchfab.search"
+    const char* description = nullptr;     // what the tool does, for AI clients
+    const char* inputSchemaJson = nullptr; // JSON Schema of the arguments object
+    bool mutatesProject = false;           // true: only offered while the editor is not playing
+    AutomationToolCallback call = nullptr;
+    void* userData = nullptr;
+};
+
 enum class SettingScope : std::uint32_t { Editor, Project };
 struct SettingDescriptor {
     const char* id = nullptr;
@@ -179,6 +194,16 @@ public:
     virtual bool Set(const char* settingId, const char* value) = 0;
 };
 
+/// Tools a plugin adds to the editor's automation surface, which the Hephaestus MCP plugin offers to AI clients.
+/// A plugin's tools disappear when it unloads.
+class IAutomationToolService {
+public:
+    virtual ~IAutomationToolService() = default;
+    virtual bool RegisterTool(const AutomationToolDescriptor& descriptor) = 0;
+    /// success: resultJson is the JSON object returned to the caller; otherwise it is the error message.
+    virtual bool CompleteCall(std::uint64_t callId, bool success, const char* resultJson) = 0;
+};
+
 class IPluginContext {
 public:
     virtual ~IPluginContext() = default;
@@ -190,6 +215,9 @@ public:
     virtual IUndoService& Undo() = 0;
     virtual IProjectService& Project() = 0;
     virtual ISettingsService& Settings() = 0;
+    /// Appended to API 1 after its first release (see IAssetService::ImportAssetPack); null where the host has
+    /// no automation.
+    virtual IAutomationToolService* AutomationTools() { return nullptr; }
 };
 
 class IHephaestusPlugin {

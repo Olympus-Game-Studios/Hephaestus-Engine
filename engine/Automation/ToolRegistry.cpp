@@ -49,6 +49,7 @@ bool ToolRegistry::Register(ToolDefinition definition, std::string& outError)
         outError = "Tool handler is required";
         return false;
     }
+    std::unique_lock lock(m_Mutex);
     if (m_Tools.contains(definition.name)) {
         outError = "Tool is already registered: " + definition.name;
         return false;
@@ -59,17 +60,44 @@ bool ToolRegistry::Register(ToolDefinition definition, std::string& outError)
     return true;
 }
 
+bool ToolRegistry::SetEnabled(std::string_view name, bool enabled)
+{
+    std::unique_lock lock(m_Mutex);
+    if (m_Tools.find(name) == m_Tools.end()) return false;
+    if (enabled) {
+        if (const auto it = m_Disabled.find(name); it != m_Disabled.end()) m_Disabled.erase(it);
+    } else {
+        m_Disabled.emplace(name);
+    }
+    return true;
+}
+
+bool ToolRegistry::Contains(std::string_view name) const
+{
+    std::shared_lock lock(m_Mutex);
+    return m_Tools.find(name) != m_Tools.end();
+}
+
+std::size_t ToolRegistry::Size() const noexcept
+{
+    std::shared_lock lock(m_Mutex);
+    return m_Tools.size() - m_Disabled.size();
+}
+
 const ToolDefinition* ToolRegistry::Find(std::string_view name) const noexcept
 {
+    std::shared_lock lock(m_Mutex);
+    if (m_Disabled.find(name) != m_Disabled.end()) return nullptr;
     const auto it = m_Tools.find(name);
     return it == m_Tools.end() ? nullptr : &it->second;
 }
 
 std::vector<const ToolDefinition*> ToolRegistry::Available(HostMask host, PlayState state) const
 {
+    std::shared_lock lock(m_Mutex);
     std::vector<const ToolDefinition*> available;
     for (const auto& [name, definition] : m_Tools) {
-        (void)name;
+        if (m_Disabled.contains(name)) continue;
         if (HasHost(definition.hostMask, host) &&
             MeetsPlayRequirement(definition.playRequirement, state)) {
             available.push_back(&definition);

@@ -24,6 +24,7 @@ HP_DECLARE_PLUGIN(MyPlugin)
 - `Undo`: begin/commit/rollback transactions backed by the editor scene undo stack.
 - `Project`: project/plugin roots and portable asset resolution.
 - `Settings`: plugin-owned editor or project setting definitions and values.
+- `AutomationTools()` (may be null): tools the plugin adds to the editor's automation surface, which the Hephaestus MCP plugin offers to AI clients. `RegisterTool` takes a name, description, JSON Schema for the arguments and a callback that receives the arguments as JSON on the main thread; the plugin answers with `CompleteCall(callId, success, json)` either before returning or later (after network work). MCP clients give up after about 30 seconds, so long work should start a job and return, with a status tool (see `Plugins/Sketchfab`). A plugin's tools are hidden while it is unloaded and come back when it reloads; names of engine tools cannot be taken. `AutomationTools()` was appended to `IPluginContext` after API 1 first shipped, like `ImportAssetPack`.
 
 The host copies every descriptor during `OnLoad`; descriptor strings need only remain valid for the call. Plugin callback `userData` remains plugin-owned and must stay valid until `OnUnload`. Widgets returned by panel factories become Qt children of the host dock. The plugin must not delete them independently. Commands must be registered before UI placements that reference them.
 

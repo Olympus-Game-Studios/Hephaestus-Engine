@@ -10,6 +10,8 @@
  * ReimportManager; tests can supply a deterministic fake.
  */
 
+#include "Assets/AssetIntake.h"
+
 #include <string>
 #include <vector>
 
@@ -37,6 +39,15 @@ public:
 
     /** Non-blocking completion poll. True when a completion was observed. */
     virtual bool PollCompletion(const std::string& absoluteSource, AssetImportStatus& outStatus) = 0;
+
+    /** Import a downloaded pack with its materials applied through prefabs (AssetIntake). */
+    virtual bool ImportPack(const AssetIntakeRequest& request, AssetIntakeResult& outResult, std::string& outError)
+    {
+        (void)request;
+        (void)outResult;
+        outError = "Asset pack import is unavailable for this host";
+        return false;
+    }
 };
 
 } // namespace Hephaestus::Automation

@@ -8,6 +8,7 @@
 
 #include "Automation/AssetAutomation.h"
 #include "Automation/AutomationService.h"
+#include "Automation/PluginToolBridge.h"
 #include "Assets/AssetManager.h"
 #include "Assets/AssetOperationService.h"
 #include "Assets/AssetReferenceIndex.h"
@@ -265,6 +266,85 @@ int main(int argc, char** argv)
                 "asset.get_info reports import status from the database");
 
     ok &= Check(backend.NotifyCount() > 0, "asset mutations notify the editor host");
+
+    // ── asset.import_pack (AssetIntake through the editor import port) ───────
+    const fs::path pack = project.parent_path() / "heph_automation_asset_pack" / "BrickPack";
+    fs::remove_all(pack.parent_path(), ec);
+    fs::create_directories(pack);
+    fs::copy_file(pngSource, pack / "T_Brick_4K_BaseColor.png");
+    fs::copy_file(pngSource, pack / "T_Brick_4K_Normal.png");
+    auto packed = Call(service, "asset.import_pack",
+                       {{"source", pack.string()},
+                        {"credit", {{"title", "Brick"}, {"author", "Tester"}, {"license", "CC0 Public Domain"}}}});
+    ok &= Check(packed.Ok() && packed.value["folder"] == "assets/Imported/BrickPack" &&
+                    packed.value["materials"].size() == 1 && packed.value["prefabs"].empty(),
+                "asset.import_pack turns a texture set into a material");
+    ok &= Check(fs::exists(project / "assets" / "Imported" / "BrickPack" / "credits.json") &&
+                    fs::exists(project / "assets" / "scripts" / "ImportedCredits.lua"),
+                "asset.import_pack records the credit");
+    auto packEscape = Call(service, "asset.import_pack",
+                           {{"source", pack.string()}, {"destination", "../../escape"}});
+    ok &= Check(!packEscape.Ok(), "asset.import_pack refuses destinations outside assets/");
+    fs::remove_all(pack.parent_path(), ec);
+
+    // ── plugin tools (PluginToolBridge) ─────────────────────────────────────
+    {
+        using Hephaestus::Automation::PluginToolBridge;
+        static std::uint64_t lastCall = 0;
+        static std::string lastArguments;
+        auto bridge = std::make_shared<PluginToolBridge>(service.Registry());
+        Hephaestus::Plugins::AutomationToolDescriptor echo;
+        echo.name = "test.echo";
+        echo.description = "Echo";
+        echo.inputSchemaJson = R"({"type":"object","properties":{"text":{"type":"string"}}})";
+        echo.userData = bridge.get();
+        echo.call = [](const char* arguments, std::uint64_t call, void* data) {
+            static_cast<PluginToolBridge*>(data)->Complete(call, true, arguments);
+        };
+        Hephaestus::Plugins::AutomationToolDescriptor later = echo;
+        later.name = "test.later";
+        later.call = [](const char* arguments, std::uint64_t call, void*) {
+            lastCall = call;
+            lastArguments = arguments;
+        };
+        std::string error;
+        ok &= Check(bridge->Register("com.test.one", echo, error) && bridge->Register("com.test.one", later, error),
+                    "plugins register tools");
+        Hephaestus::Plugins::AutomationToolDescriptor clash = echo;
+        clash.name = "asset.list";
+        ok &= Check(!bridge->Register("com.test.one", clash, error), "plugins cannot take an engine tool's name");
+        ok &= Check(!bridge->Register("com.test.two", echo, error), "two plugins cannot provide one tool");
+
+        auto echoed = Call(service, "test.echo", {{"text", "hi"}});
+        ok &= Check(echoed.Ok() && echoed.value["text"] == "hi", "a plugin tool answering at once returns its JSON");
+
+        auto posted = service.Post({"test.later", {{"n", 3}}});
+        service.Tick();
+        ok &= Check(posted.result.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout,
+                    "an unanswered plugin call stays pending");
+        ok &= Check(bridge->Complete(lastCall, true, R"({"done":true})"), "the plugin answers later");
+        service.Tick();
+        auto answered = posted.result.get();
+        ok &= Check(answered.Ok() && answered.value["done"] == true, "the later answer reaches the caller");
+        ok &= Check(!bridge->Complete(lastCall, true, "{}"), "a call is answered only once");
+
+        auto pending = service.Post({"test.later", Hephaestus::Automation::Json::object()});
+        service.Tick();
+        bridge->RemoveOwner("com.test.one");
+        service.Tick();
+        auto dropped = pending.result.get();
+        ok &= Check(!dropped.Ok() && dropped.error->code == Hephaestus::Automation::ErrorCode::ToolUnavailable,
+                    "unloading a plugin fails its unanswered calls");
+        ok &= Check(service.Registry().Find("test.echo") == nullptr &&
+                        service.Registry().Contains("test.echo"),
+                    "an unloaded plugin's tools are hidden, not erased");
+        auto gone = Call(service, "test.echo", Hephaestus::Automation::Json::object());
+        ok &= Check(!gone.Ok() && gone.error->code == Hephaestus::Automation::ErrorCode::UnknownTool,
+                    "hidden tools cannot be called");
+        ok &= Check(bridge->Register("com.test.two", echo, error) && Call(service, "test.echo", {{"x", 1}}).Ok(),
+                    "a reloaded plugin brings its tool back");
+        bridge->RemoveOwner("com.test.two");
+    }
 
     // ── Play Mode mutation gating ──────────────────────────────────────────
     backend.SetPlayState(Hephaestus::PlayState::Playing);

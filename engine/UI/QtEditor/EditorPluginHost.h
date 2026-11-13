@@ -20,12 +20,13 @@ namespace Hephaestus {
 class EditorContext;
 class ProjectContext;
 namespace Plugins { class PluginSystem; }
+namespace Automation { class ToolRegistry; class PluginToolBridge; }
 namespace QtEditor {
 
 class EditorPluginHost {
 public:
     EditorPluginHost(QMainWindow*, Plugins::PluginSystem*, std::function<EditorContext*()>,
-                     ProjectContext*, std::function<void()> sceneChanged);
+                     ProjectContext*, std::function<void()> sceneChanged, Automation::ToolRegistry* tools);
     ~EditorPluginHost();
     std::unique_ptr<Plugins::IPluginContext> CreateContext(const Plugins::PluginManifest&);
     void PopulateContextMenu(const char* location, QMenu&, const QString& portablePath = {});
@@ -71,6 +72,7 @@ private:
     std::vector<QPointer<QDockWidget>> panels_;
     std::uint64_t nextTransaction_ = 1;
     std::vector<std::pair<std::uint64_t, EditorContext*>> transactions_;
+    std::shared_ptr<Automation::PluginToolBridge> toolBridge_;
     std::uint64_t saveListener_ = 0;
     std::uint64_t retargetListener_ = 0;
 };
