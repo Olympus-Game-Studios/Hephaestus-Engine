@@ -787,15 +787,16 @@ if(HEPHAESTUS_USE_QT)
         )
         add_dependencies(HephaestusEngine HephaestusFPS)
 
-        # Asset store plugins: Fab packs from disk and Sketchfab over its Download API (needs Qt Network).
+        # Asset store plugins: Fab (packs from disk and Fab in Launcher's socket export) and Sketchfab over its
+        # Download API. Both need Qt Network.
         foreach(_store Fab Sketchfab)
-            if(_store STREQUAL "Sketchfab" AND NOT TARGET Qt6::Network)
-                message(WARNING "Qt6 Network not found; the Sketchfab plugin is not built.")
+            if(NOT TARGET Qt6::Network)
+                message(WARNING "Qt6 Network not found; the ${_store} plugin is not built.")
                 continue()
             endif()
             add_library(Hephaestus${_store} SHARED Plugins/${_store}/Source/${_store}Plugin.cpp)
             target_include_directories(Hephaestus${_store} PRIVATE engine)
-            target_link_libraries(Hephaestus${_store} PRIVATE Qt6::Widgets)
+            target_link_libraries(Hephaestus${_store} PRIVATE Qt6::Widgets Qt6::Network)
             set_target_properties(Hephaestus${_store} PROPERTIES
                 OUTPUT_NAME "Hephaestus${_store}"
                 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/${_store}/bin"
@@ -812,11 +813,18 @@ if(HEPHAESTUS_USE_QT)
             )
             add_dependencies(HephaestusEngine Hephaestus${_store})
         endforeach()
-        if(TARGET HephaestusSketchfab)
-            target_link_libraries(HephaestusSketchfab PRIVATE Qt6::Network)
-            if(WIN32)
-                target_link_libraries(HephaestusSketchfab PRIVATE Advapi32)
-            endif()
+        if(TARGET HephaestusSketchfab AND WIN32)
+            target_link_libraries(HephaestusSketchfab PRIVATE Advapi32)
+        endif()
+        if(TARGET HephaestusFab AND HEPHAESTUS_BUILD_COMPAT_TESTS)
+            add_executable(FabLauncherBridgeTests engine/Tests/FabLauncherBridgeTests.cpp)
+            target_include_directories(FabLauncherBridgeTests PRIVATE engine extern)
+            target_link_libraries(FabLauncherBridgeTests PRIVATE HephaestusEditorCore Qt6::Widgets Qt6::Network)
+            add_dependencies(FabLauncherBridgeTests HephaestusFab HephaestusEngine)
+            add_test(NAME FabLauncherBridge
+                     COMMAND FabLauncherBridgeTests ${CMAKE_CURRENT_SOURCE_DIR} $<TARGET_FILE:HephaestusFab>)
+            set_tests_properties(FabLauncherBridge PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen")
         endif()
 
         # Official MCP editor plugin. A first-party consumer of the Automation

@@ -8,19 +8,29 @@
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPointer>
 #include <QPushButton>
+#include <QSpinBox>
+#include <QStandardPaths>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <functional>
 #include <string>
 
 using namespace Hephaestus::Plugins;
@@ -29,6 +39,11 @@ namespace {
 
 constexpr const char* kFab = "https://www.fab.com/";
 constexpr const char* kPackExtensions = "*.zip;*.fbx;*.glb;*.gltf;*.obj";
+constexpr const char* kListenSetting = "launcherListen";
+constexpr const char* kPortSetting = "launcherPort";
+constexpr const char* kLicenseSetting = "launcherLicense";
+constexpr quint16 kLauncherStatusPort = 24563; // where the launcher's export plugins report back
+constexpr qsizetype kMaxPayloadBytes = 16 * 1024 * 1024;
 
 struct LicenseChoice {
     const char* label;
@@ -83,16 +98,219 @@ bool ImportPack(IPluginContext& context, const QString& path, const QString& tar
     return ok;
 }
 
+/// The port set for the Custom (socket port) export target in Fab in Launcher, read from the launcher's settings.
+quint16 LauncherSocketPort() {
+#ifdef __APPLE__
+    const QString folder = "Epic/FabPlugins/settings_v1.json";
+#else
+    const QString folder = "FabPlugins/settings_v1.json";
+#endif
+    const QString settings = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath(folder);
+    QFile file(settings);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return 0;
+    }
+    const int port = QJsonDocument::fromJson(file.readAll())
+                         .object()["plugins"].toObject()["socketExport"].toObject()["port"].toInt();
+    return port >= 1024 && port <= 65535 ? static_cast<quint16>(port) : 0;
+}
+
+/// Receives Fab in Launcher's Custom (socket port) exports: after the launcher downloads a listing it connects to
+/// 127.0.0.1:<port> and sends one JSON document {"Assets": [...]} (see docs/code-notes for the fields used).
+class LauncherBridge final : public QObject {
+public:
+    using Report = std::function<void(const QString& status)>;
+
+    explicit LauncherBridge(IPluginContext& context) : m_context(context), m_server(new QTcpServer(this)) {
+        connect(m_server, &QTcpServer::newConnection, this, [this] {
+            while (QTcpSocket* socket = m_server->nextPendingConnection()) {
+                Accept(socket);
+            }
+        });
+    }
+
+    bool Listening() const { return m_server->isListening(); }
+    quint16 Port() const { return m_server->serverPort(); }
+    void SetReport(Report report) { m_report = std::move(report); }
+
+    /// Applies the plugin's settings: on/off and the port (empty = the launcher's own setting).
+    void Apply() {
+        m_server->close();
+        const bool listen = QString::fromUtf8(m_context.Settings().Get(kListenSetting)) != "false";
+        bool parsed = false;
+        quint16 port = static_cast<quint16>(QString::fromUtf8(m_context.Settings().Get(kPortSetting)).toUInt(&parsed));
+        if (!parsed || port < 1024) {
+            port = LauncherSocketPort();
+        }
+        if (!listen) {
+            Status(tr("Not listening for Fab Launcher exports."));
+        } else if (port == 0) {
+            Status(tr("In the Epic Games Launcher, set Fab's export target to Custom (socket port), or enter its port "
+                      "here."));
+        } else if (!m_server->listen(QHostAddress::LocalHost, port)) {
+            Status(tr("Could not listen on port %1: %2").arg(port).arg(m_server->errorString()));
+        } else {
+            Status(tr("Listening for Fab Launcher exports on port %1. Click Export on a listing in the launcher to "
+                      "import it into the open project.").arg(port));
+        }
+    }
+
+private:
+    void Status(const QString& text) {
+        m_status = text;
+        if (m_report) {
+            m_report(text);
+        }
+    }
+
+    void Accept(QTcpSocket* socket) {
+        socket->setParent(this);
+        auto buffer = std::make_shared<QByteArray>();
+        auto handled = std::make_shared<bool>(false);
+        auto tryHandle = [this, socket, buffer, handled](bool finished) {
+            if (*handled) {
+                return;
+            }
+            QByteArray text = *buffer;
+            while (!text.isEmpty() && (text.back() == '\0' || text.back() == '\n' || text.back() == '\r')) {
+                text.chop(1);
+            }
+            QJsonParseError error{};
+            const QJsonDocument document = QJsonDocument::fromJson(text, &error);
+            if (error.error != QJsonParseError::NoError) {
+                if (finished && !text.isEmpty()) {
+                    *handled = true;
+                    Status(tr("Ignored a Fab Launcher message that was not valid JSON."));
+                }
+                return;
+            }
+            *handled = true;
+            socket->disconnectFromHost();
+            HandlePayload(document.object());
+        };
+        connect(socket, &QTcpSocket::readyRead, this, [socket, buffer, tryHandle] {
+            buffer->append(socket->readAll());
+            if (buffer->size() > kMaxPayloadBytes) {
+                socket->abort();
+                return;
+            }
+            tryHandle(false);
+        });
+        connect(socket, &QTcpSocket::disconnected, this, [socket, tryHandle] {
+            tryHandle(true);
+            socket->deleteLater();
+        });
+    }
+
+    void HandlePayload(const QJsonObject& payload) {
+        const QJsonArray assets = payload["Assets"].toArray();
+        if (assets.isEmpty()) {
+            Status(tr("A Fab Launcher export arrived with no assets."));
+            return;
+        }
+        for (const QJsonValue& value : assets) {
+            const QJsonObject asset = value.toObject();
+            const QString id = asset["id"].toString();
+            const QString path = asset["path"].toString();
+            const QJsonObject fab = asset["metadata"].toObject()["fab"].toObject();
+            const int replyPort = asset["metadata"].toObject()["launcher"].toObject()["listening_port"].toInt();
+            QString title = fab["listing"].toObject()["title"].toString();
+            if (title.isEmpty()) {
+                title = id.isEmpty() ? NameFor(path) : id;
+            }
+            QString summary;
+            bool ok = false;
+            if (!*m_context.Project().ProjectRoot()) {
+                summary = tr("Open a project in Hephaestus before exporting from Fab.");
+            } else if (path.isEmpty() || !QFileInfo(path).exists()) {
+                summary = tr("The exported files were not found at %1").arg(path);
+            } else {
+                const QString name = QString::fromStdString(SafeFileName(title.toStdString()));
+                const QString license = QString::fromUtf8(m_context.Settings().Get(kLicenseSetting));
+                ok = ImportPack(m_context, path, "assets/Imported/Fab/" + name, title, {}, {},
+                                license.isEmpty() ? QString(kLicenses[0].label) : license, summary);
+            }
+            Status(tr("%1: %2").arg(title, summary));
+            ReplyToLauncher(ok ? "success" : "critical", summary, id, path,
+                            replyPort > 0 && replyPort <= 65535 ? static_cast<quint16>(replyPort) : kLauncherStatusPort);
+        }
+    }
+
+    // The launcher shows each export plugin's result; it listens for one JSON status per connection.
+    void ReplyToLauncher(const QString& status, const QString& message, const QString& id, const QString& path,
+                         quint16 port) {
+        const QJsonObject reply = {{"status", status},
+                                   {"id", id},
+                                   {"path", path},
+                                   {"plugin_version", "1.0.0"},
+                                   {"message", message.left(400)},
+                                   {"app_name", "Hephaestus Engine"},
+                                   {"app_version", ""}};
+        auto* sender = new QTcpSocket(this);
+        connect(sender, &QTcpSocket::connected, sender, [sender, reply] {
+            sender->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\0');
+            sender->disconnectFromHost();
+        });
+        connect(sender, &QTcpSocket::disconnected, sender, &QObject::deleteLater);
+        connect(sender, &QTcpSocket::errorOccurred, sender, &QObject::deleteLater);
+        sender->connectToHost(QHostAddress::LocalHost, port);
+    }
+
+    IPluginContext& m_context;
+    QTcpServer* m_server = nullptr;
+    Report m_report;
+    QString m_status;
+
+public:
+    const QString& StatusText() const { return m_status; }
+};
+
 class FabPanel final : public QWidget {
 public:
-    FabPanel(IPluginContext& context, QWidget* parent) : QWidget(parent), m_context(context) {
+    FabPanel(IPluginContext& context, LauncherBridge& bridge, QWidget* parent)
+        : QWidget(parent), m_context(context), m_bridge(&bridge) {
         setAcceptDrops(true);
         auto* layout = new QVBoxLayout(this);
+
+        auto* launcherTitle = new QLabel(tr("<b>From the Epic Games Launcher</b>"), this);
+        layout->addWidget(launcherTitle);
+        auto* launcherIntro = new QLabel(
+            tr("In the launcher, open Fab's settings and set the export target to Custom (socket port). Then "
+               "Export on any listing in your library lands in the open project as prefabs with materials and a "
+               "credit."),
+            this);
+        launcherIntro->setWordWrap(true);
+        layout->addWidget(launcherIntro);
+        auto* launcherForm = new QFormLayout();
+        m_listen = new QCheckBox(tr("Listen for launcher exports"), this);
+        m_listen->setChecked(QString::fromUtf8(context.Settings().Get(kListenSetting)) != "false");
+        launcherForm->addRow(m_listen);
+        m_port = new QSpinBox(this);
+        m_port->setRange(0, 65535);
+        m_port->setSpecialValueText(tr("Same as the launcher"));
+        m_port->setValue(QString::fromUtf8(context.Settings().Get(kPortSetting)).toInt());
+        launcherForm->addRow(tr("Port"), m_port);
+        m_launcherLicense = new QComboBox(this);
+        m_launcherLicense->setEditable(true);
+        for (const LicenseChoice& choice : kLicenses) {
+            m_launcherLicense->addItem(QString::fromUtf8(choice.label));
+        }
+        const QString savedLicense = QString::fromUtf8(context.Settings().Get(kLicenseSetting));
+        if (!savedLicense.isEmpty()) {
+            m_launcherLicense->setCurrentText(savedLicense);
+        }
+        launcherForm->addRow(tr("Credit licence"), m_launcherLicense);
+        layout->addLayout(launcherForm);
+        m_launcherStatus = new QLabel(bridge.StatusText(), this);
+        m_launcherStatus->setWordWrap(true);
+        layout->addWidget(m_launcherStatus);
+
+        auto* fileTitle = new QLabel(tr("<b>From a download</b>"), this);
+        layout->addWidget(fileTitle);
         auto* intro = new QLabel(
-            tr("Fab has no download API, so packs come in from files you download yourself. On Fab, choose a "
-               "format such as FBX, glTF or OBJ rather than Unreal Engine, download it, then drop the .zip, "
-               "folder or model here. Check each listing's licence: some content may only be used in Unreal "
-               "Engine."),
+            tr("Or download a pack from Fab in a format such as FBX, glTF or OBJ rather than Unreal Engine, then "
+               "drop the .zip, folder or model here. Check each listing's licence: some content may only be used in "
+               "Unreal Engine."),
             this);
         intro->setWordWrap(true);
         layout->addWidget(intro);
@@ -136,6 +354,25 @@ public:
         layout->addWidget(m_status);
         layout->addStretch(1);
 
+        QPointer<FabPanel> self = this;
+        bridge.SetReport([self](const QString& status) {
+            if (self) {
+                self->m_launcherStatus->setText(status);
+            }
+        });
+        connect(m_listen, &QCheckBox::toggled, this, [this](bool on) {
+            m_context.Settings().Set(kListenSetting, on ? "true" : "false");
+            if (m_bridge) m_bridge->Apply();
+        });
+        connect(m_port, &QSpinBox::editingFinished, this, [this] {
+            m_context.Settings().Set(kPortSetting, m_port->value() == 0
+                                                       ? ""
+                                                       : QByteArray::number(m_port->value()).constData());
+            if (m_bridge) m_bridge->Apply();
+        });
+        connect(m_launcherLicense, &QComboBox::currentTextChanged, this, [this](const QString& text) {
+            m_context.Settings().Set(kLicenseSetting, text.toUtf8().constData());
+        });
         connect(openFab, &QPushButton::clicked, this, [] { QDesktopServices::openUrl(QUrl(kFab)); });
         connect(chooseFile, &QPushButton::clicked, this, [this] {
             SetSource(QFileDialog::getOpenFileName(this, tr("Import Fab pack"), {},
@@ -194,6 +431,11 @@ private:
     }
 
     IPluginContext& m_context;
+    QPointer<LauncherBridge> m_bridge;
+    QCheckBox* m_listen = nullptr;
+    QSpinBox* m_port = nullptr;
+    QComboBox* m_launcherLicense = nullptr;
+    QLabel* m_launcherStatus = nullptr;
     QLineEdit* m_source = nullptr;
     QLineEdit* m_name = nullptr;
     QLineEdit* m_listing = nullptr;
@@ -209,7 +451,19 @@ class FabPlugin final : public IHephaestusPlugin {
 public:
     bool OnLoad(IPluginContext& context) override {
         m_context = &context;
-        bool ok = context.Commands().Register({"fab.open", "Fab", "Import packs downloaded from Fab", "", &Open, this});
+        bool ok = context.Settings().Register({kListenSetting, "Listen for Fab Launcher exports",
+                                               "Import listings exported from Fab in the Epic Games Launcher with "
+                                               "the Custom (socket port) target.",
+                                               "true", SettingScope::Editor});
+        ok &= context.Settings().Register({kPortSetting, "Fab Launcher port",
+                                           "Empty uses the port set in the launcher.", "", SettingScope::Editor});
+        ok &= context.Settings().Register({kLicenseSetting, "Fab Launcher credit licence",
+                                           "Licence recorded for assets exported from the launcher.",
+                                           kLicenses[0].label, SettingScope::Editor});
+        // Created before the panel, whose factory runs inside RegisterPanel.
+        m_bridge = new LauncherBridge(context);
+        m_bridge->Apply();
+        ok &= context.Commands().Register({"fab.open", "Fab", "Import packs downloaded from Fab", "", &Open, this});
         ok &= context.UI().RegisterPanel({"fab.importer", "Fab", "", 2, &MakePanel, this});
         ok &= context.UI().RegisterMenuAction({"Window/Asset Stores", "fab.open", "open"});
         ok &= context.Assets().RegisterImporter(
@@ -217,12 +471,17 @@ public:
              &ImportFromBrowser, this});
         return ok;
     }
-    void OnUnload() override { m_context = nullptr; }
+    void OnUnload() override {
+        delete m_bridge;
+        m_bridge = nullptr;
+        m_context = nullptr;
+    }
 
 private:
     static void Open(void* self) { static_cast<FabPlugin*>(self)->m_context->UI().ShowPanel("fab.importer"); }
     static QWidget* MakePanel(QWidget* parent, void* self) {
-        return new FabPanel(*static_cast<FabPlugin*>(self)->m_context, parent);
+        auto* plugin = static_cast<FabPlugin*>(self);
+        return new FabPanel(*plugin->m_context, *plugin->m_bridge, parent);
     }
     // Content Browser > Import: the pack lands in the folder being browsed, without a credit.
     static bool ImportFromBrowser(const char* source, const char* directory, void* self) {
@@ -240,6 +499,7 @@ private:
         return ok;
     }
     IPluginContext* m_context = nullptr;
+    LauncherBridge* m_bridge = nullptr;
 };
 
 } // namespace
