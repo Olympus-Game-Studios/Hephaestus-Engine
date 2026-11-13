@@ -51,7 +51,7 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float opacityMask;        // offset 120
     float refraction;         // offset 124 (reserved)
     uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive
-    uint paddingTail2;        // offset 132
+    uint textureChannels;     // offset 132: roughness, metallic, AO map channel, 2 bits each (0 R .. 3 A)
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -433,7 +433,7 @@ void main() {
     if (material.useRoughnessTexture != 0u) {
         uint index = material.roughnessTextureIndex % MAX_TEXTURE_SLOTS;
         // Roughness is typically in the R or G channel
-        float texRoughness = texture(materialTextures[index], texCoord).r;
+        float texRoughness = texture(materialTextures[index], texCoord)[material.textureChannels & 3u];
         roughness = texRoughness * material.roughness; // Blend with base value
     }
     roughness = clamp(roughness, 0.04, 1.0); // a multiplier above 1 can roughen a map; 0.04 avoids division by zero
@@ -443,7 +443,7 @@ void main() {
     if (material.useAoTexture != 0u) {
         uint index = material.aoTextureIndex % MAX_TEXTURE_SLOTS;
         // AO is typically stored in R or G channel
-        float texAo = texture(materialTextures[index], texCoord).r;
+        float texAo = texture(materialTextures[index], texCoord)[(material.textureChannels >> 4) & 3u];
         ao = texAo * material.ao; // Blend with base value
     }
     
@@ -452,7 +452,7 @@ void main() {
     if (material.useMetallicTexture != 0u) {
         uint index = material.metallicTextureIndex % MAX_TEXTURE_SLOTS;
         // Metallic is typically in the B channel of ORM maps or R channel of standalone
-        float texMetallic = texture(materialTextures[index], texCoord).r;
+        float texMetallic = texture(materialTextures[index], texCoord)[(material.textureChannels >> 2) & 3u];
         metallic = texMetallic * material.metallic; // Blend with base value
     }
     metallic = clamp(metallic, 0.0, 1.0);

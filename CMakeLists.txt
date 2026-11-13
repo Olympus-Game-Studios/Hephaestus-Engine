@@ -226,6 +226,7 @@ if(HEPHAESTUS_USE_QT)
         if(Qt6_FOUND)
             find_package(Qt6 COMPONENTS Svg QUIET)
             find_package(Qt6 COMPONENTS Concurrent QUIET)
+            find_package(Qt6 COMPONENTS Network QUIET)
         endif()
     endif()
 
@@ -327,6 +328,7 @@ add_library(HephaestusRuntime STATIC
     engine/Audio/AudioEngine.cpp
     engine/Audio/AudioMath.cpp
     engine/Audio/MiniaudioImplementation.c
+    engine/Assets/GltfDocument.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/FbxDocument.cpp
     engine/Assets/FbxStaticImporter.cpp
@@ -338,6 +340,7 @@ add_library(HephaestusRuntime STATIC
     engine/Assets/CharacterRuntime.cpp
     engine/Assets/CharacterRuntimeGpu.cpp
     engine/Assets/CharacterImport.cpp
+    engine/Assets/ModelMaterialImport.cpp
     engine/Assets/SkeletalModelImporter.cpp
     engine/Animation/Skeleton.cpp
     engine/Animation/AnimationClip.cpp
@@ -455,6 +458,7 @@ add_library(HephaestusEditorCore STATIC
     engine/Assets/AssetThumbnailRenderer.cpp
     engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/EditorAssetImportService.cpp
+    engine/Assets/AssetIntake.cpp
     engine/Assets/EditorViewState.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/RecoveryStore.cpp
@@ -782,6 +786,38 @@ if(HEPHAESTUS_USE_QT)
         )
         add_dependencies(HephaestusEngine HephaestusFPS)
 
+        # Asset store plugins: Fab packs from disk and Sketchfab over its Download API (needs Qt Network).
+        foreach(_store Fab Sketchfab)
+            if(_store STREQUAL "Sketchfab" AND NOT TARGET Qt6::Network)
+                message(WARNING "Qt6 Network not found; the Sketchfab plugin is not built.")
+                continue()
+            endif()
+            add_library(Hephaestus${_store} SHARED Plugins/${_store}/Source/${_store}Plugin.cpp)
+            target_include_directories(Hephaestus${_store} PRIVATE engine)
+            target_link_libraries(Hephaestus${_store} PRIVATE Qt6::Widgets)
+            set_target_properties(Hephaestus${_store} PROPERTIES
+                OUTPUT_NAME "Hephaestus${_store}"
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/${_store}/bin"
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/${_store}/bin"
+            )
+            add_custom_command(TARGET Hephaestus${_store} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/${_store}/${_store}.hpplugin"
+                    "$<TARGET_FILE_DIR:Hephaestus${_store}>/../${_store}.hpplugin"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/${_store}/Resources"
+                    "$<TARGET_FILE_DIR:Hephaestus${_store}>/../Resources"
+                VERBATIM
+            )
+            add_dependencies(HephaestusEngine Hephaestus${_store})
+        endforeach()
+        if(TARGET HephaestusSketchfab)
+            target_link_libraries(HephaestusSketchfab PRIVATE Qt6::Network)
+            if(WIN32)
+                target_link_libraries(HephaestusSketchfab PRIVATE Advapi32)
+            endif()
+        endif()
+
         # Official MCP editor plugin. A first-party consumer of the Automation
         # API: it links the Qt-free McpCore and never the engine's internals.
         add_library(HephaestusMCP SHARED
@@ -823,6 +859,18 @@ if(HEPHAESTUS_USE_QT)
                     "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Svg.dll"
                 COMMENT "Copying Qt6 DLLs to output directory"
             )
+            if(TARGET HephaestusSketchfab)
+                add_custom_command(TARGET HephaestusEngine POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/Qt6Network.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Network.dll"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HephaestusEngine>/tls"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/../plugins/tls/qschannelbackend.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/tls/qschannelbackend.dll"
+                    COMMENT "Copying Qt6 Network and its Windows TLS backend for the Sketchfab plugin"
+                )
+            endif()
 
             # Copy Qt platform plugin (required for Qt apps to run)
             add_custom_command(TARGET HephaestusEngine POST_BUILD
@@ -2212,6 +2260,19 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AssetOperationTransaction
         COMMAND AssetOperationTransactionTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AssetIntakeTests
+        engine/Tests/AssetIntakeTests.cpp
+    )
+    target_link_libraries(AssetIntakeTests PRIVATE HephaestusEditorCore)
+    target_include_directories(AssetIntakeTests PRIVATE
+        engine
+        extern
+    )
+    add_test(
+        NAME AssetIntake
+        COMMAND AssetIntakeTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(RecoveryStoreTests

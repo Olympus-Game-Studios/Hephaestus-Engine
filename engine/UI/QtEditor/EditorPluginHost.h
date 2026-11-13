@@ -54,6 +54,7 @@ private:
     bool ShowPanel(const std::string&);
     bool RegisterAssetType(const std::string&, const Plugins::AssetTypeDescriptor&);
     bool RegisterImporter(const std::string&, const Plugins::ImporterDescriptor&);
+    bool ImportAssetPack(const Plugins::AssetPackImportRequest&, Plugins::AssetPackImportResult&);
     bool RegisterSetting(const std::string&, const Plugins::SettingDescriptor&);
     std::uint64_t CreatePrimitive(Plugins::PrimitiveKind, const char*);
 

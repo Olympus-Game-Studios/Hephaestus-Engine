@@ -19,7 +19,7 @@ HP_DECLARE_PLUGIN(MyPlugin)
 
 - `Commands`: command IDs, labels, callbacks, descriptions, and optional default shortcuts.
 - `UI`: native Qt dock panels plus menu, toolbar, and context-menu command placements.
-- `Assets`: custom asset type/create/editor/save/dirty/close/retarget callbacks and importer registrations.
+- `Assets`: custom asset type/create/editor/save/dirty/close/retarget callbacks and importer registrations, plus `ImportAssetPack`, which imports a downloaded pack (`.zip`, folder or `.fbx`/`.glb`/`.gltf`/`.obj`) into a folder under `assets/`: one prefab per model with a material made and applied for every slot (glTF and FBX materials, loose Megascans/Unreal/Substance texture sets, packed ORM and metal/rough maps read per channel), leftover textures and documents, and an optional credit written as `credits.json` and gathered into `assets/scripts/ImportedCredits.lua`. `ImportAssetPack` was appended to `IAssetService` after API 1 first shipped, so a plugin calling it needs an `engineVersion` that includes it. The Fab and Sketchfab plugins use it.
 - `Scene`: presence, selection, deletion, and representative high-level primitive/entity creation.
 - `Undo`: begin/commit/rollback transactions backed by the editor scene undo stack.
 - `Project`: project/plugin roots and portable asset resolution.

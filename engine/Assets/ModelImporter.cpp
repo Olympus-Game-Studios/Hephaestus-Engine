@@ -1,5 +1,6 @@
 #include "ModelImporter.h"
 #include "FbxStaticImporter.h"
+#include "GltfDocument.h"
 
 #include <fstream>
 #include <sstream>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <type_traits>
 #include <array>
+#include <functional>
 #include <cstdint>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -20,12 +22,6 @@ using json = nlohmann::json;
 
 namespace ModelImporter {
 namespace {
-    struct GLTFPrimitiveResult {
-        uint32_t indexOffset = 0;
-        uint32_t indexCount = 0;
-        int materialSlot = 0;
-        std::string name;
-    };
 
     bool ParseIndexToken(const std::string& token, int& vOut, int& tOut, int& nOut) {
         vOut = 0;
@@ -100,365 +96,10 @@ namespace {
         return line.substr(idx);
     }
 
-    bool AppendGLTFPrimitive(const json& primitive,
-                             const json& accessors,
-                             const json& bufferViews,
-                             const std::vector<uint8_t>& binaryData,
-                             MeshData& outMesh,
-                             Vec3& minBounds,
-                             Vec3& maxBounds,
-                             bool& boundsInitialized,
-                             std::string& errorMessage,
-                             GLTFPrimitiveResult& outResult) {
-        if (!primitive.contains("attributes") || !primitive["attributes"].contains("POSITION")) {
-            errorMessage = "Mesh primitive has no POSITION attribute";
-            return false;
-        }
-
-        int posAccessorIdx = primitive["attributes"]["POSITION"];
-        if (posAccessorIdx < 0 || posAccessorIdx >= static_cast<int>(accessors.size())) {
-            errorMessage = "Invalid position accessor index";
-            return false;
-        }
-
-        const auto& posAccessor = accessors[posAccessorIdx];
-        int posBufferViewIdx = posAccessor["bufferView"];
-        int posByteOffset = posAccessor.value("byteOffset", 0);
-        int posCount = posAccessor["count"];
-
-        if (posBufferViewIdx < 0 || posBufferViewIdx >= static_cast<int>(bufferViews.size())) {
-            errorMessage = "Invalid position buffer view index";
-            return false;
-        }
-
-        const auto& posBufferView = bufferViews[posBufferViewIdx];
-        int posBufferViewOffset = posBufferView.value("byteOffset", 0);
-
-        if (posBufferViewOffset < 0 || posByteOffset < 0) {
-            errorMessage = "Invalid negative byte offset in position data";
-            return false;
-        }
-
-        size_t posDataStart = static_cast<size_t>(posBufferViewOffset) + static_cast<size_t>(posByteOffset);
-        size_t posDataSize = static_cast<size_t>(posCount) * 3 * sizeof(float);
-        if (posDataStart + posDataSize > binaryData.size()) {
-            errorMessage = "Position data exceeds binary buffer size";
-            return false;
-        }
-
-        std::vector<Vec3> positions;
-        positions.reserve(posCount);
-        const float* posData = reinterpret_cast<const float*>(binaryData.data() + posDataStart);
-        for (int i = 0; i < posCount; ++i) {
-            Vec3 pos(posData[i * 3], posData[i * 3 + 1], posData[i * 3 + 2]);
-            positions.push_back(pos);
-            if (!boundsInitialized) {
-                minBounds = pos;
-                maxBounds = pos;
-                boundsInitialized = true;
-            } else {
-                minBounds.x = std::min(minBounds.x, pos.x);
-                minBounds.y = std::min(minBounds.y, pos.y);
-                minBounds.z = std::min(minBounds.z, pos.z);
-                maxBounds.x = std::max(maxBounds.x, pos.x);
-                maxBounds.y = std::max(maxBounds.y, pos.y);
-                maxBounds.z = std::max(maxBounds.z, pos.z);
-            }
-        }
-
-        std::vector<uint32_t> indices;
-        if (primitive.contains("indices")) {
-            int indAccessorIdx = primitive["indices"];
-            if (indAccessorIdx < 0 || indAccessorIdx >= static_cast<int>(accessors.size())) {
-                errorMessage = "Invalid index accessor index";
-                return false;
-            }
-            const auto& indAccessor = accessors[indAccessorIdx];
-            int indBufferViewIdx = indAccessor["bufferView"];
-            int indByteOffset = indAccessor.value("byteOffset", 0);
-            int indCount = indAccessor["count"];
-
-            if (indBufferViewIdx < 0 || indBufferViewIdx >= static_cast<int>(bufferViews.size())) {
-                errorMessage = "Invalid index buffer view index";
-                return false;
-            }
-
-            const auto& indBufferView = bufferViews[indBufferViewIdx];
-            int indBufferViewOffset = indBufferView.value("byteOffset", 0);
-            if (indBufferViewOffset < 0 || indByteOffset < 0) {
-                errorMessage = "Invalid negative byte offset in index data";
-                return false;
-            }
-
-            indices.reserve(indCount);
-            size_t indDataStart = static_cast<size_t>(indBufferViewOffset) + static_cast<size_t>(indByteOffset);
-            int indComponentType = indAccessor["componentType"];
-            if (indComponentType == 5125) { // UNSIGNED_INT
-                size_t indDataSize = static_cast<size_t>(indCount) * sizeof(uint32_t);
-                if (indDataStart + indDataSize > binaryData.size()) {
-                    errorMessage = "Index data exceeds binary buffer size";
-                    return false;
-                }
-                const uint32_t* indData = reinterpret_cast<const uint32_t*>(binaryData.data() + indDataStart);
-                for (int i = 0; i < indCount; ++i) {
-                    indices.push_back(indData[i]);
-                }
-            } else if (indComponentType == 5123) { // UNSIGNED_SHORT
-                size_t indDataSize = static_cast<size_t>(indCount) * sizeof(uint16_t);
-                if (indDataStart + indDataSize > binaryData.size()) {
-                    errorMessage = "Index data exceeds binary buffer size";
-                    return false;
-                }
-                const uint16_t* indData = reinterpret_cast<const uint16_t*>(binaryData.data() + indDataStart);
-                for (int i = 0; i < indCount; ++i) {
-                    indices.push_back(indData[i]);
-                }
-            } else {
-                errorMessage = "Unsupported index component type";
-                return false;
-            }
-        } else {
-            indices.reserve(positions.size());
-            for (uint32_t i = 0; i < positions.size(); ++i) {
-                indices.push_back(i);
-            }
-        }
-
-        std::vector<Vec3> normals;
-        if (primitive["attributes"].contains("NORMAL")) {
-            int normAccessorIdx = primitive["attributes"]["NORMAL"];
-            if (normAccessorIdx >= 0 && normAccessorIdx < static_cast<int>(accessors.size())) {
-                const auto& normAccessor = accessors[normAccessorIdx];
-                int normBufferViewIdx = normAccessor["bufferView"];
-                int normByteOffset = normAccessor.value("byteOffset", 0);
-                int normCount = normAccessor["count"];
-
-                if (normBufferViewIdx >= 0 && normBufferViewIdx < static_cast<int>(bufferViews.size())) {
-                    const auto& normBufferView = bufferViews[normBufferViewIdx];
-                    int normBufferViewOffset = normBufferView.value("byteOffset", 0);
-                    if (normBufferViewOffset >= 0 && normByteOffset >= 0) {
-                        size_t normDataStart = static_cast<size_t>(normBufferViewOffset) + static_cast<size_t>(normByteOffset);
-                        size_t normDataSize = static_cast<size_t>(normCount) * 3 * sizeof(float);
-                        if (normDataStart + normDataSize <= binaryData.size()) {
-                            const float* normData = reinterpret_cast<const float*>(binaryData.data() + normDataStart);
-                            normals.reserve(normCount);
-                            for (int i = 0; i < normCount; ++i) {
-                                Vec3 normal(normData[i * 3], normData[i * 3 + 1], normData[i * 3 + 2]);
-                                normals.push_back(normal);
-                            }
-                        } else {
-                            std::cout << "[ModelImporter] Warning: Normal data exceeds buffer size, skipping normals" << std::endl;
-                        }
-                    }
-                }
-            }
-        }
-
-        uint32_t startIndex = static_cast<uint32_t>(outMesh.indices.size());
-        for (uint32_t idx : indices) {
-            if (idx >= positions.size()) {
-                errorMessage = "Index out of range";
-                return false;
-            }
-
-            Vertex vert{};
-            Vec3 pos = positions[idx];
-            vert.pos[0] = pos.x;
-            vert.pos[1] = pos.y;
-            vert.pos[2] = pos.z;
-
-            if (idx < normals.size()) {
-                Vec3 normal = normals[idx];
-                vert.normal[0] = normal.x;
-                vert.normal[1] = normal.y;
-                vert.normal[2] = normal.z;
-            } else {
-                vert.normal[0] = 0.0f;
-                vert.normal[1] = 1.0f;
-                vert.normal[2] = 0.0f;
-            }
-
-            vert.color[0] = 1.0f;
-            vert.color[1] = 1.0f;
-            vert.color[2] = 1.0f;
-            vert.texCoord[0] = 0.0f;
-            vert.texCoord[1] = 0.0f;
-
-            outMesh.vertices.push_back(vert);
-            outMesh.indices.push_back(static_cast<uint32_t>(outMesh.vertices.size() - 1));
-        }
-
-        outResult.indexOffset = startIndex;
-        outResult.indexCount = static_cast<uint32_t>(outMesh.indices.size() - startIndex);
-        outResult.materialSlot = 0;
-        if (primitive.contains("material") && primitive["material"].is_number_integer()) {
-            outResult.materialSlot = primitive["material"].get<int>();
-        }
-        if (primitive.contains("name") && primitive["name"].is_string()) {
-            outResult.name = primitive["name"].get<std::string>();
-        }
-        return true;
-    }
-
-    float ReadGLTFNumber(const json& value) {
-        if (value.is_number_float()) {
-            return value.get<float>();
-        }
-        if (value.is_number_integer()) {
-            return static_cast<float>(value.get<std::int64_t>());
-        }
-        return 0.0f;
-    }
-
-    Mat4 Mat4FromGLTFQuaternion(float x, float y, float z, float w) {
-        float len = std::sqrt(x * x + y * y + z * z + w * w);
-        if (len > 0.0f) {
-            x /= len;
-            y /= len;
-            z /= len;
-            w /= len;
-        }
-
-        const float xx = x * x;
-        const float yy = y * y;
-        const float zz = z * z;
-        const float xy = x * y;
-        const float xz = x * z;
-        const float yz = y * z;
-        const float wx = w * x;
-        const float wy = w * y;
-        const float wz = w * z;
-
-        Mat4 r = Mat4::Identity();
-        r.m[0] = 1.0f - 2.0f * (yy + zz);
-        r.m[1] = 2.0f * (xy + wz);
-        r.m[2] = 2.0f * (xz - wy);
-        r.m[4] = 2.0f * (xy - wz);
-        r.m[5] = 1.0f - 2.0f * (xx + zz);
-        r.m[6] = 2.0f * (yz + wx);
-        r.m[8] = 2.0f * (xz + wy);
-        r.m[9] = 2.0f * (yz - wx);
-        r.m[10] = 1.0f - 2.0f * (xx + yy);
-        return r;
-    }
-
-    Mat4 GLTFNodeLocalMatrix(const json& node) {
-        if (node.contains("matrix") && node["matrix"].is_array() && node["matrix"].size() >= 16) {
-            Mat4 matrix = Mat4::Identity();
-            for (int i = 0; i < 16; ++i) {
-                matrix.m[i] = ReadGLTFNumber(node["matrix"][i]);
-            }
-            return matrix;
-        }
-
-        Vec3 translation(0.0f, 0.0f, 0.0f);
-        Vec3 scale(1.0f, 1.0f, 1.0f);
-        float qx = 0.0f;
-        float qy = 0.0f;
-        float qz = 0.0f;
-        float qw = 1.0f;
-
-        if (node.contains("translation") && node["translation"].is_array() && node["translation"].size() >= 3) {
-            translation.x = ReadGLTFNumber(node["translation"][0]);
-            translation.y = ReadGLTFNumber(node["translation"][1]);
-            translation.z = ReadGLTFNumber(node["translation"][2]);
-        }
-        if (node.contains("scale") && node["scale"].is_array() && node["scale"].size() >= 3) {
-            scale.x = ReadGLTFNumber(node["scale"][0]);
-            scale.y = ReadGLTFNumber(node["scale"][1]);
-            scale.z = ReadGLTFNumber(node["scale"][2]);
-        }
-        if (node.contains("rotation") && node["rotation"].is_array() && node["rotation"].size() >= 4) {
-            qx = ReadGLTFNumber(node["rotation"][0]);
-            qy = ReadGLTFNumber(node["rotation"][1]);
-            qz = ReadGLTFNumber(node["rotation"][2]);
-            qw = ReadGLTFNumber(node["rotation"][3]);
-        }
-
-        const Mat4 t = Mat4::Translation(translation);
-        const Mat4 r = Mat4FromGLTFQuaternion(qx, qy, qz, qw);
-        const Mat4 s = Mat4::Scale(scale);
-        return Mat4::Multiply(t, Mat4::Multiply(r, s));
-    }
-
-    bool FindMeshWorldMatrixRecursive(const json& nodes,
-                                      int nodeIndex,
-                                      const Mat4& parentWorld,
-                                      int meshIndex,
-                                      Mat4& outWorld) {
-        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size())) {
-            return false;
-        }
-
-        const json& node = nodes[nodeIndex];
-        const Mat4 world = Mat4::Multiply(parentWorld, GLTFNodeLocalMatrix(node));
-        if (node.contains("mesh") && node["mesh"].is_number_integer() &&
-            node["mesh"].get<int>() == meshIndex) {
-            outWorld = world;
-            return true;
-        }
-
-        if (node.contains("children") && node["children"].is_array()) {
-            for (const auto& child : node["children"]) {
-                if (!child.is_number_integer()) {
-                    continue;
-                }
-                if (FindMeshWorldMatrixRecursive(nodes, child.get<int>(), world, meshIndex, outWorld)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    bool FindMeshWorldMatrix(const json& root, int meshIndex, Mat4& outWorld) {
-        outWorld = Mat4::Identity();
-        if (!root.contains("nodes") || !root["nodes"].is_array()) {
-            return false;
-        }
-
-        const json& nodes = root["nodes"];
-        if (root.contains("scenes") && root["scenes"].is_array() && !root["scenes"].empty()) {
-            int sceneIndex = 0;
-            if (root.contains("scene") && root["scene"].is_number_integer()) {
-                sceneIndex = root["scene"].get<int>();
-            }
-            if (sceneIndex < 0 || sceneIndex >= static_cast<int>(root["scenes"].size())) {
-                sceneIndex = 0;
-            }
-            const json& scene = root["scenes"][sceneIndex];
-            if (scene.contains("nodes") && scene["nodes"].is_array()) {
-                for (const auto& idx : scene["nodes"]) {
-                    if (!idx.is_number_integer()) {
-                        continue;
-                    }
-                    if (FindMeshWorldMatrixRecursive(nodes, idx.get<int>(), Mat4::Identity(),
-                                                     meshIndex, outWorld)) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        for (int i = 0; i < static_cast<int>(nodes.size()); ++i) {
-            const json& node = nodes[i];
-            if (node.contains("mesh") && node["mesh"].is_number_integer() &&
-                node["mesh"].get<int>() == meshIndex) {
-                outWorld = GLTFNodeLocalMatrix(node);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    bool IsIdentityMatrix(const Mat4& matrix) {
-        const Mat4 identity = Mat4::Identity();
-        for (int i = 0; i < 16; ++i) {
-            if (std::abs(matrix.m[i] - identity.m[i]) > 1e-6f) {
-                return false;
-            }
-        }
-        return true;
+    float Determinant3(const Mat4& m) {
+        return m.m[0] * (m.m[5] * m.m[10] - m.m[9] * m.m[6]) -
+               m.m[4] * (m.m[1] * m.m[10] - m.m[9] * m.m[2]) +
+               m.m[8] * (m.m[1] * m.m[6] - m.m[5] * m.m[2]);
     }
 
     Vec3 TransformNormal(const Mat4& world, const Vec3& normal) {
@@ -493,109 +134,6 @@ namespace {
         return vnorm(transformed);
     }
 
-    void BakeNodeTransform(MeshData& mesh, const Mat4& world) {
-        if (mesh.vertices.empty() || IsIdentityMatrix(world)) {
-            return;
-        }
-
-        Vec3 minBounds{};
-        Vec3 maxBounds{};
-        bool boundsInitialized = false;
-        for (Vertex& vert : mesh.vertices) {
-            Vec3 pos(vert.pos[0], vert.pos[1], vert.pos[2]);
-            Vec3 nrm(vert.normal[0], vert.normal[1], vert.normal[2]);
-            pos = Mat4::TransformPoint(world, pos);
-            nrm = TransformNormal(world, nrm);
-            vert.pos[0] = pos.x;
-            vert.pos[1] = pos.y;
-            vert.pos[2] = pos.z;
-            vert.normal[0] = nrm.x;
-            vert.normal[1] = nrm.y;
-            vert.normal[2] = nrm.z;
-            if (!boundsInitialized) {
-                minBounds = pos;
-                maxBounds = pos;
-                boundsInitialized = true;
-            } else {
-                minBounds.x = std::min(minBounds.x, pos.x);
-                minBounds.y = std::min(minBounds.y, pos.y);
-                minBounds.z = std::min(minBounds.z, pos.z);
-                maxBounds.x = std::max(maxBounds.x, pos.x);
-                maxBounds.y = std::max(maxBounds.y, pos.y);
-                maxBounds.z = std::max(maxBounds.z, pos.z);
-            }
-        }
-        if (boundsInitialized) {
-            mesh.bounds = AABB(minBounds, maxBounds);
-        }
-    }
-
-    bool LoadGLTFDocument(const json& root,
-                          const std::vector<uint8_t>& binaryData,
-                          MeshData& outMesh,
-                          std::string& errorMessage) {
-        if (!root.contains("meshes") || root["meshes"].empty()) {
-            errorMessage = "No meshes found in glTF file";
-            return false;
-        }
-
-        const auto& mesh = root["meshes"][0];
-        if (!mesh.contains("primitives") || mesh["primitives"].empty()) {
-            errorMessage = "No primitives found in mesh";
-            return false;
-        }
-
-        if (!root.contains("accessors")) {
-            errorMessage = "No accessors found in glTF file";
-            return false;
-        }
-
-        const auto& accessors = root["accessors"];
-        const auto& bufferViews = root.value("bufferViews", json::array());
-
-        Vec3 minBounds{};
-        Vec3 maxBounds{};
-        bool boundsInitialized = false;
-        outMesh.submeshes.clear();
-
-        for (const auto& primitive : mesh["primitives"]) {
-            GLTFPrimitiveResult primResult{};
-            if (!AppendGLTFPrimitive(primitive, accessors, bufferViews, binaryData,
-                                     outMesh, minBounds, maxBounds,
-                                     boundsInitialized, errorMessage, primResult)) {
-                return false;
-            }
-            if (primResult.indexCount > 0) {
-                MeshData::Submesh submesh{};
-                submesh.indexOffset = primResult.indexOffset;
-                submesh.indexCount = primResult.indexCount;
-                submesh.materialSlot = primResult.materialSlot;
-                submesh.name = primResult.name;
-                outMesh.submeshes.push_back(std::move(submesh));
-            }
-        }
-
-        if (boundsInitialized) {
-            outMesh.bounds = AABB(minBounds, maxBounds);
-        } else {
-            outMesh.bounds = AABB();
-        }
-
-        Mat4 world = Mat4::Identity();
-        if (FindMeshWorldMatrix(root, 0, world)) {
-            BakeNodeTransform(outMesh, world);
-        }
-
-        std::cout << "[ModelImporter] glTF load complete: verts=" << outMesh.vertices.size()
-                  << ", indices=" << outMesh.indices.size()
-                  << ", submeshes=" << outMesh.submeshes.size() << std::endl;
-        for (size_t i = 0; i < outMesh.submeshes.size(); ++i) {
-            const auto& sub = outMesh.submeshes[i];
-            std::cout << "[ModelImporter]   submesh[" << i << "]: slot=" << sub.materialSlot
-                      << " offset=" << sub.indexOffset << " count=" << sub.indexCount << std::endl;
-        }
-        return true;
-    }
 }
 
 bool IsSupportedExtension(const std::filesystem::path& path) {
@@ -793,123 +331,203 @@ bool LoadFBX(const std::filesystem::path& path, MeshData& outMesh, std::string& 
 }
 
 bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage) {
+    return LoadGLTF(path, outMesh, errorMessage, nullptr);
+}
+
+bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage,
+              std::vector<int>* outSlotMaterials) {
+    using namespace Hephaestus::Gltf;
     outMesh.Clear();
     errorMessage.clear();
-
-    std::cout << "[ModelImporter] Begin loading glTF: " << path.string() << std::endl;
-
-    std::string ext = path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        errorMessage = "Failed to open glTF file";
-        return false;
+    if (outSlotMaterials) {
+        outSlotMaterials->clear();
     }
 
+    json root;
+    std::vector<std::vector<uint8_t>> buffers;
     try {
-        if (ext == ".glb") {
-            // glTF Binary format: 12-byte header + JSON chunk + binary chunk
-            uint32_t magic = 0;
-            file.read(reinterpret_cast<char*>(&magic), sizeof(uint32_t));
-            
-            if (magic != 0x46546C67) { // "glTF" in little-endian
-                errorMessage = "Invalid glTF binary file (wrong magic number)";
-                return false;
-            }
-
-            uint32_t version = 0;
-            uint32_t fileLength = 0;
-            file.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
-            file.read(reinterpret_cast<char*>(&fileLength), sizeof(uint32_t));
-
-            if (version != 2) {
-                errorMessage = "Only glTF 2.0 is supported";
-                return false;
-            }
-
-            // Read JSON chunk header
-            uint32_t chunkLength = 0;
-            uint32_t chunkType = 0;
-            file.read(reinterpret_cast<char*>(&chunkLength), sizeof(uint32_t));
-            file.read(reinterpret_cast<char*>(&chunkType), sizeof(uint32_t));
-
-            if (chunkType != 0x4E4F534A) { // "JSON" in little-endian
-                errorMessage = "Expected JSON chunk in glTF binary file";
-                return false;
-            }
-
-            // Read JSON data
-            std::string jsonContent(chunkLength, '\0');
-            file.read(jsonContent.data(), chunkLength);
-
-            // Read binary chunk header
-            uint32_t binChunkLength = 0;
-            uint32_t binChunkType = 0;
-            file.read(reinterpret_cast<char*>(&binChunkLength), sizeof(uint32_t));
-            file.read(reinterpret_cast<char*>(&binChunkType), sizeof(uint32_t));
-
-            if (binChunkType != 0x004E4942) { // "BIN\0" in little-endian
-                errorMessage = "Expected BIN chunk in glTF binary file";
-                return false;
-            }
-
-            // Read binary data
-            std::vector<uint8_t> binaryData(binChunkLength);
-            file.read(reinterpret_cast<char*>(binaryData.data()), binChunkLength);
-
-            json root = json::parse(jsonContent);
-            return LoadGLTFDocument(root, binaryData, outMesh, errorMessage);
-        }
-        else if (ext == ".gltf") {
-            // For .gltf files, read as text and parse JSON
-            std::string jsonContent((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            json root = json::parse(jsonContent);
-            
-            // Check if there are external buffers
-            if (root.contains("buffers")) {
-                std::vector<uint8_t> binaryData;
-                
-                for (const auto& buffer : root["buffers"]) {
-                    if (buffer.contains("uri")) {
-                        std::string uri = buffer["uri"];
-                        
-                        // Try to load external .bin file
-                        std::filesystem::path binPath = path.parent_path() / uri;
-                        std::ifstream binFile(binPath, std::ios::binary);
-                        if (!binFile.is_open()) {
-                            errorMessage = "Failed to open external binary file: " + uri;
-                            return false;
-                        }
-                        
-                        binFile.seekg(0, std::ios::end);
-                        size_t binSize = binFile.tellg();
-                        binFile.seekg(0, std::ios::beg);
-                        
-                        binaryData.resize(binSize);
-                        binFile.read(reinterpret_cast<char*>(binaryData.data()), binSize);
-                    }
-                }
-                
-                if (binaryData.empty()) {
-                    errorMessage = "No binary data found in glTF file";
-                    return false;
-                }
-
-                return LoadGLTFDocument(root, binaryData, outMesh, errorMessage);
-            }
-            
-            errorMessage = "No buffers found in glTF file";
-            return false;
-        }
-        else {
-            errorMessage = "Unsupported glTF file format";
+        if (!LoadGlbOrGltf(path, root, buffers, errorMessage)) {
             return false;
         }
     } catch (const std::exception& e) {
         errorMessage = std::string("Failed to load glTF file: ") + e.what();
         return false;
     }
+
+    const json nodes = root.value("nodes", json::array());
+    const json meshes = root.value("meshes", json::array());
+    const json materials = root.value("materials", json::array());
+    if (meshes.empty()) {
+        errorMessage = "No meshes found in glTF file";
+        return false;
+    }
+
+    // One submesh per glTF material (slot == submesh index, as for FBX); -1 collects primitives without one.
+    std::vector<int> slotMaterial;
+    std::vector<std::vector<uint32_t>> slotIndices;
+    auto slotFor = [&](int material) {
+        const auto found = std::find(slotMaterial.begin(), slotMaterial.end(), material);
+        if (found != slotMaterial.end()) {
+            return static_cast<size_t>(found - slotMaterial.begin());
+        }
+        slotMaterial.push_back(material);
+        slotIndices.emplace_back();
+        return slotMaterial.size() - 1;
+    };
+
+    auto appendMesh = [&](int meshIndex, const Mat4& world) -> bool {
+        if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes.size())) {
+            errorMessage = "glTF node references a missing mesh";
+            return false;
+        }
+        const bool flipWinding = Determinant3(world) < 0.0f;
+        for (const json& primitive : meshes[static_cast<size_t>(meshIndex)].value("primitives", json::array())) {
+            if (primitive.value("mode", 4) != 4 || !primitive.contains("attributes") ||
+                !primitive["attributes"].contains("POSITION")) {
+                continue;
+            }
+            const json& attributes = primitive["attributes"];
+            AccessorView positions;
+            if (!OpenAccessor(root, buffers, attributes["POSITION"].get<int>(), positions, errorMessage)) {
+                return false;
+            }
+            if (positions.componentCount != 3) {
+                errorMessage = "POSITION must be VEC3";
+                return false;
+            }
+            std::vector<float> normals;
+            std::vector<float> uvs;
+            if (!ReadOptionalVecAttribute(root, buffers, attributes, "NORMAL", positions.count, 3, normals,
+                                          errorMessage) ||
+                !ReadOptionalVecAttribute(root, buffers, attributes, "TEXCOORD_0", positions.count, 2, uvs,
+                                          errorMessage)) {
+                return false;
+            }
+
+            const uint32_t base = static_cast<uint32_t>(outMesh.vertices.size());
+            for (int i = 0; i < positions.count; ++i) {
+                Vertex vert{};
+                const Vec3 pos = Mat4::TransformPoint(world, Vec3(ReadNormalized(positions, i, 0),
+                                                                  ReadNormalized(positions, i, 1),
+                                                                  ReadNormalized(positions, i, 2)));
+                const Vec3 normal = normals.empty()
+                    ? Vec3(0.0f, 1.0f, 0.0f)
+                    : TransformNormal(world, Vec3(normals[static_cast<size_t>(i * 3)],
+                                                  normals[static_cast<size_t>(i * 3 + 1)],
+                                                  normals[static_cast<size_t>(i * 3 + 2)]));
+                vert.pos[0] = pos.x;
+                vert.pos[1] = pos.y;
+                vert.pos[2] = pos.z;
+                vert.normal[0] = normal.x;
+                vert.normal[1] = normal.y;
+                vert.normal[2] = normal.z;
+                vert.color[0] = vert.color[1] = vert.color[2] = 1.0f;
+                if (!uvs.empty()) {
+                    vert.texCoord[0] = uvs[static_cast<size_t>(i * 2)];
+                    vert.texCoord[1] = uvs[static_cast<size_t>(i * 2 + 1)];
+                }
+                outMesh.vertices.push_back(vert);
+            }
+
+            std::vector<uint32_t> local;
+            if (primitive.contains("indices")) {
+                AccessorView indexView;
+                if (!OpenAccessor(root, buffers, primitive["indices"].get<int>(), indexView, errorMessage)) {
+                    return false;
+                }
+                local.reserve(static_cast<size_t>(indexView.count));
+                for (int i = 0; i < indexView.count; ++i) {
+                    const auto index = static_cast<uint32_t>(ReadNormalized(indexView, i, 0));
+                    if (index >= static_cast<uint32_t>(positions.count)) {
+                        errorMessage = "Index out of range";
+                        return false;
+                    }
+                    local.push_back(index);
+                }
+            } else {
+                for (int i = 0; i < positions.count; ++i) {
+                    local.push_back(static_cast<uint32_t>(i));
+                }
+            }
+            std::vector<uint32_t>& target = slotIndices[slotFor(primitive.value("material", -1))];
+            for (size_t i = 0; i + 2 < local.size(); i += 3) {
+                target.push_back(base + local[i]);
+                target.push_back(base + local[flipWinding ? i + 2 : i + 1]);
+                target.push_back(base + local[flipWinding ? i + 1 : i + 2]);
+            }
+        }
+        return true;
+    };
+
+    std::function<bool(int, const Mat4&, int)> visit = [&](int nodeIndex, const Mat4& parent, int depth) {
+        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()) || depth > 256) {
+            return true;
+        }
+        const json& node = nodes[static_cast<size_t>(nodeIndex)];
+        const Mat4 world = Mat4::Multiply(parent, GLTFNodeLocalMatrix(node));
+        if (node.contains("mesh") && node["mesh"].is_number_integer() &&
+            !appendMesh(node["mesh"].get<int>(), world)) {
+            return false;
+        }
+        for (const json& child : node.value("children", json::array())) {
+            if (child.is_number_integer() && !visit(child.get<int>(), world, depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const json scenes = root.value("scenes", json::array());
+    const int sceneIndex = root.value("scene", 0);
+    if (sceneIndex >= 0 && sceneIndex < static_cast<int>(scenes.size())) {
+        for (const json& node : scenes[static_cast<size_t>(sceneIndex)].value("nodes", json::array())) {
+            if (node.is_number_integer() && !visit(node.get<int>(), Mat4::Identity(), 0)) {
+                return false;
+            }
+        }
+    } else if (!appendMesh(0, Mat4::Identity())) {
+        return false;
+    }
+
+    for (size_t slot = 0; slot < slotIndices.size(); ++slot) {
+        if (slotIndices[slot].empty()) {
+            continue;
+        }
+        MeshData::Submesh submesh;
+        submesh.indexOffset = static_cast<uint32_t>(outMesh.indices.size());
+        submesh.indexCount = static_cast<uint32_t>(slotIndices[slot].size());
+        submesh.materialSlot = static_cast<int>(outMesh.submeshes.size());
+        const int material = slotMaterial[slot];
+        submesh.name = material >= 0 && material < static_cast<int>(materials.size())
+            ? materials[static_cast<size_t>(material)].value("name", "Material " + std::to_string(material))
+            : std::string("Default");
+        outMesh.indices.insert(outMesh.indices.end(), slotIndices[slot].begin(), slotIndices[slot].end());
+        outMesh.submeshes.push_back(std::move(submesh));
+        if (outSlotMaterials) {
+            outSlotMaterials->push_back(material);
+        }
+    }
+    if (outMesh.indices.empty()) {
+        errorMessage = "glTF file has no triangle geometry";
+        return false;
+    }
+
+    const float maxFloat = std::numeric_limits<float>::max();
+    auto boundsOf = [&](uint32_t offset, uint32_t count) {
+        Vec3 minB(maxFloat, maxFloat, maxFloat);
+        Vec3 maxB(-maxFloat, -maxFloat, -maxFloat);
+        for (uint32_t i = 0; i < count; ++i) {
+            const Vertex& vert = outMesh.vertices[outMesh.indices[offset + i]];
+            minB = Vec3(std::min(minB.x, vert.pos[0]), std::min(minB.y, vert.pos[1]), std::min(minB.z, vert.pos[2]));
+            maxB = Vec3(std::max(maxB.x, vert.pos[0]), std::max(maxB.y, vert.pos[1]), std::max(maxB.z, vert.pos[2]));
+        }
+        return AABB(minB, maxB);
+    };
+    for (MeshData::Submesh& submesh : outMesh.submeshes) {
+        submesh.bounds = boundsOf(submesh.indexOffset, submesh.indexCount);
+    }
+    outMesh.bounds = boundsOf(0, static_cast<uint32_t>(outMesh.indices.size()));
+    return true;
 }
 
 bool LoadModel(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage) {

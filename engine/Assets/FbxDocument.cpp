@@ -301,6 +301,8 @@ bool ReadFbxMaterials(const std::filesystem::path& path,
         }
         info.roughnessTexture = ResolveFbxTexture(roughness, path);
         info.glossinessTexture = ResolveFbxTexture(gloss, path);
+        info.metallicTexture = ResolveFbxTexture(material->pbr.metalness.texture, path);
+        info.aoTexture = ResolveFbxTexture(material->pbr.ambient_occlusion.texture, path);
         if (info.baseColorTexture.Exists()) {
             // The texture carries the colour; legacy diffuse factors would only darken it.
             info.baseColor = Vec3(1.0f, 1.0f, 1.0f);

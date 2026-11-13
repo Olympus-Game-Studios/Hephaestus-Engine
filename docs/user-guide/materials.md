@@ -45,7 +45,7 @@ Every graph ends in exactly one **Material Output** node. Its inputs are the mat
 | **Opacity**, **Opacity Mask** | Cut holes in a surface, for leaves, fences and grates. |
 | **Refraction** | Reserved for later. It doesn't change anything yet. |
 
-A tip for packed **ORM** textures (one image holding AO, Roughness and Metallic in its red, green and blue channels): the texture nodes pick the right channel for the input you connect them to.
+A tip for packed **ORM** textures (one image holding AO, Roughness and Metallic in its red, green and blue channels): add one **Texture Sample** with the image, connect its **RGBA** to a **Break Vector**, then wire **R** to Ambient Occlusion, **G** to Roughness and **B** to Metallic. Each map reads its own channel of the same texture (a **Component Mask** with one channel ticked works too). The single map nodes (Roughness Texture and friends) read the red channel.
 
 ### Node categories
 

@@ -71,7 +71,7 @@ struct alignas(16) MaterialUBO {
     float opacityMask;
     float refraction;
     uint32_t blendMode;
-    uint32_t paddingTail;
+    uint32_t textureChannels; // roughness, metallic, AO map channel, 2 bits each
 };
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
@@ -3588,8 +3588,13 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         if (j.contains("normalTexturePath")) loadedMaterial.normalTexturePath = j["normalTexturePath"].get<std::string>();
         if (j.contains("useRoughnessTexture")) loadedMaterial.useRoughnessTexture = j["useRoughnessTexture"].get<bool>();
         if (j.contains("roughnessTexturePath")) loadedMaterial.roughnessTexturePath = j["roughnessTexturePath"].get<std::string>();
+        if (j.contains("useMetallicTexture")) loadedMaterial.useMetallicTexture = j["useMetallicTexture"].get<bool>();
+        if (j.contains("metallicTexturePath")) loadedMaterial.metallicTexturePath = j["metallicTexturePath"].get<std::string>();
         if (j.contains("useAoTexture")) loadedMaterial.useAoTexture = j["useAoTexture"].get<bool>();
         if (j.contains("aoTexturePath")) loadedMaterial.aoTexturePath = j["aoTexturePath"].get<std::string>();
+        loadedMaterial.roughnessChannel = j.value("roughnessChannel", 0u) & 3u;
+        loadedMaterial.metallicChannel = j.value("metallicChannel", 0u) & 3u;
+        loadedMaterial.aoChannel = j.value("aoChannel", 0u) & 3u;
         if (j.contains("useWorldAlignedTexture")) loadedMaterial.useWorldAlignedTexture = j["useWorldAlignedTexture"].get<bool>();
         if (j.contains("worldTextureScale")) loadedMaterial.worldTextureScale = j["worldTextureScale"].get<float>();
     }
@@ -4255,7 +4260,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             defaultMat.useWorldAlignedTexture = 0;
             defaultMat.worldTextureScale = 1.0f;
             defaultMat.blendMode = 0u;
-            defaultMat.paddingTail = 0u;
+            defaultMat.textureChannels = 0u;
             std::memcpy(matMappedBase, &defaultMat, sizeof(defaultMat));
             matSlotNext = 1;
         }
@@ -4335,7 +4340,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.opacityMask = mat.opacityMask;
                 matUBO.refraction = mat.refraction;
                 matUBO.blendMode = static_cast<uint32_t>(mat.blendMode);
-                matUBO.paddingTail = 0u;
+                matUBO.textureChannels = (mat.roughnessChannel & 3u) | ((mat.metallicChannel & 3u) << 2) |
+                                         ((mat.aoChannel & 3u) << 4);
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
@@ -4367,7 +4373,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.opacityMask = 1.0f;
                 matUBO.refraction = 0.0f;
                 matUBO.blendMode = 0u;
-                matUBO.paddingTail = 0u;
+                matUBO.textureChannels = 0u;
             }
         };
         

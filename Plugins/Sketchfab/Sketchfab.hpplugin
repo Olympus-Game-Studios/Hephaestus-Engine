@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "apiVersion": 1,
+  "id": "com.hephaestus.sketchfab",
+  "name": "Sketchfab",
+  "description": "Search Sketchfab and import downloadable models with their materials and credits.",
+  "author": "Hephaestus Engine",
+  "pluginVersion": "1.0.0",
+  "engineVersion": ">=2026.11.12",
+  "type": "editor",
+  "entry": "bin/HephaestusSketchfab.dll",
+  "icon": "Resources/sketchfab.svg"
+}

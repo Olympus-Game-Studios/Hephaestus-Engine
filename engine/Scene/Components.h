@@ -648,6 +648,11 @@ struct MaterialComponent {
     std::string aoTexturePath;
     bool useAoTexture = false;
 
+    // Channel (0 R, 1 G, 2 B, 3 A) each scalar map is read from, so one packed ORM-style texture can feed all three
+    uint32_t roughnessChannel = 0;
+    uint32_t metallicChannel = 0;
+    uint32_t aoChannel = 0;
+
     // World-aligned texture settings
     // When enabled, textures use world position instead of UV coordinates
     bool useWorldAlignedTexture = false;

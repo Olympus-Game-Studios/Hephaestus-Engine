@@ -35,6 +35,7 @@ void DiffJson(const JsonValue& current, const JsonValue& baseline,
 
 void MergeOverrides(JsonValue& data, const std::unordered_map<std::string, PropertyValue>& properties);
 
+JsonValue MeshRendererToJson(const MeshRendererComponent& mesh);
 bool CaptureFromEntity(Entity entity, std::vector<PrefabComponentEntry>& out);
 bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEntry& out);
 bool ApplyEntry(Entity entity, const PrefabComponentEntry& entry);

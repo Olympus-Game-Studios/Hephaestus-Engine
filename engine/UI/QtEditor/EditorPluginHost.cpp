@@ -4,7 +4,9 @@
 #include "EditorDockTitleBar.h"
 #include "EditorAssetServices.h"
 #include "EditorUndoCommand.h"
+#include "../../Assets/AssetIntake.h"
 #include "../../Assets/AssetPathPolicy.h"
+#include "AssetBrowserWidget.h"
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Plugins/PluginSystem.h"
@@ -54,6 +56,7 @@ public:
  bool ShowPanel(const char*id)override{return host.ShowPanel(id?id:"");}
  bool RegisterAssetType(const Plugins::AssetTypeDescriptor&d)override{return host.RegisterAssetType(manifest.id,d);}
  bool RegisterImporter(const Plugins::ImporterDescriptor&d)override{return host.RegisterImporter(manifest.id,d);}
+ bool ImportAssetPack(const Plugins::AssetPackImportRequest&r,Plugins::AssetPackImportResult&out)override{return host.ImportAssetPack(r,out);}
  bool HasScene()const override{auto*c=host.editorContext_();return c&&c->HasActiveScene();}
  std::uint64_t CreatePrimitive(Plugins::PrimitiveKind k,const char*n)override{return host.CreatePrimitive(k,n);}
  bool DeleteEntity(std::uint64_t id)override{auto*c=host.editorContext_();if(!c||!c->HasActiveScene()||id==0)return false;auto&e=c->GetActiveScene()->GetRegistry();auto h=static_cast<entt::entity>(id-1);if(!e.valid(h))return false;c->GetActiveScene()->DestroyEntity(Entity(h,c->GetActiveScene()));c->MarkDirty();host.sceneChanged_();return true;}
@@ -87,6 +90,48 @@ bool EditorPluginHost::ShowPanel(const std::string&id){auto*d=window_->findChild
 bool EditorPluginHost::RegisterAssetType(const std::string&o,const Plugins::AssetTypeDescriptor&d){if(!d.typeId||!d.extension||!d.displayName)return false;std::string ext=d.extension;if(!ext.starts_with('.'))ext.insert(ext.begin(),'.');std::ranges::transform(ext,ext.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});for(auto&a:assetTypes_)if(a->id==d.typeId||a->extension==ext)return false;auto a=std::make_unique<AssetType>();a->owner=o;a->id=d.typeId;a->extension=ext;a->name=d.displayName;a->icon=d.icon?d.icon:"";a->create=d.create;a->open=d.openEditor;a->dirty=d.isDirty;a->save=d.saveEditor;a->close=d.closeEditor;a->retarget=d.retargetEditor;a->userData=d.userData;assetTypes_.push_back(std::move(a));return true;}
 bool EditorPluginHost::RegisterImporter(const std::string&o,const Plugins::ImporterDescriptor&d){if(!d.id||!d.sourceExtensions||!d.resultAssetTypeId||!d.import)return false;auto x=std::make_unique<Importer>();x->owner=o;x->id=d.id;x->extensions=d.sourceExtensions;x->result=d.resultAssetTypeId;x->callback=d.import;x->userData=d.userData;importers_.push_back(std::move(x));return true;}
 bool EditorPluginHost::RegisterSetting(const std::string&o,const Plugins::SettingDescriptor&d){if(!d.id||!d.displayName)return false;auto s=std::make_unique<Setting>();s->owner=o;s->id=d.id;s->name=d.displayName;s->description=d.description?d.description:"";s->defaultValue=d.defaultValue?d.defaultValue:"";s->scope=d.scope;settings_.push_back(std::move(s));return true;}
+bool EditorPluginHost::ImportAssetPack(const Plugins::AssetPackImportRequest& r, Plugins::AssetPackImportResult& out) {
+    out = Plugins::AssetPackImportResult{};
+    auto text = [](const char* value) { return std::string(value ? value : ""); };
+    auto copy = [](char* target, std::size_t size, const std::string& value) {
+        const std::size_t length = std::min(value.size(), size - 1);
+        std::memcpy(target, value.data(), length);
+        target[length] = '\0';
+    };
+    if (r.structSize < sizeof(Plugins::AssetPackImportRequest) || !r.sourcePath || !r.targetFolder) {
+        copy(out.message, sizeof(out.message), "Invalid asset pack import request.");
+        return false;
+    }
+    if (!projectContext_ || !projectContext_->HasProject()) {
+        copy(out.message, sizeof(out.message), "Open a project before importing assets.");
+        return false;
+    }
+    AssetIntakeRequest request;
+    request.source = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(r.sourcePath)));
+    request.projectRoot = projectContext_->GetProjectRootDir();
+    request.targetFolder = r.targetFolder;
+    request.credit = {text(r.title), text(r.source), text(r.sourceUrl), text(r.author), text(r.authorUrl),
+                      text(r.license), text(r.licenseUrl)};
+    AssetIntakeResult result;
+    std::string error;
+    const bool ok = AssetIntake::Import(request, result, error);
+    std::string message = error;
+    for (const std::string& warning : result.warnings) {
+        message += (message.empty() ? "" : "\n") + warning;
+    }
+    copy(out.message, sizeof(out.message), message);
+    copy(out.folder, sizeof(out.folder), result.folder);
+    out.prefabCount = static_cast<std::uint32_t>(result.prefabs.size());
+    out.materialCount = static_cast<std::uint32_t>(result.materials.size());
+    out.warningCount = static_cast<std::uint32_t>(result.warnings.size());
+    if (ok) {
+        if (auto* browser = window_->findChild<AssetBrowserWidget*>()) {
+            const std::string& shown = !result.prefabs.empty() ? result.prefabs.front() : result.materials.front();
+            browser->RevealAsset(QString::fromStdString(shown));
+        }
+    }
+    return ok;
+}
 void EditorPluginHost::PopulateContextMenu(const char*l,QMenu&m,const QString&){bool sep=false;for(auto&x:contextActions_)if(x->location==(l?l:""))if(auto*a=FindCommand(x->command)){if(!sep){m.addSeparator();sep=true;}m.addAction(a);}}
 void EditorPluginHost::PopulateAssetCreationMenu(QMenu&m,const QString&dir){for(auto&a:assetTypes_)if(a->create){auto*x=m.addAction(QString::fromStdString(a->name));QObject::connect(x,&QAction::triggered,&m,[p=a.get(),dir]{p->create(dir.toUtf8().constData(),p->userData);});}}
 void EditorPluginHost::PopulateImporterMenu(QMenu&m,const QString&dir){for(auto&i:importers_){auto*x=m.addAction(QString::fromStdString(i->id));QObject::connect(x,&QAction::triggered,&m,[p=i.get(),dir]{QString filter=QStringLiteral("Supported files (%1)").arg(QString::fromStdString(p->extensions).replace(';',' '));QString source=QFileDialog::getOpenFileName(nullptr,QObject::tr("Import with %1").arg(QString::fromStdString(p->id)),{},filter);if(!source.isEmpty())p->callback(source.toUtf8().constData(),dir.toUtf8().constData(),p->userData);});}}

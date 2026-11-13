@@ -124,6 +124,11 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("useAoTexture") && root["useAoTexture"].is_boolean()) outMaterial.useAoTexture = root["useAoTexture"].get<bool>();
     if (root.contains("aoTexturePath") && root["aoTexturePath"].is_string()) outMaterial.aoTexturePath = root["aoTexturePath"].get<std::string>();
     if (root.contains("useWorldAlignedTexture") && root["useWorldAlignedTexture"].is_boolean()) outMaterial.useWorldAlignedTexture = root["useWorldAlignedTexture"].get<bool>();
+    for (auto [key, channel] : {std::pair{"roughnessChannel", &outMaterial.roughnessChannel},
+                                std::pair{"metallicChannel", &outMaterial.metallicChannel},
+                                std::pair{"aoChannel", &outMaterial.aoChannel}}) {
+        if (root.contains(key) && root[key].is_number_unsigned()) *channel = root[key].get<uint32_t>() & 3u;
+    }
     if (root.contains("worldTextureScale") && root["worldTextureScale"].is_number()) outMaterial.worldTextureScale = root["worldTextureScale"].get<float>();
 
     std::vector<std::string> warnings;
@@ -340,6 +345,15 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["metallicTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.metallicTexturePath);
     root["useAoTexture"] = material.useAoTexture;
     root["aoTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.aoTexturePath);
+    for (const auto& [key, channel] : {std::pair{"roughnessChannel", material.roughnessChannel},
+                                       std::pair{"metallicChannel", material.metallicChannel},
+                                       std::pair{"aoChannel", material.aoChannel}}) {
+        if (channel != 0) {
+            root[key] = channel;
+        } else {
+            root.erase(key);
+        }
+    }
     root["useWorldAlignedTexture"] = material.useWorldAlignedTexture;
     root["worldTextureScale"] = material.worldTextureScale;
 
@@ -456,6 +470,35 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
         }
     };
 
+    // A map read from G, B or A goes through Texture Sample > Break Vector so evaluating the graph keeps the channel.
+    auto connectMap = [&](NodeType singleChannelType, const std::string& path, uint32_t channel, float y,
+                          PinID outputPin) {
+        if (channel == 0) {
+            Node& tex = graph.CreateNode(singleChannelType);
+            tex.resourcePath = path;
+            tex.posX = 140.0f;
+            tex.posY = y;
+            if (!tex.outputs.empty()) {
+                graph.CreateLink(tex.outputs[0], outputPin);
+            }
+            return;
+        }
+        Node& tex = graph.CreateNode(NodeType::TextureSample);
+        tex.resourcePath = path;
+        tex.posX = -60.0f;
+        tex.posY = y;
+        const std::vector<PinID> sampleOutputs = tex.outputs;
+        Node& split = graph.CreateNode(NodeType::BreakVector);
+        split.posX = 160.0f;
+        split.posY = y;
+        const std::vector<PinID> splitInputs = split.inputs;
+        const std::vector<PinID> splitOutputs = split.outputs;
+        if (!sampleOutputs.empty() && !splitInputs.empty() && channel < splitOutputs.size()) {
+            graph.CreateLink(sampleOutputs[0], splitInputs[0]);
+            graph.CreateLink(splitOutputs[channel], outputPin);
+        }
+    };
+
     auto connectColor = [&](const Vec3& color, PinID outputPin) {
         Node& colorNode = graph.CreateNode(NodeType::ConstantVec3);
         colorNode.color = Float3{color.x, color.y, color.z};
@@ -481,13 +524,8 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
     }
     if (outputInputs.size() > 1) {
         if (material.useMetallicTexture && !material.metallicTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::MetallicTextureSample);
-            tex.resourcePath = material.metallicTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 140.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], outputInputs[1]);
-            }
+            connectMap(NodeType::MetallicTextureSample, material.metallicTexturePath, material.metallicChannel, 140.0f,
+                       outputInputs[1]);
         } else {
             connectScalar(material.metallic, outputInputs[1]);
         }
@@ -507,13 +545,8 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
 
     if (outputInputs.size() > 5) {
         if (material.useRoughnessTexture && !material.roughnessTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::RoughnessTextureSample);
-            tex.resourcePath = material.roughnessTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 320.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], outputInputs[5]);
-            }
+            connectMap(NodeType::RoughnessTextureSample, material.roughnessTexturePath, material.roughnessChannel,
+                       320.0f, outputInputs[5]);
         } else {
             connectScalar(material.roughness, outputInputs[5]);
         }
@@ -521,13 +554,7 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
 
     if (outputInputs.size() > 6) {
         if (material.useAoTexture && !material.aoTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::AoTextureSample);
-            tex.resourcePath = material.aoTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 380.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], outputInputs[6]);
-            }
+            connectMap(NodeType::AoTextureSample, material.aoTexturePath, material.aoChannel, 380.0f, outputInputs[6]);
         } else {
             connectScalar(material.ao, outputInputs[6]);
         }

@@ -22,6 +22,10 @@ Which plugins are on is saved per project in `.hephaestus/plugins.json`, so your
 ## What comes with Hephaestus
 
 - **Primitive Tools**: an example plugin that adds a few scene authoring commands, a panel and a custom asset type. It's mostly there to show plugin authors how things fit together.
+- **Sketchfab**: open it from **Window > Asset Stores > Sketchfab** to search downloadable Sketchfab models, see who made each one and its licence, and import it with one click. Importing needs your Sketchfab API token (copy it from the Password & API page of your Sketchfab settings); Hephaestus keeps it in Windows Credential Manager, never in your project. Each model comes in as a prefab with its materials made and applied, under `assets/Imported/Sketchfab`. NonCommercial models get a warning, since you can't use them in a game you sell.
+- **Fab**: Fab has no download API, so this one works with files you download yourself. Pick a format like FBX, glTF or OBJ on Fab (not the Unreal Engine format), then drop the .zip, folder or model onto **Window > Asset Stores > Fab** and fill in where it came from. It understands Megascans and Unreal style texture names (`_BaseColor`, `_Normal`, `_ORM` and friends), only takes LOD0 from packs that ship every LOD, and turns texture sets with no model into materials. It also adds **Import with Plugin > Asset pack with materials** to the Content Browser's right click menu for any pack you have on disk.
+
+Both write a `credits.json` beside each asset they import (who made it, where it's from and its licence) and rebuild `assets/scripts/ImportedCredits.lua` from all of them, ready for your credits screen. To change a credit, edit its `credits.json` (the Lua file is rewritten on every import).
 - **Hephaestus MCP**: lets AI assistants that speak the Model Context Protocol drive the editor (inspect the scene, play, step frames, take screenshots, package builds). It only listens on your own machine (`127.0.0.1`) and you can change its port in its settings. It's enabled by default, so switch it off in the Plugin Manager if you don't use AI tools.
 
 ## Plugins in your game

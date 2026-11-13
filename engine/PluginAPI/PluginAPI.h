@@ -81,6 +81,31 @@ struct ImporterDescriptor {
     void* userData = nullptr;
 };
 
+/// A downloaded asset pack to import into the open project (IAssetService::ImportAssetPack).
+/// Credit fields are optional; when title, author or license is set the asset is added to the project's
+/// generated credits (assets/scripts/ImportedCredits.lua).
+struct AssetPackImportRequest {
+    std::uint32_t structSize = sizeof(AssetPackImportRequest);
+    const char* sourcePath = nullptr;   // .zip, folder, or one .fbx/.glb/.gltf/.obj file
+    const char* targetFolder = nullptr; // portable folder under assets/, e.g. "assets/Imported/Sketchfab/Crate"
+    const char* title = nullptr;
+    const char* source = nullptr;       // e.g. "Sketchfab"
+    const char* sourceUrl = nullptr;
+    const char* author = nullptr;
+    const char* authorUrl = nullptr;
+    const char* license = nullptr;
+    const char* licenseUrl = nullptr;
+};
+
+struct AssetPackImportResult {
+    std::uint32_t structSize = sizeof(AssetPackImportResult);
+    std::uint32_t prefabCount = 0;
+    std::uint32_t materialCount = 0;
+    std::uint32_t warningCount = 0;
+    char folder[512] = {};   // portable folder the pack was imported into
+    char message[2048] = {}; // the error on failure, otherwise the warnings, one per line
+};
+
 enum class SettingScope : std::uint32_t { Editor, Project };
 struct SettingDescriptor {
     const char* id = nullptr;
@@ -114,6 +139,10 @@ public:
     virtual ~IAssetService() = default;
     virtual bool RegisterAssetType(const AssetTypeDescriptor& descriptor) = 0;
     virtual bool RegisterImporter(const ImporterDescriptor& descriptor) = 0;
+    /// Imports models, materials (applied through one prefab per model), textures and the licence record.
+    /// Appended to API 1 after its first release; an older editor's vtable has no such entry, so a plugin that
+    /// calls it requires a matching "engineVersion" in its manifest.
+    virtual bool ImportAssetPack(const AssetPackImportRequest& request, AssetPackImportResult& result) = 0;
 };
 
 class ISceneService {

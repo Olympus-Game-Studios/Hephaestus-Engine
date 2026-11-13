@@ -17,6 +17,7 @@ struct Value {
     std::string texturePath;
     bool isWorldAligned = false;
     float worldAlignedScale = 1.0f;
+    uint32_t channel = 0; ///< channel of a texture a scalar map reads, set by Break Vector and Component Mask
 };
 
 Value MakeDefault(ValueType type) {
@@ -354,6 +355,13 @@ bool EvaluateOutputPin(const Graph& graph,
         const int count = (node->maskR ? 1 : 0) + (node->maskG ? 1 : 0) + (node->maskB ? 1 : 0) + (node->maskA ? 1 : 0);
         result.type = count <= 1 ? ValueType::Float1 : (count == 2 ? ValueType::Float2 : (count == 3 ? ValueType::Float3 : ValueType::Float4));
         result.scalar = node->maskR ? value.vec.x : (node->maskG ? value.vec.y : (node->maskB ? value.vec.z : 1.0f));
+        if (value.hasTexture && count == 1) {
+            result.hasTexture = true;
+            result.texturePath = value.texturePath;
+            result.isWorldAligned = value.isWorldAligned;
+            result.worldAlignedScale = value.worldAlignedScale;
+            result.channel = node->maskR ? 0u : (node->maskG ? 1u : (node->maskB ? 2u : 3u));
+        }
         result.vec = Float3{
             node->maskR ? value.vec.x : result.scalar,
             node->maskG ? value.vec.y : result.scalar,
@@ -374,6 +382,13 @@ bool EvaluateOutputPin(const Graph& graph,
             }
         }
         result.scalar = outputIndex == 0 ? value.vec.x : (outputIndex == 1 ? value.vec.y : (outputIndex == 2 ? value.vec.z : 1.0f));
+        if (value.hasTexture) {
+            result.hasTexture = true;
+            result.texturePath = value.texturePath;
+            result.isWorldAligned = value.isWorldAligned;
+            result.worldAlignedScale = value.worldAlignedScale;
+            result.channel = static_cast<uint32_t>(std::clamp(outputIndex, 0, 3));
+        }
         break;
     }
     case NodeType::NormalUnpack: {
@@ -559,6 +574,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useMetallicTexture = true;
             outMaterial.metallicTexturePath = texValue.texturePath;
+            outMaterial.metallicChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
@@ -576,6 +592,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useRoughnessTexture = true;
             outMaterial.roughnessTexturePath = texValue.texturePath;
+            outMaterial.roughnessChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
@@ -616,6 +633,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
             // A map keeps the Roughness pin's value, which the shader multiplies it by.
             outMaterial.useRoughnessTexture = true;
             outMaterial.roughnessTexturePath = texValue.texturePath;
+            outMaterial.roughnessChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
@@ -638,6 +656,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useAoTexture = true;
             outMaterial.aoTexturePath = texValue.texturePath;
+            outMaterial.aoChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;

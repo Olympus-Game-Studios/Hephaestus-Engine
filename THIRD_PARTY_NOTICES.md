@@ -6,7 +6,7 @@ Hephaestus Engine is licensed under [`LICENSE.md`](LICENSE.md). It includes the 
 
 | Component | Version | Licence | Ships in |
 | --- | --- | --- | --- |
-| Qt (Core, Gui, Widgets, Svg and their plugins) | 6.10.2 | LGPL 3.0 | Editor |
+| Qt (Core, Gui, Widgets, Svg, Network and their plugins) | 6.10.2 | LGPL 3.0 | Editor |
 | Lua | 5.4.8 | MIT | Editor, Game |
 | Vulkan Memory Allocator | 3.3.0 | MIT | Editor, Game |
 | Jolt Physics | 5.4.0 | MIT | Editor, Game |

@@ -1021,6 +1021,13 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"metallicTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->metallicTexturePath)) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
             oss << "          \"aoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->aoTexturePath)) << "\",\n";
+            for (const auto& [key, channel] : {std::pair{"roughnessChannel", material->roughnessChannel},
+                                               std::pair{"metallicChannel", material->metallicChannel},
+                                               std::pair{"aoChannel", material->aoChannel}}) {
+                if (channel != 0) {
+                    oss << "          \"" << key << "\": " << channel << ",\n";
+                }
+            }
             oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
             oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
@@ -1681,6 +1688,13 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* aoPathValue = materialObj->Find("aoTexturePath")) {
                 if (aoPathValue->IsString()) {
                     material.aoTexturePath = aoPathValue->AsString();
+                }
+            }
+            for (auto [key, channel] : {std::pair{"roughnessChannel", &material.roughnessChannel},
+                                        std::pair{"metallicChannel", &material.metallicChannel},
+                                        std::pair{"aoChannel", &material.aoChannel}}) {
+                if (const JsonValue* value = materialObj->Find(key); value && value->IsNumber()) {
+                    *channel = static_cast<uint32_t>(value->AsNumber()) & 3u;
                 }
             }
             if (const JsonValue* useWorldAlignedValue = materialObj->Find("useWorldAlignedTexture")) {
@@ -2665,6 +2679,13 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"metallicTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->metallicTexturePath)) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
             oss << "          \"aoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->aoTexturePath)) << "\",\n";
+            for (const auto& [key, channel] : {std::pair{"roughnessChannel", material->roughnessChannel},
+                                               std::pair{"metallicChannel", material->metallicChannel},
+                                               std::pair{"aoChannel", material->aoChannel}}) {
+                if (channel != 0) {
+                    oss << "          \"" << key << "\": " << channel << ",\n";
+                }
+            }
             oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
             oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
