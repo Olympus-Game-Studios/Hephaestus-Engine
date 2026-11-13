@@ -336,6 +336,52 @@ bool TestImportZippedTextureSet(const fs::path& scratch) {
     return ok;
 }
 
+// Laid out like a Fab listing with additional files: the export's model, the same model again in a seller folder
+// in two formats, plain PBR maps, and engine-specific copies (UE_Textures) whose normal map must not win.
+bool TestDuplicateModelsAndEngineTextures(const fs::path& scratch) {
+    const fs::path project = scratch / "ListingProject";
+    fs::create_directories(project / "assets");
+    const fs::path listing = scratch / "Listing";
+    const std::string obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nf 1/1 2/1 3/1\n";
+    fs::create_directories(listing / "source");
+    fs::create_directories(listing / "seller" / "Model");
+    fs::create_directories(listing / "seller" / "Textures" / "GasGrenade" / "UE_Textures");
+    std::ofstream(listing / "source" / "Gas_Grenade.obj") << obj;
+    std::ofstream(listing / "seller" / "Model" / "Gas_Grenade.obj") << obj;
+    const fs::path textures = listing / "seller" / "Textures" / "GasGrenade";
+    auto writePng = [](const fs::path& path, const std::vector<uint8_t>& png) {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    };
+    writePng(textures / "GasGrenade_BaseColor.png", Rgba(40, 60, 20, 255));
+    writePng(textures / "GasGrenade_Normal.png", Rgba(128, 128, 255, 255));
+    writePng(textures / "UE_Textures" / "GasGrenade_Normal.png", Rgba(128, 10, 255, 255));
+    writePng(textures / "UE_Textures" / "GasGrenade_OcclusionRoughnessMetallic.png", Rgba(200, 90, 0, 255));
+
+    AssetIntakeRequest request;
+    request.source = listing;
+    request.projectRoot = project;
+    request.targetFolder = "assets/Imported/Fab/Grenades";
+    AssetIntakeResult result;
+    std::string error;
+    bool ok = Check(AssetIntake::Import(request, result, error), "listing folder imports: " + error);
+    ok &= Check(result.prefabs.size() == 1, "one prefab per model name, not one per copy");
+    ok &= Check(std::any_of(result.warnings.begin(), result.warnings.end(),
+                            [](const std::string& w) { return w.find("copies of models") != std::string::npos; }),
+                "skipped copies are reported");
+    if (result.materials.empty()) {
+        return false;
+    }
+    const json material = json::parse(ReadText(project / result.materials[0]));
+    ok &= Check(FirstPixel(project, material.value("albedoTexturePath", ""), 3) == std::vector<int>({40, 60, 20}),
+                "the model named Gas_Grenade finds the GasGrenade texture set");
+    ok &= Check(FirstPixel(project, material.value("normalTexturePath", ""), 3) == std::vector<int>({128, 128, 255}),
+                "the plain normal map wins over the UE_Textures copy");
+    ok &= Check(material.value("aoTexturePath", "") != "" && material.value("roughnessChannel", 0) == 1,
+                "an OcclusionRoughnessMetallic map fills the maps the set lacks");
+    return ok;
+}
+
 bool TestUntexturedPackWarns(const fs::path& scratch) {
     const fs::path project = scratch / "UntexturedProject";
     fs::create_directories(project / "assets");
@@ -400,6 +446,7 @@ int main(int argc, char** argv) {
     ok &= TestStaticGltfLoad(scratch);
     ok &= TestImportModel(scratch);
     ok &= TestImportZippedTextureSet(scratch);
+    ok &= TestDuplicateModelsAndEngineTextures(scratch);
     ok &= TestUntexturedPackWarns(scratch);
     ok &= TestRejections(scratch);
     std::cout << (ok ? "AssetIntakeTests passed\n" : "AssetIntakeTests FAILED\n");

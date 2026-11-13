@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
@@ -113,6 +114,23 @@ quint16 LauncherSocketPort() {
     const int port = QJsonDocument::fromJson(file.readAll())
                          .object()["plugins"].toObject()["socketExport"].toObject()["port"].toInt();
     return port >= 1024 && port <= 65535 ? static_cast<quint16>(port) : 0;
+}
+
+bool HasImages(const QString& folder) {
+    QDirIterator it(folder, {"*.png", "*.jpg", "*.jpeg", "*.tga", "*.bmp"}, QDir::Files, QDirIterator::Subdirectories);
+    return it.hasNext();
+}
+
+/// The listing's folder in the launcher's library (…/FabLibrary/<listing>-<id>), which also holds the listing's
+/// additional files the launcher extracted beside the export; empty when path is not inside a FabLibrary.
+QString ListingFolder(const QString& path) {
+    QDir dir(path);
+    for (QDir parent = dir; parent.cdUp(); dir = parent) {
+        if (parent.dirName().compare("FabLibrary", Qt::CaseInsensitive) == 0) {
+            return dir.absolutePath();
+        }
+    }
+    return {};
 }
 
 /// Receives Fab in Launcher's Custom (socket port) exports: after the launcher downloads a listing it connects to
@@ -241,7 +259,10 @@ private:
             } else {
                 const QString name = QString::fromStdString(SafeFileName(title.toStdString()));
                 const QString license = QString::fromUtf8(m_context.Settings().Get(kLicenseSetting));
-                ok = ImportPack(m_context, path, "assets/Imported/Fab/" + name, title, {}, {},
+                // Some sellers keep the textures in additional files only; import the whole listing then.
+                const QString listing = ListingFolder(path);
+                const QString source = !HasImages(path) && !listing.isEmpty() && HasImages(listing) ? listing : path;
+                ok = ImportPack(m_context, source, "assets/Imported/Fab/" + name, title, {}, {},
                                 license.isEmpty() ? QString(kLicenses[0].label) : license, summary);
             }
             Status(tr("%1: %2").arg(title, summary));

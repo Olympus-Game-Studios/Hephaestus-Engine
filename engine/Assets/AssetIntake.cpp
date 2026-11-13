@@ -17,6 +17,7 @@
 #include "stb_image.h"
 
 #include <algorithm>
+#include <iterator>
 #include <cctype>
 #include <chrono>
 #include <climits>
@@ -160,7 +161,7 @@ MapKind Classify(const std::string& stem, std::string& outBase, bool& outDirectX
         {"gloss", MapKind::Gloss},         {"glossiness", MapKind::Gloss},     {"metallic", MapKind::Metallic},
         {"metalness", MapKind::Metallic},  {"metal", MapKind::Metallic},       {"m", MapKind::Metallic},
         {"ao", MapKind::AO},               {"occlusion", MapKind::AO},         {"ambientocclusion", MapKind::AO},
-        {"occ", MapKind::AO},              {"orm", MapKind::ORM},              {"arm", MapKind::ORM},
+        {"occ", MapKind::AO},              {"orm", MapKind::ORM}, {"occlusionroughnessmetallic", MapKind::ORM},              {"arm", MapKind::ORM},
         {"metallicroughness", MapKind::MetallicRoughness},
     };
     const auto found = kinds.find(last);
@@ -186,23 +187,35 @@ SourceTexture FileTexture(const fs::path& file, int channel = -1) {
     return texture;
 }
 
+// The first map of each kind wins; images arrive shallowest folder first, so a pack's plain maps beat the
+// engine-specific copies some sellers nest beside them (UE_Textures with DirectX normals, for example).
 void AddToSet(TextureSet& set, MapKind kind, const fs::path& file, bool directX) {
     set.files.push_back(file);
     switch (kind) {
-    case MapKind::BaseColor: set.baseColor = FileTexture(file); break;
-    case MapKind::Normal:
-        set.normal = FileTexture(file);
-        set.normal.flipGreen = directX;
+    case MapKind::BaseColor:
+        if (!set.baseColor.Exists()) set.baseColor = FileTexture(file);
         break;
-    case MapKind::Roughness: set.roughness = FileTexture(file); break;
+    case MapKind::Normal:
+        if (!set.normal.Exists()) {
+            set.normal = FileTexture(file);
+            set.normal.flipGreen = directX;
+        }
+        break;
+    case MapKind::Roughness:
+        if (!set.roughness.Exists()) set.roughness = FileTexture(file);
+        break;
     case MapKind::Gloss:
         if (!set.roughness.Exists()) {
             set.roughness = FileTexture(file);
             set.roughness.invert = true;
         }
         break;
-    case MapKind::Metallic: set.metallic = FileTexture(file); break;
-    case MapKind::AO: set.ao = FileTexture(file); break;
+    case MapKind::Metallic:
+        if (!set.metallic.Exists()) set.metallic = FileTexture(file);
+        break;
+    case MapKind::AO:
+        if (!set.ao.Exists()) set.ao = FileTexture(file);
+        break;
     case MapKind::ORM:
         if (!set.ao.Exists()) set.ao = FileTexture(file, 0);
         if (!set.roughness.Exists()) set.roughness = FileTexture(file, 1);
@@ -235,17 +248,26 @@ void FillFromSet(SourceMaterial& material, TextureSet& set) {
     if (!material.aoTexture.Exists()) material.aoTexture = set.ao;
 }
 
+// Keys compare without separators, so a model "Gas_Grenade" finds the "GasGrenade_BaseColor" set.
+std::string Squash(std::string key) {
+    std::erase(key, '_');
+    return key;
+}
+
 TextureSet* FindSet(std::map<std::string, TextureSet>& sets, const std::string& name) {
-    const std::string key = MatchKey(name);
+    const std::string key = Squash(MatchKey(name));
     if (key.empty()) {
         return nullptr;
     }
-    if (auto found = sets.find(key); found != sets.end()) {
-        return &found->second;
+    for (auto& [setKey, set] : sets) {
+        if (Squash(setKey) == key) {
+            return &set;
+        }
     }
     TextureSet* best = nullptr;
     size_t bestLength = 0;
-    for (auto& [setKey, set] : sets) {
+    for (auto& [rawKey, set] : sets) {
+        const std::string setKey = Squash(rawKey);
         const bool related = key.find(setKey) != std::string::npos || setKey.find(key) != std::string::npos;
         if (related && setKey.size() > bestLength) {
             best = &set;
@@ -584,8 +606,30 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         plainModels.push_back(lod.second);
     }
     skippedLods = models.size() - plainModels.size();
-    models = std::move(plainModels);
+    // Sellers often ship the same model in several formats (and Fab's extra files repeat the export): keep one
+    // copy per name, preferring FBX, then GLB, glTF and OBJ, then the shallowest folder.
+    auto formatRank = [](const fs::path& model) {
+        const std::string e = Ext(model);
+        return e == ".fbx" ? 0 : e == ".glb" ? 1 : e == ".gltf" ? 2 : 3;
+    };
+    std::map<std::string, fs::path> byName;
+    for (const fs::path& model : plainModels) {
+        auto [it, inserted] = byName.try_emplace(Lower(model.stem().string()), model);
+        const auto depth = [](const fs::path& p) { return std::distance(p.begin(), p.end()); };
+        if (!inserted && (formatRank(model) < formatRank(it->second) ||
+                          (formatRank(model) == formatRank(it->second) && depth(model) < depth(it->second)))) {
+            it->second = model;
+        }
+    }
+    const size_t duplicateModels = plainModels.size() - byName.size();
+    models.clear();
+    for (const auto& [name, model] : byName) {
+        models.push_back(model);
+    }
     std::sort(models.begin(), models.end());
+    std::stable_sort(images.begin(), images.end(), [](const fs::path& a, const fs::path& b) {
+        return std::distance(a.begin(), a.end()) < std::distance(b.begin(), b.end());
+    });
 
     if (models.empty() && images.empty()) {
         outError = unrealFiles > 0
@@ -596,6 +640,10 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
     }
     if (unrealFiles > 0) {
         outResult.warnings.push_back(std::to_string(unrealFiles) + " Unreal-only files (.uasset, .umap) were skipped.");
+    }
+    if (duplicateModels > 0) {
+        outResult.warnings.push_back(std::to_string(duplicateModels) +
+                                     " copies of models in other formats or folders were skipped.");
     }
     if (skippedLods > 0) {
         outResult.warnings.push_back(std::to_string(skippedLods) + " lower-detail LOD models were skipped; LOD0 was imported.");

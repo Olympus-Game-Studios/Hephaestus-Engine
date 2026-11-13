@@ -17,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <string>
@@ -128,11 +129,17 @@ int main(int argc, char** argv) {
     fs::remove_all(scratch);
     const fs::path project = scratch / "Project";
     fs::create_directories(project / "assets");
-    const fs::path download = scratch / "Download" / "Rusty Barrel";
+    // Laid out like the launcher's library: the export folder holds only the model, and the listing's additional
+    // files (extracted beside it) hold the textures.
+    const fs::path listing = scratch / "FabLibrary" / "Rusty Barrel-1a2b3c4d";
+    const fs::path download = listing / "source";
     fs::create_directories(download);
+    std::ofstream(download / "Rusty_Barrel.obj") << "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nf 1/1 2/1 3/1\n";
+    const fs::path extras = listing / "seller_barrel" / "Textures";
+    fs::create_directories(extras);
     const fs::path png = repo / "assets" / "textures" / "light_bulb.png";
-    fs::copy_file(png, download / "T_RustyBarrel_2K_BaseColor.png");
-    fs::copy_file(png, download / "T_RustyBarrel_2K_Normal.png");
+    fs::copy_file(png, extras / "RustyBarrel_BaseColor.png");
+    fs::copy_file(png, extras / "RustyBarrel_Normal.png");
 
     bool ok = true;
     QLibrary library(QString::fromStdString(argv[2]));
@@ -197,6 +204,11 @@ int main(int argc, char** argv) {
     ok &= Check(fs::exists(project / "assets/Imported/Fab/Rusty Barrel/credits.json"),
                 "the export gets a credit with the default Fab licence");
     ok &= Check(fs::exists(project / ".hephaestus/fab-launcher-last.json"), "the last export is kept for diagnosis");
+    const fs::path material = project / "assets/Imported/Fab/Rusty Barrel/Materials/Rusty_Barrel.hematerial";
+    std::ifstream materialFile(material);
+    const std::string materialText((std::istreambuf_iterator<char>(materialFile)), std::istreambuf_iterator<char>());
+    ok &= Check(materialText.find("\"useAlbedoTexture\": true") != std::string::npos,
+                "textures in the listing's additional files reach a model exported without them");
     while (!statusReply.isEmpty() && statusReply.back() == '\0') {
         statusReply.chop(1);
     }
