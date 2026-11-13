@@ -3,6 +3,7 @@
 #include "AssetManager.h"
 #include "AssetPathPolicy.h"
 #include "CharacterAsset.h"
+#include "MeshSettings.h"
 
 #include <chrono>
 #include <fstream>
@@ -502,6 +503,21 @@ AssetOperationResult AssetOperationService::executeRename(const AssetOperationPr
             }
             discardTransactionBackup(backupRoot);
             return result;
+        }
+    }
+
+    // A model's settings file (<model>.hpmesh) travels with it.
+    {
+        const std::filesystem::path oldSettings = MeshSettings::SidecarPath(preflight.absoluteOldPath);
+        if (std::filesystem::is_regular_file(oldSettings, ec)) {
+            const std::filesystem::path newSettings = MeshSettings::SidecarPath(preflight.absoluteNewPath);
+            std::filesystem::rename(oldSettings, newSettings, ec);
+            if (ec) {
+                result.warnings.push_back("Could not move " + oldSettings.filename().string() + ": " + ec.message());
+            } else if (AssetReferenceIndex* settingsIndex = GetReferenceIndex()) {
+                settingsIndex->ForgetDocument(oldSettings);
+                settingsIndex->ScanDocument(newSettings);
+            }
         }
     }
 

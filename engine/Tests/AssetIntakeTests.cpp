@@ -248,6 +248,10 @@ bool TestImportModel(const fs::path& scratch) {
     ok &= Check(mesh["meshSource"] == "assets/Imported/Sketchfab/Props/Models/Props.glb", "prefab uses the copied model");
     ok &= Check(mesh["appliedMaterialPaths"] == json(result.materials) && mesh["submeshCount"] == 2,
                 "prefab applies a material to every slot");
+    const json settings =
+        json::parse(ReadText(project / "assets/Imported/Sketchfab/Props/Models/Props.glb.hpmesh"));
+    ok &= Check(settings["appliedMaterialPaths"] == json(result.materials),
+                "the model itself keeps its materials as slot defaults");
 
     const json metal = json::parse(ReadText(project / result.materials[0]));
     ok &= Check(metal["useAlbedoTexture"] == true && FirstPixel(project, metal["albedoTexturePath"], 3) ==

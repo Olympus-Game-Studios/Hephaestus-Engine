@@ -342,6 +342,7 @@ add_library(HephaestusRuntime STATIC
     engine/Assets/CharacterRuntimeGpu.cpp
     engine/Assets/CharacterImport.cpp
     engine/Assets/ModelMaterialImport.cpp
+    engine/Assets/MeshSettings.cpp
     engine/Assets/SkeletalModelImporter.cpp
     engine/Animation/Skeleton.cpp
     engine/Animation/AnimationClip.cpp

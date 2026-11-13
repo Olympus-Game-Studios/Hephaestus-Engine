@@ -7,6 +7,7 @@
 
 #include "AssetPathPolicy.h"
 #include "FbxDocument.h"
+#include "MeshSettings.h"
 #include "ModelImporter.h"
 #include "ModelMaterialImport.h"
 #include "../Scene/PrefabComponentIO.h"
@@ -765,6 +766,10 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         renderer.meshImported = true;
         renderer.submeshCount = static_cast<int>(mesh.submeshes.size());
         renderer.appliedMaterialPaths = applied;
+        // The model keeps the materials too, so dropping the mesh itself into a scene is textured.
+        if (!MeshSettings::SaveDefaultMaterials(copied, applied, error)) {
+            outResult.warnings.push_back(error);
+        }
         PrefabAsset prefab;
         prefab.guid = PrefabOverrideSystem::GenerateId();
         prefab.name = SanitizeAssetName(modelStem);

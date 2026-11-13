@@ -45,6 +45,9 @@ bool TestRenameRewritesReferrers(const fs::path& project) {
     bool ok = true;
 
     WriteText(project / "assets" / "meshes" / "Cube.glb", "mesh-bytes");
+    WriteText(project / "assets" / "meshes" / "Cube.glb.hpmesh",
+              R"({ "appliedMaterialPaths": ["assets/materials/Paint.hematerial"] })");
+    WriteText(project / "assets" / "materials" / "Paint.hematerial", "{}");
     WriteText(project / "assets" / "scenes" / "Demo.hpscene", R"({
   "entities": [
     {
@@ -82,6 +85,13 @@ bool TestRenameRewritesReferrers(const fs::path& project) {
                 "renamed file exists");
     ok &= Check(!fs::exists(project / "assets" / "meshes" / "Cube.glb"),
                 "old file gone");
+    ok &= Check(fs::exists(project / "assets" / "meshes" / "CubeRenamed.glb.hpmesh") &&
+                    !fs::exists(project / "assets" / "meshes" / "Cube.glb.hpmesh"),
+                "the model's settings file moves with it");
+    const auto paintReferrers = index.GetReferrers("assets/materials/Paint.hematerial");
+    ok &= Check(paintReferrers.size() == 1 &&
+                    paintReferrers.front().documentPath == "assets/meshes/CubeRenamed.glb.hpmesh",
+                "a model's default materials count as references, from its new settings file only");
 
     const std::string sceneText = ReadText(project / "assets" / "scenes" / "Demo.hpscene");
     ok &= Check(sceneText.find("assets/meshes/CubeRenamed.glb") != std::string::npos,

@@ -1,6 +1,7 @@
 #include "AssetThumbnailRenderer.h"
 
 #include "AssetPathPolicy.h"
+#include "MeshSettings.h"
 #include "ModelImporter.h"
 #include "../Gfx/BuiltinMeshes.h"
 #include "../Scene/PrefabInstantiator.h"
@@ -584,7 +585,12 @@ bool RenderAssetThumbnail(const std::filesystem::path& projectRoot,
             if (!ModelImporter::LoadModel(assetFile, ownMesh, outError)) {
                 return false;
             }
-            draws.push_back({ &ownMesh, Mat4::Identity(), {} });
+            ThumbnailDraw draw{ &ownMesh, Mat4::Identity(), {} };
+            outDependencies.push_back(MeshSettings::SidecarPath(assetFile));
+            for (const std::string& key : MeshSettings::LoadDefaultMaterials(assetFile)) {
+                draw.materials.push_back(key.empty() ? nullptr : sources.MaterialFile(sources.Resolve(key)));
+            }
+            draws.push_back(std::move(draw));
             break;
         }
         case AssetType::Prefab: {
@@ -609,9 +615,14 @@ bool RenderAssetThumbnail(const std::filesystem::path& projectRoot,
                     ? sources.Inline(entity.GetComponent<MaterialComponent>())
                     : nullptr;
                 ThumbnailDraw draw{ mesh, scene.GetWorldTransform(entity), {} };
-                const size_t slotCount = std::max<size_t>(renderer.appliedMaterialPaths.size(), 1);
+                const std::vector<std::string> defaults =
+                    MeshSettings::LoadDefaultMaterials(sources.Resolve(renderer.meshAssetPath));
+                const size_t slotCount = std::max({renderer.appliedMaterialPaths.size(), defaults.size(), size_t{1}});
                 for (size_t slot = 0; slot < slotCount; ++slot) {
-                    const std::string key = slot < renderer.appliedMaterialPaths.size() ? renderer.appliedMaterialPaths[slot] : std::string();
+                    std::string key = slot < renderer.appliedMaterialPaths.size() ? renderer.appliedMaterialPaths[slot] : std::string();
+                    if (key.empty() && slot < defaults.size()) {
+                        key = defaults[slot];
+                    }
                     const ThumbnailMaterial* material = key.empty() ? nullptr : sources.MaterialFile(sources.Resolve(key));
                     draw.materials.push_back(material ? material : fallback);
                 }

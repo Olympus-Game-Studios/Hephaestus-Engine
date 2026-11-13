@@ -4,6 +4,7 @@
  */
 
 #include "EngineFrameRenderer.h"
+#include "../Assets/MeshSettings.h"
 #include "VulkanDevice.h"
 #include "VulkanSwapchain.h"
 #include "VulkanPipeline.h"
@@ -3938,12 +3939,43 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& ent
             }
         }
     }
-    // 2) Fallback: entity's own MaterialComponent (single material for all submeshes)
+    // 2) The model's default material for this slot
+    if (!renderer.meshAssetPath.empty()) {
+        const std::vector<std::string>& defaults = meshDefaultMaterials(renderer.meshAssetPath);
+        if (static_cast<size_t>(slot) < defaults.size() && !defaults[slot].empty()) {
+            if (const MaterialComponent* mat = resolveMaterialFromPath(defaults[slot])) {
+                return mat;
+            }
+        }
+    }
+    // 3) Fallback: entity's own MaterialComponent (single material for all submeshes)
     if (entity.HasComponent<MaterialComponent>()) {
         return &entity.GetComponent<MaterialComponent>();
     }
-    // 3) No material assigned
+    // 4) No material assigned
     return nullptr;
+}
+
+const std::vector<std::string>& EngineFrameRenderer::meshDefaultMaterials(const std::string& meshAssetPath)
+{
+    const auto now = std::chrono::steady_clock::now();
+    MeshDefaultsCheck& entry = m_meshDefaultMaterials[meshAssetPath];
+    if (entry.checkedAt != std::chrono::steady_clock::time_point{} && now - entry.checkedAt < kMaterialRecheckInterval) {
+        return entry.materials;
+    }
+    entry.checkedAt = now;
+    std::filesystem::path model(meshAssetPath);
+    if (meshAssetPath.rfind("builtin://", 0) == 0) {
+        entry.materials.clear();
+        return entry.materials;
+    }
+    if (!model.is_absolute() && !m_projectRoot.empty()) {
+        std::error_code ec;
+        const std::filesystem::path rooted = std::filesystem::path(m_projectRoot) / model;
+        model = std::filesystem::exists(rooted, ec) ? rooted : std::filesystem::path(m_projectRoot) / "assets" / model;
+    }
+    entry.materials = Hephaestus::MeshSettings::LoadDefaultMaterials(model);
+    return entry.materials;
 }
 
 // Static geometry the probes bake against and the probe sun map draws.

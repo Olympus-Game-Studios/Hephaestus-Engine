@@ -730,7 +730,8 @@ void AssetBrowserWidget::rebuildContentsView()
                                                Qt::SkipEmptyParts);
         int matchCount = 0;
         for (const auto& asset : allAssets) {
-            if (asset.isDirectory) {
+            // A model's settings file (MeshSettings) belongs to the model, like Unity's .meta files.
+            if (asset.isDirectory || QString::fromStdString(asset.name).endsWith(".hpmesh", Qt::CaseInsensitive)) {
                 continue;
             }
             const AssetType type = asset.type;
@@ -784,6 +785,9 @@ void AssetBrowserWidget::rebuildContentsView()
 
     for (const auto& entry : entries) {
         const QString name = QString::fromStdString(entry.name);
+        if (!entry.isDirectory && name.endsWith(".hpmesh", Qt::CaseInsensitive)) {
+            continue;
+        }
         const AssetType type = static_cast<AssetType>(entry.type);
         const QString customType = (!entry.isDirectory && m_mainWindow && m_mainWindow->PluginHost())
             ? m_mainWindow->PluginHost()->CustomAssetDisplayName(QString::fromStdString(entry.relativePath))

@@ -598,6 +598,13 @@ private:
     };
     std::unordered_map<std::string, MaterialPathCheck> m_materialPathChecks;
     static constexpr std::chrono::milliseconds kMaterialRecheckInterval{500};
+    // Each model's default slot materials (MeshSettings, <model>.hpmesh), rechecked like material paths.
+    struct MeshDefaultsCheck {
+        std::vector<std::string> materials;
+        std::chrono::steady_clock::time_point checkedAt{};
+    };
+    std::unordered_map<std::string, MeshDefaultsCheck> m_meshDefaultMaterials;
+    const std::vector<std::string>& meshDefaultMaterials(const std::string& meshAssetPath);
 
     // Material system helpers
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
