@@ -30,6 +30,34 @@ Roles.sniper = {
     rescanSeconds = 15,         -- with nothing to shoot for this long, finds a new spot facing where the enemy is
     coverFireInterval = 2.2,
     coverFireSpreadDegrees = 2.5,
+    suppressionScale = 2,       -- its shots suppress twice as hard
+}
+
+-- Pushes in close with a pump shotgun: closes to engageDistance at a run instead of holding at range, holds fire beyond
+-- fireDistance (the pellets would do little), takes cover less often and flanks more, and on its way in prefers route
+-- points on the ground nearest the enemy over high ground. damage is per pellet, falling off from falloffStart to
+-- falloffEnd down to falloffMinMultiplier, then times the difficulty's damageScale.
+Roles.shotgunner = {
+    name = "shotgunner",
+    damage = 11,
+    pellets = 8,
+    pelletSpreadDegrees = 3.5,
+    falloffStart = 8,
+    falloffEnd = 25,
+    falloffMinMultiplier = 0.15,
+    range = 40,
+    magazineSize = 6,
+    reloadSeconds = 4.0,
+    shotInterval = 1.0,         -- a shot, then the pump
+    fireDistance = 22,
+    engageDistance = 6,
+    rushToEngage = true,
+    coverChanceScale = 0.35,
+    flankChanceBonus = 0.35,
+    noiseRadius = 80,
+    suppressionScale = 1.5,
+    closeRoutes = true,
+    firePitch = 0.78,           -- the fire sound played lower, for a heavier blast
 }
 
 -- Fire at a bot pins it: worse aim and a dash for cover.
@@ -46,6 +74,9 @@ function Roles.get(name)
     return type(role) == "table" and role.name and role or Roles.rifleman
 end
 
+-- Of the bots that are not snipers, the share that carry shotguns (rounded), in teams of sniperMinTeam or more.
+Roles.shotgunShare = 0.25
+
 -- How many of a team's `count` bots are snipers: one in sniperEvery, and none in teams under sniperMinTeam.
 Roles.sniperEvery = 4
 Roles.sniperMinTeam = 3
@@ -54,6 +85,14 @@ function Roles.sniperCount(count)
         return 0
     end
     return math.max(1, math.floor(count / Roles.sniperEvery))
+end
+
+-- How many of a team's `count` bots are shotgunners.
+function Roles.shotgunCount(count)
+    if count < Roles.sniperMinTeam then
+        return 0
+    end
+    return math.floor((count - Roles.sniperCount(count)) * Roles.shotgunShare + 0.5)
 end
 
 return Roles

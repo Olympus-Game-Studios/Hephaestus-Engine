@@ -9,6 +9,7 @@ local GrenadeWarning = require("FPS.GrenadeWarning")
 local DamageDirection = require("FPS.DamageDirection")
 local Tracers = require("FPS.Tracers")
 local Settings = require("FPS.Settings")
+local Loadout = require("FPS.Loadout")
 local PauseMenu = require("FPS.PauseMenu")
 -- Only Editor Play and Development builds load the developer menu.
 local DevMenu = Application and Application.isDevelopment and Application.isDevelopment() and require("FPS.DevMenu") or nil
@@ -176,6 +177,7 @@ local viewHeight = 1.62 -- eyeHeight lowered towards slideCameraHeight while sli
 local lastDt = 1 / 60
 local commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
 local discoverTries = 0
+local loadoutApplied = false
 local lookPitchDelta = 0
 local lookYawRate = 0
 local lookPitchRate = 0
@@ -282,8 +284,32 @@ local function applyLook(dt)
     pitch = Logic.clampPitch(pitch, degToRad(pitchMinDegrees), degToRad(pitchMaxDegrees))
 end
 
+-- In a mode with loadouts (Registry.loadoutActive) only the chosen primary and secondary are carried, in that order.
+-- A player carrying neither keeps every weapon.
+local function applyLoadout()
+    if not Registry.loadoutActive then
+        return
+    end
+    local chosen = Loadout.current()
+    local order = {}
+    for _, id in ipairs({ chosen.primary, chosen.secondary }) do
+        for key, row in pairs(Registry.weapons) do
+            if id and row.entity and row.entity:IsValid() and row.entity:GetName() == id then
+                order[#order + 1] = key
+            end
+        end
+    end
+    if #order > 0 then
+        Registry.weaponOrder = order
+    end
+end
+
 local function discoverWeapons()
     if #Registry.weaponOrder > 0 then
+        if not loadoutApplied then
+            loadoutApplied = true
+            applyLoadout()
+        end
         return true
     end
     discoverTries = discoverTries + 1
@@ -1119,8 +1145,15 @@ function respawn(x, y, z, facingYaw)
     grenades.smoke = math.max(0, math.floor(smokeGrenades))
     for _, row in pairs(Registry.weapons) do
         row.reserve = row.maxReserve or row.reserve
-        row.reloadRemaining = 0
+        Logic.interruptReload(row)
         Logic.fillWeapon(row)
+    end
+    -- A loadout changed in the pause menu is taken now, with the primary in hand.
+    applyLoadout()
+    swap = nil
+    local active = activeWeaponRow()
+    if active and Registry.weaponOrder[1] ~= active.key then
+        equipNow(1)
     end
     lastKnownHealth = Health.getHealth(this)
     Hud.setDeathFade(false)

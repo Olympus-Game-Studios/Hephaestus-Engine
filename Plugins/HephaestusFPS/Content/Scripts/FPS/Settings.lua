@@ -1,5 +1,5 @@
 -- Player settings: look sensitivity, field of view, comfort options, UI size, sound volumes, the last match and
--- Survival set up from the menu (with their difficulties) and the controls (FPS.Controls). Kept in a commented INI file (Config "Settings": Settings.ini in a packaged game,
+-- Survival set up from the menu (with their difficulties), the loadout (FPS.Loadout) and the controls (FPS.Controls). Kept in a commented INI file (Config "Settings": Settings.ini in a packaged game,
 -- EditorSettings.ini in Editor Play) that players can edit by hand; a missing or unreadable value keeps its default
 -- and is logged. The player script reads Settings.values every frame, and Settings.apply pushes the rest (bus
 -- volumes, UI size, texture quality) to the engine. Difficulty is chosen per mode when it starts, not here.
@@ -33,6 +33,9 @@ Settings.defaults = {
     matchRespawnSeconds = 5,
     matchFriendlyFire = false,
     survivalDifficulty = "regular",
+    -- The player's loadout (FPS.Loadout): weapon ids from the game's loadout list.
+    loadoutPrimary = "Rifle",
+    loadoutSecondary = "DesertEagle",
 }
 
 Settings.values = {}
@@ -88,6 +91,10 @@ Settings.file = {
     { name = "Survival", keys = {
         { key = "Difficulty", field = "survivalDifficulty", levels = true,
           comment = "Last Survival difficulty: recruit, regular, hardened or veteran" },
+    } },
+    { name = "Loadout", keys = {
+        { key = "Primary", field = "loadoutPrimary", comment = "Weapons taken into a match, by id (such as Rifle, Sniper, Shotgun)" },
+        { key = "Secondary", field = "loadoutSecondary" },
     } },
 }
 

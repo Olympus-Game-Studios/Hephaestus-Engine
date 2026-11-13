@@ -78,6 +78,7 @@ end
 
 function onAwake()
     Registry.ensureSession() -- opening it later would clear waveDirector
+    Registry.loadoutActive = true
     Registry.waveDirector = this
     plan = Waves.parse(waves)
     points = Waves.parsePoints(spawnPoints)

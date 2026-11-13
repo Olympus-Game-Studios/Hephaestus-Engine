@@ -97,6 +97,10 @@ Expose.string("boltSound", "")
 Expose.number("boltTime", 1.45)
 Expose.string("cycleSound", "") -- played cycleSoundDelay seconds after each shot (a bolt action's bolt)
 Expose.number("cycleSoundDelay", 0.35)
+Expose.number("pellets", 1) -- projectiles per shot (a shotgun's pellets), each doing `damage`
+Expose.number("pelletSpread", 0) -- degrees: each pellet's cone around the shot
+Expose.number("adsPelletSpreadScale", 1) -- the pellet cone when aimed, as a fraction of the hip cone
+Expose.string("shellSound", "") -- each round of a shell-by-shell reload (the weapon's shellReload table)
 Expose.string("emptySound", "")
 Expose.string("definition", "")
 Expose.string("viewModelPrefab", "")
@@ -130,7 +134,8 @@ local TUNING = {
     "muzzleSmokePrefab", "tracerPrefab", "casingPrefab", "maxCasings", "casingEjectSpeed", "noiseRadius",
     "sprintToFireSeconds", "tacticalSprintToFireSeconds", "proneSpreadScale", "proneRecoilScale", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
-    "reloadPart2Sound", "boltSound", "cycleSound", "cycleSoundDelay",
+    "reloadPart2Sound", "boltSound", "cycleSound", "cycleSoundDelay", "pellets", "pelletSpread",
+    "adsPelletSpreadScale", "shellSound", "shellReload", "cycleMotion",
 }
 
 -- A scope (the definition's `scope` table) replaces the sights once aimed: the view model is hidden and the tone
@@ -556,12 +561,16 @@ local function startReload(row)
     return Logic.tryStartReload(row)
 end
 
-local RELOAD_EVENT_SOUND = { detach = "reloadSound", insert = "reloadPart2Sound", chamber = "boltSound" }
+local RELOAD_EVENT_SOUND = { detach = "reloadSound", insert = "reloadPart2Sound", chamber = "boltSound",
+                             shell = "shellSound" }
 
 local function advanceReload(row, dt)
     local _, events = Logic.advanceReload(row, dt)
     for _, name in ipairs(events) do
         playOptional(row[RELOAD_EVENT_SOUND[name]], 0.9)
+        if name == "chamber" and row.cycleMotion then
+            row.cycleStart = row.now
+        end
     end
 end
 
@@ -594,7 +603,8 @@ local function applyHit(row, hit, owner)
     local died = Health.applyDamage(target, amount, owner)
     target:Call("onHit", amount, zone, hit.distance or 0, owner)
     target:Call("onHealthChanged", Health.getHealth(target), Health.getMaxHealth(target))
-    if Registry.player then
+    -- One shotgun blast can kill one target and wound another; the kill marker wins.
+    if Registry.player and (died or Registry.player.hitEvent ~= "kill") then
         Registry.player.hitEvent = died and "kill" or (zone == "head" and "head" or "hit")
     end
 end
@@ -617,7 +627,7 @@ local function fireShot(row, input, owner)
         airborne = input.airborne,
         bloom = row.bloom,
     })) * (input.prone and (row.proneSpreadScale or 1) or 1)
-    local dx, dy, dz = Gunplay.spreadDirection(input.dx, input.dy, input.dz, spread,
+    local cx, cy, cz = Gunplay.spreadDirection(input.dx, input.dy, input.dz, spread,
                                                Gunplay.rngNext(row.rng), Gunplay.rngNext(row.rng))
     row.bloom = Gunplay.addBloom(row.bloom, row)
 
@@ -664,7 +674,7 @@ local function fireShot(row, input, owner)
     end
 
     playShot(row)
-    if row.cycleSound and row.cycleSound ~= "" then
+    if (row.cycleSound and row.cycleSound ~= "") or row.cycleMotion then
         row.cycleAt = row.now + (row.cycleSoundDelay or 0.35)
     end
     if owner and Registry.player and Registry.key(owner) == Registry.player.key then
@@ -672,19 +682,32 @@ local function fireShot(row, input, owner)
     end
     showFlash(row)
     spawnMuzzleSmoke(row, input)
-    spawnTracer(row, input, dx, dy, dz, owner)
-    spawnCasing(row, input)
-    if row.hitscan and (row.muzzleVelocity or 0) > 0 then
-        -- A bullet: its first stretch is checked this frame, so close shots still land at once.
-        local bullet = Ballistics.new(input.ox, input.oy, input.oz, dx, dy, dz, row.muzzleVelocity)
-        bullet.owner = owner
-        local first = { bullet }
-        stepBullets(row, first, row.frameDt)
-        if first[1] then
-            row.bullets[#row.bullets + 1] = bullet
+    if not row.cycleMotion then
+        spawnCasing(row, input)
+    end
+    -- Each pellet scatters inside its own cone around the shot; a shotgun shows tracers for a few of them.
+    local pellets = math.max(1, math.floor(row.pellets or 1))
+    local cone = rad(row.pelletSpread) * Gunplay.lerp(1, row.adsPelletSpreadScale or 1, row.adsBlend)
+    for pellet = 1, pellets do
+        local dx, dy, dz = cx, cy, cz
+        if pellets > 1 then
+            dx, dy, dz = Gunplay.spreadDirection(cx, cy, cz, cone, Gunplay.rngNext(row.rng), Gunplay.rngNext(row.rng))
         end
-    elseif row.hitscan then
-        applyHit(row, Hitscan.trace(input.ox, input.oy, input.oz, dx, dy, dz, row.range, owner), owner)
+        if pellet <= 3 then
+            spawnTracer(row, input, dx, dy, dz, owner)
+        end
+        if row.hitscan and (row.muzzleVelocity or 0) > 0 then
+            -- A bullet: its first stretch is checked this frame, so close shots still land at once.
+            local bullet = Ballistics.new(input.ox, input.oy, input.oz, dx, dy, dz, row.muzzleVelocity)
+            bullet.owner = owner
+            local first = { bullet }
+            stepBullets(row, first, row.frameDt)
+            if first[1] then
+                row.bullets[#row.bullets + 1] = bullet
+            end
+        elseif row.hitscan then
+            applyHit(row, Hitscan.trace(input.ox, input.oy, input.oz, dx, dy, dz, row.range, owner), owner)
+        end
     end
     this:Call("onFire")
 end
@@ -766,6 +789,20 @@ local function updatePose(row, input, dt)
     if (row.reloadTotal or 0) > 0 and (row.reloadRemaining or 0) > 0 then
         reloadDip = math.sin(math.pi * Gunplay.clamp(row.reloadElapsed / row.reloadTotal, 0, 1))
     end
+    -- The cycle motion (cycleMotion: seconds, back, down in metres, roll and pitch in degrees): a pump stroke.
+    local cycle, cycleMotion = 0, row.cycleMotion
+    if cycleMotion and row.cycleStart then
+        local t = (row.now - row.cycleStart) / math.max(cycleMotion.seconds or 0.4, 0.01)
+        if t >= 1 then
+            row.cycleStart = nil
+        elseif t >= 0 then
+            cycle = math.sin(math.pi * t) * motion
+        end
+    end
+    local cycleBack = cycle * (cycleMotion and cycleMotion.back or 0)
+    local cycleDown = cycle * (cycleMotion and cycleMotion.down or 0)
+    local cycleRoll = cycle * rad(cycleMotion and cycleMotion.roll or 0)
+    local cyclePitch = cycle * rad(cycleMotion and cycleMotion.pitch or 0)
     local sprint = Gunplay.smoothstep(row.sprintBlend)
     -- Tactical sprint carries the weapon barrel-up across the chest.
     local tactical = Gunplay.smoothstep(row.tacticalBlend or 0)
@@ -782,15 +819,15 @@ local function updatePose(row, input, dt)
     local adsY = -math.cos(adsPitch) * sightUp
     local adsZ = -(-math.sin(adsYaw) * sightX + math.cos(adsYaw) * sightRight)
     local x = Gunplay.lerp(hipX, adsX, ads) + back + moveX - 0.04 * sprint + SHOULDER_REACH * (math.cos(tiltPitch) - 1)
-        + 0.02 * tactical
+        + 0.02 * tactical - cycleBack
     local y = Gunplay.lerp(hipY, adsY, ads) + up + moveY + idleY - bobUp - 0.06 * sprint + reach * math.cos(tiltRoll)
-        + 0.06 * tactical
+        + 0.06 * tactical - cycleDown
     local z = Gunplay.lerp(hipZ, adsZ, ads) + moveZ + bobRight - 0.05 * sprint + reach * math.sin(tiltRoll)
-    local rotRoll = Gunplay.lerp(row.restRot.x, 0, ads) + roll + strafeRoll + rad(25) * sprint + tiltRoll
+    local rotRoll = Gunplay.lerp(row.restRot.x, 0, ads) + roll + strafeRoll + rad(25) * sprint + tiltRoll + cycleRoll
     local rotYaw = Gunplay.lerp(row.restRot.y, adsYaw, ads) + side + swayYaw + idleYaw + rad(30) * sprint
         - rad(20) * tactical
     local rotPitch = Gunplay.lerp(row.restRot.z, adsPitch, ads) + rise + swayPitch + idlePitch - rad(12) * sprint
-        + tiltPitch + rad(40) * tactical
+        + tiltPitch + rad(40) * tactical + cyclePitch
     Transform.setPosition(x, y, z)
     Transform.setRotation(rotRoll, rotYaw, rotPitch)
 end
@@ -832,11 +869,18 @@ function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
     if row.cycleAt and row.now >= row.cycleAt then
         row.cycleAt = nil
         playOptional(row.cycleSound, 0.9)
+        if row.cycleMotion then
+            row.cycleStart = row.now
+            spawnCasing(row, input)
+        end
     end
     row.bloom = Gunplay.decayBloom(row.bloom, row, dt)
 
     if reload == true or reload == 1 then
         startReload(row)
+    end
+    if isPressed then
+        Logic.cutShellReload(row)
     end
     -- A press shortly before the sprint-to-fire or raise block ends fires as soon as it ends.
     if isPressed and row.fireBlockedRemaining > 0 then
@@ -889,6 +933,7 @@ function unequip()
         row.recoilPitchAccum = 0
         row.recoilYawAccum = 0
         row.cycleAt = nil
+        row.cycleStart = nil
         leaveScope(row)
         if Registry.activeWeaponId == row.key then
             Registry.activeWeaponId = nil

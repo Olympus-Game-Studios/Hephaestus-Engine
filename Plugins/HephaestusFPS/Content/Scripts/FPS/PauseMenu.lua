@@ -1,8 +1,11 @@
--- The in-game menu: the Pause action (Escape, F1, gamepad Start) opens Resume, Settings, Restart (when allowed), Quit to
--- menu (when a menu scene is set) and Quit game. The game keeps running (ready for multiplayer) unless freezeTime
--- is set; the player script ignores its own input while the menu is open. It calls PauseMenu.update every frame.
+-- The in-game menu: the Pause action (Escape, F1, gamepad Start) opens Resume, Loadout (in modes that use one, see
+-- FPS.Loadout), Settings, Restart (when allowed), Quit to menu (when a menu scene is set) and Quit game. The game
+-- keeps running (ready for multiplayer) unless freezeTime is set; the player script ignores its own input while the
+-- menu is open. It calls PauseMenu.update every frame.
 local Menu = require("FPS.Menu")
 local Settings = require("FPS.Settings")
+local Loadout = require("FPS.Loadout")
+local Registry = require("FPS.Registry")
 
 -- suppressFire: after the menu closes, Fire is ignored until it is released (so clicking Resume does not shoot).
 local PauseMenu = { menu = nil, open = false, froze = false, suppressFire = false }
@@ -34,6 +37,11 @@ local function mainPage(options)
         { label = "RESUME", action = close },
         { label = "SETTINGS", action = function() Menu.push(PauseMenu.menu, Settings.page()) end },
     }
+    if Registry.loadoutActive and #Loadout.list() > 0 then
+        table.insert(items, 2, { label = "LOADOUT", action = function()
+            Menu.push(PauseMenu.menu, Loadout.page({ hint = "A / D  CHANGE        TAKEN WHEN YOU NEXT RESPAWN" }))
+        end })
+    end
     if options.allowRestart ~= false then
         items[#items + 1] = { label = "RESTART", action = function() close(); Scene.reload() end }
     end

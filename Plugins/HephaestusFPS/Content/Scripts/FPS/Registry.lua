@@ -26,6 +26,7 @@ local Registry = {
     gameOver = nil,
     currentTarget = nil,
     activeWeaponId = nil,
+    loadoutActive = false, -- the player carries only its loadout (FPS.Loadout)
 }
 
 local function entityKey(entity)
@@ -76,6 +77,7 @@ function Registry.ensureSession()
     Registry.waveDirector = nil
     Registry.currentTarget = nil
     Registry.activeWeaponId = nil
+    Registry.loadoutActive = false
     Registry.sessionOpen = true
 end
 

@@ -138,6 +138,8 @@ end
 
 -- "tactical" swaps a magazine with a round chambered, "empty" also chambers one, "chamber" only racks
 -- the action when a magazine is in but the chamber is empty (an empty reload interrupted after insert).
+-- A weapon with a shellReload table (a pump shotgun) loads one round at a time instead: "shell", until it holds
+-- magazineSize rounds counting the chambered one or the reserve runs out, then pumps one in if the chamber was empty.
 function Logic.reloadKind(state)
     local chamber = state.chamber or 0
     local magazine = state.magazine or 0
@@ -147,14 +149,45 @@ function Logic.reloadKind(state)
     if chamber <= 0 and magazine > 0 then
         return "chamber"
     end
+    if state.shellReload then
+        if (state.reserve or 0) <= 0 or chamber + magazine >= (state.magazineSize or 0) then
+            return nil
+        end
+        return "shell"
+    end
     if (state.reserve or 0) <= 0 or magazine >= (state.magazineSize or 0) then
         return nil
     end
     return chamber > 0 and "tactical" or "empty"
 end
 
+-- shellReload: start (until the first shell goes in), perShell, pump (racking a round into an empty chamber) and
+-- finish (back to ready), in seconds.
+local function shellPlan(state, kind)
+    local s = state.shellReload
+    local pump = s.pump or 0.5
+    if kind == "chamber" then
+        return pump, { { name = "chamber", time = pump * 0.5 } }
+    end
+    local start, per = s.start or 0.4, s.perShell or 0.5
+    local shells = math.min((state.magazineSize or 0) - Logic.loadedRounds(state), state.reserve or 0)
+    local events = {}
+    for i = 1, shells do
+        events[i] = { name = "shell", time = start + i * per }
+    end
+    local seconds = start + shells * per
+    if (state.chamber or 0) <= 0 then
+        events[#events + 1] = { name = "chamber", time = seconds + pump * 0.5 }
+        seconds = seconds + pump
+    end
+    return seconds + (s.finish or 0.3), events
+end
+
 -- Event times in seconds from the start of the action. Weapons without authored times get fixed fractions.
 local function reloadPlan(state, kind)
+    if state.shellReload then
+        return shellPlan(state, kind)
+    end
     if kind == "tactical" then
         local t = state.tacticalReload or {}
         local seconds = t.seconds or state.reloadSeconds or 0
@@ -183,7 +216,7 @@ function Logic.tryStartReload(state)
     state.reloadRemaining = seconds
     state.reloadTotal = seconds
     state.reloadElapsed = 0
-    state.reloadFromEmpty = kind ~= "tactical"
+    state.reloadFromEmpty = kind ~= "tactical" and (kind ~= "shell" or (state.chamber or 0) <= 0)
     return true
 end
 
@@ -194,6 +227,9 @@ local function applyReloadEvent(state, name)
         local taken = math.min(state.magazineSize or 0, state.reserve)
         state.magazine = taken
         state.reserve = state.reserve - taken
+    elseif name == "shell" and (state.reserve or 0) > 0 then
+        state.magazine = (state.magazine or 0) + 1
+        state.reserve = state.reserve - 1
     elseif name == "chamber" and (state.chamber or 0) <= 0 and (state.magazine or 0) > 0 then
         state.magazine = state.magazine - 1
         state.chamber = 1
@@ -236,6 +272,19 @@ function Logic.interruptReload(state)
     end
     state.reload = nil
     state.reloadRemaining = 0
+    return true
+end
+
+-- Fire pressed during a shell-by-shell reload: stops it (shells already in stay in) so the weapon can fire. With
+-- an empty chamber it starts the pump instead. Returns whether a reload was cut.
+function Logic.cutShellReload(state)
+    if not (state.reload and state.reload.kind == "shell") then
+        return false
+    end
+    Logic.interruptReload(state)
+    if (state.chamber or 0) <= 0 and (state.magazine or 0) > 0 then
+        Logic.tryStartReload(state)
+    end
     return true
 end
 

@@ -12,6 +12,8 @@
 -- nothing); a choice with an `action` runs it on Enter (and still changes with left and right).
 -- A page with `custom` draws itself instead of a list: custom.show(menu) and custom.hide(menu) when it appears and
 -- goes, and custom.update(menu) each frame, returning "back" to leave it. Item actions receive the menu.
+-- A list page with `side` also draws something beside the list: side.show(menu) and side.hide(menu) when the page
+-- appears and goes, and side.refresh(menu, item) whenever the selection or a value changes (item is nil on BACK).
 -- Every page opened on top of another shows a BACK button in the bottom left corner, after its last item; a custom
 -- page selects it with Menu.selectBack. Menus fit the height the player's UI size leaves (Menu.screenHeight): a list
 -- longer than the room above BACK scrolls, following the selection and the mouse wheel, with a thin bar showing where
@@ -363,6 +365,10 @@ function Menu.refresh(menu)
         menu.custom.hide(menu)
         menu.custom = nil
     end
+    if menu.side and menu.side ~= page.side then
+        menu.side.hide(menu)
+        menu.side = nil
+    end
     local theme = Menu.theme
     local items = itemsOf(page)
     menu.backY = menu.screenHeight - 46 - 26 - (menu.rowHeight - 8)
@@ -452,6 +458,13 @@ function Menu.refresh(menu)
     if page.custom and menu.custom ~= page.custom then
         menu.custom = page.custom
         page.custom.show(menu)
+    end
+    if page.side then
+        if menu.side ~= page.side then
+            menu.side = page.side
+            page.side.show(menu)
+        end
+        page.side.refresh(menu, items[menu.selected])
     end
     local back = menu.backRow
     local showBack = hasBack(menu)

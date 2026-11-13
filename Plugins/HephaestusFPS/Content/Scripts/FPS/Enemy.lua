@@ -89,11 +89,15 @@ Expose.number("ragdollImpulse", 45)
 Expose.number("ragdollBlastImpulse", 220)
 Expose.bool("debugAI", false)
 -- Role (FPS.AI.Roles): "rifleman" uses the weapon settings above, "sniper" swaps the held rifle for sniperWeaponPrefab
--- (a FPS/HeldWeapon.lua prefab) and fights from overwatch with the role's weapon numbers.
+-- (a FPS/HeldWeapon.lua prefab) and fights from overwatch with the role's weapon numbers, and "shotgunner" swaps it for
+-- shotgunWeaponPrefab and pushes in close.
 Expose.string("role", "rifleman")
 Expose.string("sniperWeaponPrefab", "")
 Expose.string("sniperFireSound", "")
 Expose.string("sniperCycleSound", "") -- the bolt, a moment after each sniper shot
+Expose.string("shotgunWeaponPrefab", "")
+Expose.string("shotgunFireSound", "")
+Expose.string("shotgunCycleSound", "") -- the pump, a moment after each shotgun shot
 
 local Enemy = {}
 
@@ -137,8 +141,9 @@ local children = {}
 local selfRow = nil
 local target = nil -- the combatant row this soldier is fighting
 local roleDef = Roles.rifleman
-local weapon = {} -- damage, range, magazineSize, reloadSeconds, fireSound for the role
+local weapon = {} -- damage, range, magazineSize, reloadSeconds, pellets, falloff and sounds for the role
 local sniper = false
+local shotgun = false
 local suppression = 0
 local cycleAt = nil
 local killer = nil
@@ -280,56 +285,85 @@ local function fireShot(row, aimPoint, extraSpread)
     end
     dx, dy, dz = Gunplay.spreadDirection(dx / length, dy / length, dz / length,
                                          math.rad(aimError(row) + (extraSpread or 0)), random(), random())
-    local hit = Physics.raycast(muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, weapon.range, "Character", true, ignore)
-    -- What the player sees: a flash at the rifle's real muzzle and a tracer from there to where the shot ends.
+    -- What the player sees: a flash at the weapon's real muzzle and tracers from there to where the shot ends.
     local barrel = Registry.muzzles[selfKey] or muzzle
     Impacts.spawnEffect(muzzleFlashPrefab, barrel.x, barrel.y, barrel.z, dx, dy, dz)
-    local reach = hit and (hit.distance or weapon.range) or weapon.range
-    local ex, ey, ez = muzzle.x + dx * reach, muzzle.y + dy * reach, muzzle.z + dz * reach
-    local tx, ty, tz = ex - barrel.x, ey - barrel.y, ez - barrel.z
-    local tracerLength = math.sqrt(tx * tx + ty * ty + tz * tz)
-    if tracerLength > 0.5 then
-        Tracers.spawn(tracerPrefab, barrel.x, barrel.y, barrel.z, tx / tracerLength, ty / tracerLength,
-                      tz / tracerLength, { speed = tracerSpeed, maxDistance = tracerLength })
-    end
-    local hitRow = hit and hit.entity and Registry.combatantOf(hit.entity)
-    -- A teammate hit by a stray shot is spared unless friendly fire is on.
-    local friendly = hitRow ~= nil and (hitRow.key == selfKey
-        or (not Registry.friendlyFire and Registry.sameTeam(hitRow, selfRow)))
     local playerRow = Registry.player
-    local hitPlayer = hitRow ~= nil and not friendly and hitRow == playerRow
-    local hitSurface = hit and hit.entity and not hitRow and not Health.get(hit.entity)
-        and not Registry.hitZones[Registry.key(hit.entity)]
-    if alive(playerRow) then
-        playerRow.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, reach,
-                              hitPlayer and true or false, hitSurface and true or false)
+    local incoming = nil -- the pellet the player hears and feels: the first to hit them, else the first
+    local playerDamage = 0
+    local wounds = {} -- damage per bot hit, with the first zone and distance
+    local cx, cy, cz = dx, dy, dz
+    for pellet = 1, weapon.pellets do
+        if weapon.pellets > 1 then
+            dx, dy, dz = Gunplay.spreadDirection(cx, cy, cz, math.rad(weapon.pelletSpread), random(), random())
+        end
+        local hit = Physics.raycast(muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, weapon.range, "Character", true, ignore)
+        local reach = hit and (hit.distance or weapon.range) or weapon.range
+        if pellet <= 2 then
+            local ex, ey, ez = muzzle.x + dx * reach, muzzle.y + dy * reach, muzzle.z + dz * reach
+            local tx, ty, tz = ex - barrel.x, ey - barrel.y, ez - barrel.z
+            local tracerLength = math.sqrt(tx * tx + ty * ty + tz * tz)
+            if tracerLength > 0.5 then
+                Tracers.spawn(tracerPrefab, barrel.x, barrel.y, barrel.z, tx / tracerLength, ty / tracerLength,
+                              tz / tracerLength, { speed = tracerSpeed, maxDistance = tracerLength })
+            end
+        end
+        local hitRow = hit and hit.entity and Registry.combatantOf(hit.entity)
+        -- A teammate hit by a stray shot is spared unless friendly fire is on.
+        local friendly = hitRow ~= nil and (hitRow.key == selfKey
+            or (not Registry.friendlyFire and Registry.sameTeam(hitRow, selfRow)))
+        local hitPlayer = hitRow ~= nil and not friendly and hitRow == playerRow
+        local hitSurface = hit and hit.entity and not hitRow and not Health.get(hit.entity)
+            and not Registry.hitZones[Registry.key(hit.entity)]
+        if pellet == 1 or (hitPlayer and not (incoming and incoming.hitPlayer)) then
+            incoming = { dx = dx, dy = dy, dz = dz, reach = reach, hitPlayer = hitPlayer, hitSurface = hitSurface }
+        end
+        local amount = weapon.damage * skill.damageScale
+            * Gunplay.falloffMultiplier(reach, weapon.falloffStart, weapon.falloffEnd, weapon.falloffMinMultiplier)
+        if hitPlayer then
+            playerDamage = playerDamage + amount
+        elseif hitRow and not friendly then
+            local wound = wounds[hitRow.key]
+            if not wound then
+                local zoneRow = Registry.hitZones[Registry.key(hit.entity)]
+                wound = { row = hitRow, amount = 0, zone = zoneRow and zoneRow.zone or "body", reach = reach }
+                wounds[hitRow.key] = wound
+            end
+            wound.amount = wound.amount + amount
+        elseif hitSurface then
+            Impacts.surfaceEffect(hit, false)
+        end
+        if debugAI and pellet == 1 then
+            engine_log(string.format("[FPS.Enemy] %s shot %s", this:GetName(),
+                                     hit and hit.entity and isTarget(hit.entity) and "hit player" or "missed"))
+        end
     end
-    local amount = weapon.damage * skill.damageScale
-    suppress(row, (aimPoint and 2 or 1) * (sniper and 2 or 1))
-    if hitPlayer then
+    if alive(playerRow) then
+        playerRow.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, incoming.dx, incoming.dy, incoming.dz,
+                              incoming.reach, incoming.hitPlayer and true or false, incoming.hitSurface and true or false)
+    end
+    suppress(row, (aimPoint and 2 or 1) * (roleDef.suppressionScale or 1))
+    if playerDamage > 0 then
         Registry.notePlayerHit(barrel.x, barrel.y, barrel.z, Registry.clock or 0)
-        Health.applyDamage(playerRow.entity, amount, this)
+        Health.applyDamage(playerRow.entity, playerDamage, this)
         playerRow.entity:Call("onHealthChanged", Health.getHealth(playerRow.entity),
                               Health.getMaxHealth(playerRow.entity))
-    elseif hitRow and not friendly then
-        local zoneRow = Registry.hitZones[Registry.key(hit.entity)]
-        if not Health.isDead(hitRow.entity) then
-            Health.applyDamage(hitRow.entity, amount, this)
-            hitRow.entity:Call("onHit", amount, zoneRow and zoneRow.zone or "body", reach, this)
-        end
-    elseif hitSurface then
-        Impacts.surfaceEffect(hit, false)
     end
-    if debugAI then
-        engine_log(string.format("[FPS.Enemy] %s shot %s", this:GetName(),
-                                 hit and hit.entity and isTarget(hit.entity) and "hit player" or "missed"))
+    for _, wound in pairs(wounds) do
+        if not Health.isDead(wound.row.entity) then
+            Health.applyDamage(wound.row.entity, wound.amount, this)
+            wound.row.entity:Call("onHit", wound.amount, wound.zone, wound.reach, this)
+        end
     end
     if weapon.fireSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
         Audio.play(weapon.fireSound, { volume = fireVolume, bus = "sfx", priority = 2, pitchJitter = 0.04,
+                                       pitch = roleDef.firePitch or 1,
                                        position = muzzle, minDistance = 3, maxDistance = sniper and 250 or 150 })
     end
-    if sniper then
+    if weapon.cycleSound ~= "" then
         cycleAt = 0.35
+    end
+    if sniper then
         fire.shotsHere = (fire.shotsHere or 0) + 1
     end
     Registry.reportNoise(muzzle.x, muzzle.y, muzzle.z, roleDef.noiseRadius or 40, "enemy", team)
@@ -362,7 +396,8 @@ local function updateFiring(dt, canShoot, row, aimPoint, extraSpread)
         return
     end
     if fire.burstLeft <= 0 then
-        fire.burstLeft = sniper and 1 or skill.burstMin + math.floor(random() * (skill.burstMax - skill.burstMin + 1))
+        fire.burstLeft = roleDef.shotInterval and 1
+            or skill.burstMin + math.floor(random() * (skill.burstMax - skill.burstMin + 1))
         fire.shotTimer = 0
     end
     fire.shotTimer = fire.shotTimer - dt
@@ -373,7 +408,7 @@ local function updateFiring(dt, canShoot, row, aimPoint, extraSpread)
         fire.shotTimer = fire.shotTimer + 1 / math.max(skill.roundsPerSecond, 0.1)
     end
     if fire.burstLeft <= 0 then
-        fire.pause = sniper and roleDef.shotInterval * (0.9 + 0.3 * random())
+        fire.pause = roleDef.shotInterval and roleDef.shotInterval * (0.9 + 0.3 * random())
             or skill.burstPauseSeconds * (0.7 + 0.6 * random())
     end
 end
@@ -542,7 +577,7 @@ local function tactics(dt, row)
     if grenadesLeft > 0 and grenadeCooldown <= 0 and random() < skill.grenadeChance and throwGrenade() then
         return nil
     end
-    if Registry.flanker == nil and random() < skill.flankChance then
+    if Registry.flanker == nil and random() < skill.flankChance + (roleDef.flankChanceBonus or 0) then
         local spot = findFlank(row)
         if spot then
             return "flank", spot
@@ -558,6 +593,27 @@ local function routeSpot()
     local routes = huntWhenIdle and Registry.routes
     if not routes or random() >= routes.chance then
         return nil
+    end
+    if roleDef.closeRoutes then
+        -- The ground-level route point nearest the closest enemy: the way in with the shortest sight lines.
+        local row = nearestHostile()
+        local feet = row and feetOf(row)
+        local lowest = math.huge
+        for _, point in ipairs(routes.points) do
+            lowest = math.min(lowest, point.y or 0)
+        end
+        local best, bestDistance = nil, math.huge
+        for _, point in ipairs(routes.points) do
+            if feet and (point.y or 0) <= lowest + 1 then
+                local d = (point.x - feet.x) ^ 2 + (point.z - feet.z) ^ 2
+                if d < bestDistance then
+                    best, bestDistance = point, d
+                end
+            end
+        end
+        if best then
+            return Nav.closestPoint(best)
+        end
     end
     return Nav.closestPoint(routes.points[1 + math.floor(random() * #routes.points)])
 end
@@ -722,7 +778,7 @@ states.combat = {
         end
         if not brain.coverTried and lastKnown then
             brain.coverTried = true
-            if brain.pinned or random() < skill.coverChance then
+            if brain.pinned or random() < skill.coverChance * (roleDef.coverChanceScale or 1) then
                 brain.pinned = false
                 local threatEye = { x = lastKnown.x, y = lastKnown.y + (row.eyeHeight or 1.6), z = lastKnown.z }
                 local spot = Cover.find(position(), threatEye, { radius = coverSearchRadius, samples = 14,
@@ -734,14 +790,16 @@ states.combat = {
             end
         end
         faceTarget = lastKnown
+        local inRange = true
         if visible then
             local p = position()
             local distance = math.sqrt((lastKnown.x - p.x) ^ 2 + (lastKnown.z - p.z) ^ 2)
-            if distance > engageDistance then
-                moveTo(lastKnown, false)
+            if distance > (roleDef.engageDistance or engageDistance) then
+                moveTo(lastKnown, roleDef.rushToEngage == true)
             else
                 stopMoving()
             end
+            inRange = not roleDef.fireDistance or distance <= roleDef.fireDistance
         else
             local next, spot = tactics(dt, row)
             if next then
@@ -773,7 +831,8 @@ states.combat = {
                 suppress = smokeFire and spot or nil
             end
         end
-        updateFiring(dt, visible or suppress ~= nil, row, suppress, suppress and skill.smokeFireSpreadDegrees or 0)
+        updateFiring(dt, (visible and inRange) or suppress ~= nil, row, suppress,
+                     suppress and skill.smokeFireSpreadDegrees or 0)
         return nil
     end,
 }
@@ -1265,10 +1324,17 @@ function onAwake()
     skill = Difficulty.resolve(difficulty, parseOverrides(skillOverrides))
     roleDef = Roles.get(role)
     sniper = roleDef == Roles.sniper
+    shotgun = roleDef == Roles.shotgunner
+    local roleFireSound = (sniper and sniperFireSound) or (shotgun and shotgunFireSound) or ""
     weapon = { damage = roleDef.damage or damage, range = roleDef.range or range,
                magazineSize = roleDef.magazineSize or magazineSize,
                reloadSeconds = roleDef.reloadSeconds or reloadSeconds,
-               fireSound = sniper and sniperFireSound ~= "" and sniperFireSound or fireSound }
+               pellets = roleDef.pellets or 1, pelletSpread = roleDef.pelletSpreadDegrees or 0,
+               falloffStart = roleDef.falloffStart or 1e9, falloffEnd = roleDef.falloffEnd or 1e9,
+               falloffMinMultiplier = roleDef.falloffMinMultiplier or 1,
+               fireSound = roleFireSound ~= "" and roleFireSound or fireSound,
+               cycleSound = (sniper and sniperCycleSound) or (shotgun and shotgunCycleSound) or "",
+               prefab = (sniper and sniperWeaponPrefab) or (shotgun and shotgunWeaponPrefab) or "" }
     if roleDef.sightRangeScale then
         local seen = {}
         for k, v in pairs(skill) do
@@ -1376,14 +1442,14 @@ function onUpdate(dt)
         if not Nav.isReady() then
             return
         end
-        if sniper and sniperWeaponPrefab ~= "" then
+        if weapon.prefab ~= "" then
             for _, entity in ipairs(Scene.findAllWithPrefix(this:GetName() .. "_Rifle")) do
                 local parent = entity:GetParent()
                 if parent and Registry.key(parent) == selfKey then
                     entity:Call("stowWeapon")
                 end
             end
-            Scene.instantiate(sniperWeaponPrefab, { parent = this, position = { x = 0, y = 1.2, z = 0.3 } })
+            Scene.instantiate(weapon.prefab, { parent = this, position = { x = 0, y = 1.2, z = 0.3 } })
         end
         refreshIgnore()
         children = {}
@@ -1421,9 +1487,9 @@ function onUpdate(dt)
         cycleAt = cycleAt - dt
         if cycleAt <= 0 then
             cycleAt = nil
-            if sniperCycleSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
+            if weapon.cycleSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
                 local p = position()
-                Audio.play(sniperCycleSound, { volume = 0.7, bus = "sfx", priority = 1,
+                Audio.play(weapon.cycleSound, { volume = 0.7, bus = "sfx", priority = 1,
                                                position = { x = p.x, y = p.y + eyeHeight, z = p.z },
                                                minDistance = 2, maxDistance = 30 })
             end

@@ -616,6 +616,40 @@ check(Logic.reloadKind(w) == nil, "no reload without reserve ammo")
 w = weapon(30, 1, 10)
 check(Logic.reloadKind(w) == nil, "no reload with a full magazine and a chambered round")
 
+local function pump(magazine, chamber, reserve)
+    return { magazine = magazine, chamber = chamber, magazineSize = 8, reserve = reserve,
+             shellReload = { start = 0.4, perShell = 0.5, pump = 0.6, finish = 0.3 } }
+end
+local s = pump(4, 1, 20)
+check(Logic.tryStartReload(s) and s.reload.kind == "shell" and not s.reloadFromEmpty
+      and near(s.reloadTotal, 0.4 + 3 * 0.5 + 0.3), "a pump with a round chambered loads the 3 shells it has room for")
+local _, shells = Logic.advanceReload(s, 0.95)
+check(#shells == 1 and shells[1] == "shell" and s.magazine == 5 and s.reserve == 19, "shells go in one at a time")
+check(Logic.cutShellReload(s) and s.reload == nil and s.magazine == 5 and s.chamber == 1 and s.reserve == 19,
+      "fire cuts a shell reload and keeps the shells already loaded")
+check(Logic.tickFire({ fireMode = "semi", roundsPerSecond = 1, magazine = 5, chamber = 1, now = 0, nextFire = 0,
+                       reloadRemaining = s.reloadRemaining }, 0.016, false, true) == 1,
+      "the cut reload no longer blocks the shot")
+s = pump(0, 0, 20)
+check(Logic.tryStartReload(s) and s.reloadFromEmpty, "an empty pump does a shell reload from empty")
+local finished
+finished, shells = Logic.advanceReload(s, 10)
+check(finished and #shells == 9 and shells[9] == "chamber" and s.chamber == 1 and s.magazine == 7 and s.reserve == 12,
+      "an empty pump loads 8 shells and pumps one into the chamber")
+s = pump(0, 0, 3)
+Logic.tryStartReload(s)
+Logic.advanceReload(s, 10)
+check(s.chamber == 1 and s.magazine == 2 and s.reserve == 0, "a short reserve loads what there is")
+s = pump(0, 0, 20)
+Logic.tryStartReload(s)
+Logic.advanceReload(s, 0.95)
+check(Logic.cutShellReload(s) and s.reload and s.reload.kind == "chamber" and s.magazine == 1,
+      "cutting an empty pump's reload pumps the loaded shell in before it can fire")
+Logic.advanceReload(s, 1)
+check(s.chamber == 1 and s.magazine == 0, "the pump chambers it")
+check(not Logic.cutShellReload(weapon(5, 1, 60)), "magazine reloads are not cut by fire")
+check(Logic.reloadKind(pump(7, 1, 20)) == nil, "no shell reload with 7+1 loaded")
+
 local Impacts = require("FPS.Impacts")
 -- Turn +Y by Euler degrees the way TransformComponent::GetLocalMatrix composes them (Rx * Ry * Rz).
 local function upAfter(r)

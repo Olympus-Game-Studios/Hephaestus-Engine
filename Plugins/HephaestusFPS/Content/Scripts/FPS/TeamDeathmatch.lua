@@ -159,13 +159,14 @@ local function startMatch()
         if playerTeam then
             count, difficulty = setup.friendlyBots or teamSize - 1, setup.friendlyDifficulty
         end
-        -- The last few bots of each team are snipers (FPS.AI.Roles), the rest riflemen.
-        local snipers = Roles.sniperCount(count)
+        -- The last few bots of each team are snipers (FPS.AI.Roles), a few before them shotgunners, the rest
+        -- riflemen.
+        local snipers, shotguns = Roles.sniperCount(count), Roles.shotgunCount(count)
         for i = 1, count do
             local id = string.format("%d-%d", team, i)
             local name = names[team][i] or string.format("%s %d", team == 1 and "Blue" or "Red", i)
             soldiers[id] = { id = id, team = team, name = name, prefab = prefabs[team], difficulty = difficulty,
-                             role = i > count - snipers and "sniper" or nil }
+                             role = i > count - snipers and "sniper" or (i > count - snipers - shotguns and "shotgunner" or nil) }
             Match.join(state, id, name, team)
             spawnSoldier(soldiers[id])
         end
@@ -235,6 +236,7 @@ end
 
 function onAwake()
     Registry.ensureSession()
+    Registry.loadoutActive = true
     Registry.matchDirector = this
     state, soldiers, byKey, phase, endMenu, shownCountdown = nil, {}, {}, "waiting", nil, nil
     -- Taken once (Play again hands it on), so opening the level by itself uses the level's own values.
