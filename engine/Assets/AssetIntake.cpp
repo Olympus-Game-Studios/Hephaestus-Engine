@@ -781,6 +781,12 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         }
     }
 
+    if (!outResult.materials.empty() && writer.Written().empty()) {
+        outResult.warnings.push_back("The pack has no textures (none in its files or embedded in its models), so its "
+                                     "materials are plain colours. Fab listings may keep textures in additional files "
+                                     "or another format.");
+    }
+
     if (outResult.prefabs.empty() && outResult.materials.empty()) {
         fs::remove_all(folder, ec);
         outError = outResult.warnings.empty() ? "Nothing in the pack could be imported."

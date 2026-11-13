@@ -336,6 +336,25 @@ bool TestImportZippedTextureSet(const fs::path& scratch) {
     return ok;
 }
 
+bool TestUntexturedPackWarns(const fs::path& scratch) {
+    const fs::path project = scratch / "UntexturedProject";
+    fs::create_directories(project / "assets");
+    const fs::path pack = scratch / "Untextured";
+    fs::create_directories(pack);
+    std::ofstream(pack / "Crate.obj") << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    AssetIntakeRequest request;
+    request.source = pack;
+    request.projectRoot = project;
+    request.targetFolder = "assets/Imported/Fab/Crate";
+    AssetIntakeResult result;
+    std::string error;
+    bool ok = Check(AssetIntake::Import(request, result, error) && result.prefabs.size() == 1,
+                    "a pack without textures still imports: " + error);
+    ok &= Check(!result.warnings.empty() && result.warnings.back().find("no textures") != std::string::npos,
+                "a pack without textures says so");
+    return ok;
+}
+
 bool TestRejections(const fs::path& scratch) {
     bool ok = true;
     const fs::path project = scratch / "RejectProject";
@@ -381,6 +400,7 @@ int main(int argc, char** argv) {
     ok &= TestStaticGltfLoad(scratch);
     ok &= TestImportModel(scratch);
     ok &= TestImportZippedTextureSet(scratch);
+    ok &= TestUntexturedPackWarns(scratch);
     ok &= TestRejections(scratch);
     std::cout << (ok ? "AssetIntakeTests passed\n" : "AssetIntakeTests FAILED\n");
     return ok ? 0 : 1;
