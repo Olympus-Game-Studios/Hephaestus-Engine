@@ -12,6 +12,8 @@
 #include <QLineEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTreeWidget>
 #include <QVersionNumber>
 #include <QVBoxLayout>
@@ -25,13 +27,39 @@ namespace {
 
 constexpr const char* kFolderSetting = "kitsFolder";
 
-/// Cargo's default download location (%APPDATA%/kitbash3d/kits on Windows, ~/.kitbash3d/kits elsewhere).
-QString DefaultKitsFolder() {
+/// Cargo's own data folder (%APPDATA%/kitbash3d on Windows, ~/.kitbash3d elsewhere).
+QString CargoDataFolder() {
 #ifdef _WIN32
-    return QDir(qEnvironmentVariable("APPDATA")).filePath("kitbash3d/kits");
+    return QDir(qEnvironmentVariable("APPDATA")).filePath("kitbash3d");
 #else
-    return QDir::home().filePath(".kitbash3d/kits");
+    return QDir::home().filePath(".kitbash3d");
 #endif
+}
+
+/// The download folder set in Cargo's settings (USER_INFO.DOWNLOAD_LOCATION in its database, opened read-only),
+/// or Cargo's default when it cannot be read.
+QString DefaultKitsFolder() {
+    const QString fallback = QDir(CargoDataFolder()).filePath("kits");
+    const QString database = QDir(CargoDataFolder()).filePath("cargo_v1.sqlite");
+    if (!QFileInfo::exists(database) || !QSqlDatabase::isDriverAvailable(QStringLiteral("QSQLITE"))) {
+        return fallback;
+    }
+    QString folder;
+    const QString connection = QStringLiteral("HephaestusCargoSettings");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
+        db.setDatabaseName(database);
+        db.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
+        if (db.open()) {
+            QSqlQuery query(db);
+            if (query.exec(QStringLiteral("SELECT DOWNLOAD_LOCATION FROM USER_INFO LIMIT 1")) && query.next()) {
+                folder = query.value(0).toString();
+            }
+            db.close();
+        }
+    }
+    QSqlDatabase::removeDatabase(connection);
+    return !folder.isEmpty() && QFileInfo(folder).isDir() ? QDir(folder).absolutePath() : fallback;
 }
 
 struct CargoAsset {
@@ -112,7 +140,7 @@ public:
             }
         });
         connect(m_folder, &QLineEdit::editingFinished, this, [this] { Refresh(); });
-        connect(refresh, &QPushButton::clicked, this, [this] { Refresh(); });
+        connect(refresh, &QPushButton::clicked, this, [this] { FollowCargo(); });
         connect(m_import, &QPushButton::clicked, this, [this] { ImportChecked(); });
         connect(m_tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
             if (item->childCount() > 0 && !m_updating) {
@@ -123,6 +151,13 @@ public:
                 m_updating = false;
             }
         });
+    }
+
+    /// Picks up a download folder changed in Cargo since, unless a folder was chosen here.
+    void FollowCargo() {
+        if (QString::fromUtf8(m_context.Settings().Get(kFolderSetting)).isEmpty()) {
+            m_folder->setText(DefaultKitsFolder());
+        }
         Refresh();
     }
 
@@ -149,6 +184,12 @@ public:
         m_updating = false;
         m_status->setText(m_assets.empty() ? tr("No Cargo downloads found in this folder.")
                                            : tr("%n model(s) downloaded.", nullptr, static_cast<int>(m_assets.size())));
+    }
+
+protected:
+    void showEvent(QShowEvent* event) override {
+        QWidget::showEvent(event);
+        FollowCargo();
     }
 
 private:

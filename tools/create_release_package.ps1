@@ -107,13 +107,16 @@ $qtTargets = @((Join-Path $OutputPath "HephaestusEngine.exe"), (Join-Path $Outpu
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
 # The Sketchfab plugin's HTTPS uses Windows' own TLS (Schannel); the OpenSSL backend would need OpenSSL DLLs.
 Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $OutputPath "tls\qopensslbackend.dll"), (Join-Path $OutputPath "tls\qcertonlybackend.dll")
+# The Cargo plugin reads Cargo's settings through Qt's SQLite driver; the other SQL drivers are not used.
+Get-ChildItem (Join-Path $OutputPath "sqldrivers") -Filter "*.dll" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne "qsqlite.dll" } | Remove-Item -Force
 # windeployqt copies Windows' own ICU from System32; Windows 10 and later already have it.
 Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $OutputPath "icuuc.dll")
 
 $problems = @()
 foreach ($required in @("HephaestusLauncher.exe", "HephaestusEngine.exe", "HephaestusGame.exe",
                         "tools\HephaestusBuild.exe", "Qt6Core.dll", "Qt6Widgets.dll", "Qt6Svg.dll",
-                        "Qt6Network.dll", "tls\qschannelbackend.dll",
+                        "Qt6Network.dll", "tls\qschannelbackend.dll", "Qt6Sql.dll", "sqldrivers\qsqlite.dll",
                         "platforms\qwindows.dll", "LICENSE.md", "THIRD_PARTY_NOTICES.md",
                         "editor", "assets", "shaders", ".engine\meshes", ".engine\hdris", "Plugins")) {
     if (-not (Test-Path (Join-Path $OutputPath $required))) { $problems += "missing $required" }

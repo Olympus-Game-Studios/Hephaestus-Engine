@@ -250,6 +250,7 @@ if(HEPHAESTUS_USE_QT)
             find_package(Qt6 COMPONENTS Svg QUIET)
             find_package(Qt6 COMPONENTS Concurrent QUIET)
             find_package(Qt6 COMPONENTS Network QUIET)
+            find_package(Qt6 COMPONENTS Sql QUIET)
             find_package(Qt6 COMPONENTS WebEngineWidgets QUIET)
         endif()
     endif()
@@ -841,6 +842,14 @@ if(HEPHAESTUS_USE_QT)
             )
             add_dependencies(HephaestusEngine Hephaestus${_store})
         endforeach()
+        if(TARGET HephaestusCargo)
+            if(TARGET Qt6::Sql)
+                target_link_libraries(HephaestusCargo PRIVATE Qt6::Sql)
+            else()
+                message(WARNING "Qt6 Sql not found; the Cargo plugin is not built.")
+                set_target_properties(HephaestusCargo PROPERTIES EXCLUDE_FROM_ALL ON)
+            endif()
+        endif()
         if(TARGET HephaestusSketchfab AND WIN32)
             target_link_libraries(HephaestusSketchfab PRIVATE Advapi32)
         endif()
@@ -943,6 +952,18 @@ if(HEPHAESTUS_USE_QT)
                         "${_qt6_bin_dir}/../plugins/tls/qschannelbackend.dll"
                         "$<TARGET_FILE_DIR:HephaestusEngine>/tls/qschannelbackend.dll"
                     COMMENT "Copying Qt6 Network and its Windows TLS backend for the Sketchfab plugin"
+                )
+            endif()
+            if(TARGET HephaestusCargo AND TARGET Qt6::Sql)
+                add_custom_command(TARGET HephaestusEngine POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/Qt6Sql.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Sql.dll"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HephaestusEngine>/sqldrivers"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/../plugins/sqldrivers/qsqlite.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/sqldrivers/qsqlite.dll"
+                    COMMENT "Copying Qt6 Sql and its SQLite driver for the Cargo plugin"
                 )
             endif()
 
