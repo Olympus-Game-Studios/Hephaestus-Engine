@@ -221,14 +221,41 @@ int ReadFile(const char* name, uint64_t wanted, uint8_t* out, uint64_t* read, st
     return 0;
 }
 
-void CollectAbstract(const lightusd::PrimSpec& prim, const std::string& parent, std::vector<std::string>& out) {
+/// Prim paths the converted scene must treat specially; Tydra converts them like any other prim.
+struct PrimRoles {
+    std::vector<std::string> abstractPaths;  ///< `class` prims (prototypes): only drawn through their instances
+    std::vector<std::string> collisionPaths; ///< UsdPhysics PhysicsCollisionAPI: colliders, not drawn
+    std::vector<std::string> hiddenPaths;    ///< guide/proxy purpose or invisible: not drawn
+};
+
+std::string TokenAttribute(const lightusd::PrimSpec& prim, const char* name) {
+    const auto found = prim.props().find(name);
+    lightusd::value::token token;
+    if (found == prim.props().end() || !found->second.is_attribute() ||
+        !found->second.get_attribute().get_value(&token)) {
+        return {};
+    }
+    return token.str();
+}
+
+void CollectRoles(const lightusd::PrimSpec& prim, const std::string& parent, PrimRoles& out) {
     const std::string path = parent + "/" + prim.name();
     if (prim.specifier() == lightusd::Specifier::Class) {
-        out.push_back(path);
+        out.abstractPaths.push_back(path);
         return;
     }
+    const lightusd::APISchemas* schemas = prim.metas().get_apiSchemas_ptr();
+    const bool collider = schemas && std::any_of(schemas->names.begin(), schemas->names.end(), [](const auto& name) {
+        return name.first == lightusd::APISchemas::APIName::PhysicsCollisionAPI;
+    });
+    const std::string purpose = TokenAttribute(prim, "purpose");
+    if (collider) {
+        out.collisionPaths.push_back(path);
+    } else if (purpose == "guide" || purpose == "proxy" || TokenAttribute(prim, "visibility") == "invisible") {
+        out.hiddenPaths.push_back(path);
+    }
     for (const lightusd::PrimSpec& child : prim.children()) {
-        CollectAbstract(child, path, out);
+        CollectRoles(child, path, out);
     }
 }
 
@@ -237,7 +264,7 @@ using Selections = std::map<std::string, std::string>;
 bool LoadStage(const fs::path& path, const Selections& selections, lightusd::Stage& stage,
                lightusd::USDZAsset& usdz, lightusd::AssetResolutionResolver& resolver, LayerFolders& layers,
                std::map<std::string, std::vector<std::string>>* outVariantSets,
-               std::vector<std::string>& outAbstract, std::string& outError) {
+               PrimRoles& outRoles, std::string& outError) {
     const std::string file = path.string();
     const std::string base = path.parent_path().string();
     std::string warn;
@@ -308,7 +335,7 @@ bool LoadStage(const fs::path& path, const Selections& selections, lightusd::Sta
         layer = std::move(next);
     }
     for (const auto& [name, prim] : layer.primspecs()) {
-        CollectAbstract(prim, "", outAbstract);
+        CollectRoles(prim, "", outRoles);
     }
     if (!lightusd::LayerToStage(std::move(layer), &stage, &warn, &err)) {
         outError = "Could not build the stage of " + path.filename().string() + ": " + err;
@@ -320,7 +347,7 @@ bool LoadStage(const fs::path& path, const Selections& selections, lightusd::Sta
 /// The composed scene plus the paths of its `class` (abstract) prims, which Tydra converts but are never drawn.
 struct Converted {
     tydra::RenderScene scene;
-    std::vector<std::string> abstractPaths;
+    PrimRoles roles;
 };
 
 
@@ -330,7 +357,7 @@ bool Convert(const fs::path& path, const Selections& selections, Converted& out,
     lightusd::USDZAsset usdz;
     lightusd::AssetResolutionResolver resolver;
     LayerFolders layers;
-    if (!LoadStage(path, selections, stage, usdz, resolver, layers, outVariantSets, out.abstractPaths, outError)) {
+    if (!LoadStage(path, selections, stage, usdz, resolver, layers, outVariantSets, out.roles, outError)) {
         return false;
     }
     tydra::RenderSceneConverter converter;
@@ -562,6 +589,7 @@ bool LoadParts(const fs::path& path, std::vector<Part>& outParts, std::vector<So
     auto addPart = [&](const tydra::RenderMesh& mesh, const lightusd::value::matrix4d& world, int materialOverride,
                        const std::string& absPath) {
         Part part;
+        part.collision = UnderAny(absPath, converted.roles.collisionPaths);
         if (buildPart(mesh, world, materialOverride, part)) {
             outParts.push_back(std::move(part));
             partPaths.push_back(Segments(absPath));
@@ -569,7 +597,9 @@ bool LoadParts(const fs::path& path, std::vector<Part>& outParts, std::vector<So
     };
 
     std::function<void(const tydra::Node&, int)> visit = [&](const tydra::Node& node, int depth) {
-        if (depth > 256 || UnderAny(node.abs_path, converted.abstractPaths)) {
+        if (depth > 256 || UnderAny(node.abs_path, converted.roles.abstractPaths) ||
+            (UnderAny(node.abs_path, converted.roles.hiddenPaths) &&
+             !UnderAny(node.abs_path, converted.roles.collisionPaths))) {
             return;
         }
         const double at[3] = {node.global_matrix.m[3][0], node.global_matrix.m[3][1], node.global_matrix.m[3][2]};

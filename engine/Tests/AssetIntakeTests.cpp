@@ -531,6 +531,29 @@ over "Box"
             point3f[] points = [(0, 0, 0), (100, 0, 0), (100, 0, 200)]
         }
 
+        def Xform "Hull" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            uniform token purpose = "guide"
+            token visibility = "invisible"
+
+            def Mesh "Hull"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(0, 0, 0), (0, 100, 0), (100, 0, 0)]
+            }
+        }
+
+        def Mesh "Helper"
+        {
+            uniform token purpose = "guide"
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0, 0, 0), (0, 50, 0), (50, 0, 0)]
+        }
+
         def Xform "WheelA" (
             instanceable = true
             prepend references = </Box/__prototypes__/Wheel>
@@ -617,6 +640,7 @@ bool TestImportUsdKit(const fs::path& scratch) {
     ok &= Check(AssetIntake::Import(request, result, error), "USD kit imports: " + error);
     ok &= Check(result.models == std::vector<std::string>({"assets/Imported/Cargo/Box/Models/Box/Quad.glb",
                                                           "assets/Imported/Cargo/Box/Models/Box/UCX_Quad.glb",
+                                                          "assets/Imported/Cargo/Box/Models/Box/Hull.glb",
                                                           "assets/Imported/Cargo/Box/Models/Box/Tyre.glb"}) &&
                     result.prefabs.size() == 1 && result.materials.size() == 1,
                 "each Mesh prim becomes its own model; the two wheel instances share one");
@@ -640,7 +664,13 @@ bool TestImportUsdKit(const fs::path& scratch) {
     const json prefab = json::parse(ReadText(project / result.prefabs[0]));
     std::vector<std::string> tyres;
     bool collisionHidden = false;
+    bool physicsCollider = false;
     for (const json& node : prefab["nodes"]) {
+        if (node.value("name", "") == "Hull") {
+            for (const json& component : node["components"]) {
+                physicsCollider |= component["type"] == "MeshCollider";
+            }
+        }
         if (node.value("name", "") == "UCX_Quad") {
             bool hasCollider = false;
             for (const json& component : node["components"]) {
@@ -665,6 +695,9 @@ bool TestImportUsdKit(const fs::path& scratch) {
         }
     }
     ok &= Check(collisionHidden, "a UCX_ collision mesh becomes a hidden static mesh collider without materials");
+    ok &= Check(physicsCollider, "a prim with UsdPhysics' collision schema becomes a collider whatever its name");
+    ok &= Check(ReadText(project / result.prefabs[0]).find("Helper") == std::string::npos,
+                "guide-purpose geometry that is not a collider is left out");
     ok &= Check(tyres.size() == 2 && tyres[0] != tyres[1] && tyres[0] != "node_0",
                 "the prototype in the class prim is only drawn through its two instances, each in its group");
     ok &= Check(!fs::exists(project / "assets/Imported/Cargo/Box/Textures") &&

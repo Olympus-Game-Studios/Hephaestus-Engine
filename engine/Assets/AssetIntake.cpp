@@ -374,7 +374,7 @@ std::string Upper(std::string value) {
 bool IsCollisionMesh(const std::string& name) {
     const std::vector<std::string> tokens = Tokens(name);
     for (const std::string& token : tokens) {
-        if (token == "ucx" || token == "ubx" || token == "usp" || token == "ucp" || token == "collision" ||
+        if (token == "ucx" || token == "ubx" || token == "usp" || token == "ucp" || token == "col" || token == "collision" ||
             token == "collider" || token == "collisions") {
             return true;
         }
@@ -960,7 +960,10 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
                 part.group = usdPart.group;
                 part.bounds = usdPart.mesh.bounds;
                 part.submeshCount = static_cast<int>(usdPart.mesh.submeshes.size());
-                part.collision = IsCollisionMesh(usdPart.name);
+                part.collision = usdPart.collision || IsCollisionMesh(usdPart.name);
+                if (part.collision && part.group.empty()) {
+                    part.group = "Collision";
+                }
                 if (!part.collision) {
                     part.materials = materialsFor(usdPart.mesh, model, modelStem, usdPart.slotMaterials,
                                                   gltfMaterials, fbxMaterials);

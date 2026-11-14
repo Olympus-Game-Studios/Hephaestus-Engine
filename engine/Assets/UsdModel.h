@@ -25,10 +25,11 @@ struct Part {
     MeshData mesh;              ///< Y up, metres, one submesh per material
     std::vector<int> slotMaterials; ///< per submesh: index into the materials list, -1 for none
     Vec3 origin{0.0f, 0.0f, 0.0f};
+    bool collision = false;     ///< under a prim with UsdPhysics' PhysicsCollisionAPI
 };
 
-/// Every drawn Mesh prim (prototypes in `class` prims only through their instances); materials are shared by all
-/// parts, with texture files resolved to absolute paths.
+/// Every drawn Mesh prim (prototypes in `class` prims only through their instances; guide, proxy and invisible prims
+/// skipped) plus collision meshes; materials are shared by all parts, with texture files resolved to absolute paths.
 bool LoadParts(const std::filesystem::path& path, std::vector<Part>& outParts,
                std::vector<SourceMaterial>& outMaterials, std::string& outError);
 
