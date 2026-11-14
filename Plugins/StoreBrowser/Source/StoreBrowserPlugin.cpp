@@ -64,14 +64,16 @@ struct Store {
     const char* settingsCommand; // another plugin's command for the store's import settings, or nullptr
     const char* settingsLabel;   // its item in the window's ... menu
     bool sketchfabCredits;       // read the model's author and licence from Sketchfab's public Data API
+    const char* windowIcon;      // the store plugin's logo, beside this plugin's folder; the browser's icon when absent
 };
 
 constexpr Store kStores[] = {
     {"fab", "Fab Store", "https://www.fab.com/", "Fab", " | Fab", "Fab Standard License", "https://www.fab.com/eula",
-     "fab.open", "Import settings...", false},
+     "fab.open", "Import settings...", false, "../Fab/Resources/Fab logo - white.png"},
     {"sketchfab", "Sketchfab Store", "https://sketchfab.com/", "Sketchfab", " - Download", "",
      "https://sketchfab.com/licenses", "sketchfab.open",
-     "Sketchfab search and API token...", true},
+     "Sketchfab search and API token...", true,
+     "../Sketchfab/Resources/sketchfab-logo-blue.svg"},
 };
 
 /// Who made an asset and the terms it is used under, recorded with the import.
@@ -342,8 +344,9 @@ private:
         // A store window must not keep the editor running once the editor's own window is closed.
         panel->setAttribute(Qt::WA_QuitOnClose, false);
         panel->setWindowTitle(QString::fromUtf8(entry->store->title));
-        panel->setWindowIcon(QIcon(QDir(QString::fromUtf8(self->m_context->Project().PluginRoot()))
-                                       .filePath("Resources/store-browser.svg")));
+        const QDir root(QString::fromUtf8(self->m_context->Project().PluginRoot()));
+        const QString logo = QDir::cleanPath(root.filePath(QString::fromUtf8(entry->store->windowIcon)));
+        panel->setWindowIcon(QIcon(QFileInfo::exists(logo) ? logo : root.filePath("Resources/store-browser.svg")));
         if (!panel->restoreGeometry(QSettings("Hephaestus", "Editor").value(GeometryKey(*entry->store)).toByteArray())) {
             panel->resize(1280, 860);
         }

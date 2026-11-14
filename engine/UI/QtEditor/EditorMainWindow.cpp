@@ -1795,6 +1795,14 @@ void EditorMainWindow::setupTopToolbar()
         layout->addWidget(modeSwitch, 0, Qt::AlignVCenter);
         layout->addStretch(1);
 
+        // Plugins add their own buttons here (EditorPluginHost::RegisterHeaderButton).
+        auto* pluginButtons = new QWidget(header);
+        pluginButtons->setObjectName(QStringLiteral("PluginHeaderButtons"));
+        auto* pluginButtonsLayout = new QHBoxLayout(pluginButtons);
+        pluginButtonsLayout->setContentsMargins(0, 0, 0, 0);
+        pluginButtonsLayout->setSpacing(2);
+        layout->addWidget(pluginButtons);
+
         auto* search = new EditorCommandSearch(m_menuBar, header);
         search->setFixedWidth(360);
         search->hide();
@@ -6894,7 +6902,7 @@ void EditorMainWindow::onOpenSettings()
 void EditorMainWindow::onOpenPlugins()
 {
     if (!m_pluginSystem) return;
-    PluginManagerDialog dialog(*m_pluginSystem, this);
+    PluginManagerDialog dialog(*m_pluginSystem, m_pluginHost.get(), this);
     dialog.exec();
 }
 

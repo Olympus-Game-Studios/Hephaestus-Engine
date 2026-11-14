@@ -552,6 +552,11 @@ public:
         m_client = new SketchfabClient(context);
         bool ok = context.Commands().Register({"sketchfab.open", "Sketchfab",
                                                "Search Sketchfab and import downloadable models", "", &Open, this});
+        ok &= context.Commands().Register({"sketchfab.store", "Sketchfab Store", "Open the Sketchfab Store", "",
+                                           &OpenStore, this});
+        // Optional: an editor without title bar buttons still loads the plugin.
+        context.UI().RegisterHeaderButton({sizeof(HeaderButtonDescriptor), "sketchfab.store", "Resources/sketchfab.svg",
+                                           "Sketchfab"});
         // No Window menu entry: the Sketchfab Store window's ... menu opens this window (command "sketchfab.open").
         if (IAutomationToolService* tools = context.AutomationTools()) {
             ok &= tools->RegisterTool(
@@ -598,11 +603,17 @@ private:
         QString error;
     };
 
+    static void OpenStore(void* self) {
+        auto* plugin = static_cast<SketchfabPlugin*>(self);
+        if (!plugin->m_context->Commands().Execute("storebrowser.open.sketchfab")) {
+            Open(self);
+        }
+    }
     static void Open(void* self) {
         auto* plugin = static_cast<SketchfabPlugin*>(self);
         ShowToolWindow(plugin->m_window, [plugin] { return new SketchfabPanel(*plugin->m_client, nullptr); },
                        QObject::tr("Sketchfab"),
-                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/sketchfab.svg"),
+                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/sketchfab-logo-blue.svg"),
                        900, 760);
     }
 

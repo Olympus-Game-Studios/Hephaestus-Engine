@@ -506,6 +506,10 @@ public:
         m_bridge = new LauncherBridge(context);
         m_bridge->Apply();
         ok &= context.Commands().Register({"fab.open", "Fab", "Import packs downloaded from Fab", "", &Open, this});
+        ok &= context.Commands().Register({"fab.store", "Fab Store", "Open the Fab Store", "", &OpenStore, this});
+        // Optional: an editor without title bar buttons still loads the plugin.
+        context.UI().RegisterHeaderButton({sizeof(HeaderButtonDescriptor), "fab.store", "Resources/Fab logo - white.png",
+                                           "Fab"});
         // No Window menu entry: the Fab Store window's ... menu opens these settings (command "fab.open").
         ok &= context.Assets().RegisterImporter(
             {"Asset pack with materials (Fab, Megascans, Sketchfab download)", kPackExtensions, "fab.pack",
@@ -521,11 +525,17 @@ public:
 
 private:
     // Opened from the Fab Store window's ... menu as its own window.
+    static void OpenStore(void* self) {
+        auto* plugin = static_cast<FabPlugin*>(self);
+        if (!plugin->m_context->Commands().Execute("storebrowser.open.fab")) {
+            Open(self);
+        }
+    }
     static void Open(void* self) {
         auto* plugin = static_cast<FabPlugin*>(self);
         ShowToolWindow(plugin->m_panel, [plugin] { return new FabPanel(*plugin->m_context, *plugin->m_bridge, nullptr); },
                        QObject::tr("Fab Import Settings"),
-                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/fab.svg"),
+                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/Fab logo - white.png"),
                        560, 640);
     }
     // Content Browser > Import: the pack lands in the folder being browsed, without a credit.

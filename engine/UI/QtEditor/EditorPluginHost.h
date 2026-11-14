@@ -36,6 +36,10 @@ public:
     QString CustomAssetTypeId(const QString& path) const;
     QString CustomAssetDisplayName(const QString& path) const;
     QIcon CustomAssetIcon(const QString& path) const;
+    /// Title bar buttons a plugin registered, as (command id, tool tip).
+    std::vector<std::pair<std::string, QString>> HeaderButtons(const std::string& pluginId) const;
+    bool IsHeaderButtonShown(const std::string& pluginId, const std::string& commandId) const;
+    void SetHeaderButtonShown(const std::string& pluginId, const std::string& commandId, bool shown);
 
 private:
     class Context;
@@ -45,6 +49,8 @@ private:
     struct Importer;
     struct ContextAction;
     struct Setting;
+    struct HeaderButton;
+    bool RegisterHeaderButton(const Plugins::PluginManifest&, const Plugins::HeaderButtonDescriptor&);
     void RemoveOwner(const std::string&);
     QAction* FindCommand(const std::string&) const;
     bool RegisterCommand(const std::string&, const Plugins::CommandDescriptor&);
@@ -70,6 +76,7 @@ private:
     std::vector<std::unique_ptr<ContextAction>> contextActions_;
     std::vector<std::unique_ptr<Setting>> settings_;
     std::vector<QPointer<QDockWidget>> panels_;
+    std::vector<std::unique_ptr<HeaderButton>> headerButtons_;
     std::uint64_t nextTransaction_ = 1;
     std::vector<std::pair<std::uint64_t, EditorContext*>> transactions_;
     std::shared_ptr<Automation::PluginToolBridge> toolBridge_;

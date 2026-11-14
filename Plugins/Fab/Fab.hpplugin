@@ -9,5 +9,5 @@
   "engineVersion": ">=2026.11.12",
   "type": "editor",
   "entry": "bin/HephaestusFab.dll",
-  "icon": "Resources/fab.svg"
+  "icon": "Resources/Fab logo - white.png"
 }

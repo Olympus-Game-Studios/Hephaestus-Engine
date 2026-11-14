@@ -9,5 +9,5 @@
   "engineVersion": ">=2026.11.12",
   "type": "editor",
   "entry": "bin/HephaestusSketchfab.dll",
-  "icon": "Resources/sketchfab.svg"
+  "icon": "Resources/sketchfab-logo-blue.svg"
 }

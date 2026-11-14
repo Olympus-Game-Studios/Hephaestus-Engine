@@ -22,6 +22,7 @@
 #include <QMenuBar>
 #include <QSettings>
 #include <QToolBar>
+#include <QToolButton>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstring>
@@ -35,6 +36,13 @@ struct EditorPluginHost::AssetType { std::string owner, id, extension, name, ico
 struct EditorPluginHost::Importer { std::string owner, id, extensions, result; Plugins::ImportCallback callback=nullptr; void* userData=nullptr; };
 struct EditorPluginHost::ContextAction { std::string owner, location, command; };
 struct EditorPluginHost::Setting { std::string owner,id,name,description,defaultValue; Plugins::SettingScope scope; mutable std::string cache; };
+struct EditorPluginHost::HeaderButton { std::string owner, command; QString toolTip; QPointer<QToolButton> button; };
+
+namespace {
+QString HeaderButtonHiddenKey(const std::string& owner, const std::string& command) {
+    return QString("plugins/%1/headerButtonHidden/%2").arg(QString::fromStdString(owner), QString::fromStdString(command));
+}
+}
 
 class EditorPluginHost::Context final : public Plugins::IPluginContext,
  public Plugins::ICommandService, public Plugins::IUIService, public Plugins::IAssetService,
@@ -58,6 +66,7 @@ public:
  bool RegisterToolbarAction(const Plugins::ToolbarActionDescriptor&d)override{return host.RegisterToolbar(manifest.id,d);}
  bool RegisterContextAction(const Plugins::ContextActionDescriptor&d)override{return host.RegisterContext(manifest.id,d);}
  bool ShowPanel(const char*id)override{return host.ShowPanel(id?id:"");}
+ bool RegisterHeaderButton(const Plugins::HeaderButtonDescriptor&d)override{return host.RegisterHeaderButton(manifest,d);}
  bool RegisterAssetType(const Plugins::AssetTypeDescriptor&d)override{return host.RegisterAssetType(manifest.id,d);}
  bool RegisterImporter(const Plugins::ImporterDescriptor&d)override{return host.RegisterImporter(manifest.id,d);}
  bool ImportAssetPack(const Plugins::AssetPackImportRequest&r,Plugins::AssetPackImportResult&out)override{return host.ImportAssetPack(r,out);}
@@ -94,6 +103,79 @@ bool EditorPluginHost::ShowPanel(const std::string&id){auto*d=window_->findChild
 bool EditorPluginHost::RegisterAssetType(const std::string&o,const Plugins::AssetTypeDescriptor&d){if(!d.typeId||!d.extension||!d.displayName)return false;std::string ext=d.extension;if(!ext.starts_with('.'))ext.insert(ext.begin(),'.');std::ranges::transform(ext,ext.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});for(auto&a:assetTypes_)if(a->id==d.typeId||a->extension==ext)return false;auto a=std::make_unique<AssetType>();a->owner=o;a->id=d.typeId;a->extension=ext;a->name=d.displayName;a->icon=d.icon?d.icon:"";a->create=d.create;a->open=d.openEditor;a->dirty=d.isDirty;a->save=d.saveEditor;a->close=d.closeEditor;a->retarget=d.retargetEditor;a->userData=d.userData;assetTypes_.push_back(std::move(a));return true;}
 bool EditorPluginHost::RegisterImporter(const std::string&o,const Plugins::ImporterDescriptor&d){if(!d.id||!d.sourceExtensions||!d.resultAssetTypeId||!d.import)return false;auto x=std::make_unique<Importer>();x->owner=o;x->id=d.id;x->extensions=d.sourceExtensions;x->result=d.resultAssetTypeId;x->callback=d.import;x->userData=d.userData;importers_.push_back(std::move(x));return true;}
 bool EditorPluginHost::RegisterSetting(const std::string&o,const Plugins::SettingDescriptor&d){if(!d.id||!d.displayName)return false;auto s=std::make_unique<Setting>();s->owner=o;s->id=d.id;s->name=d.displayName;s->description=d.description?d.description:"";s->defaultValue=d.defaultValue?d.defaultValue:"";s->scope=d.scope;settings_.push_back(std::move(s));return true;}
+bool EditorPluginHost::RegisterHeaderButton(const Plugins::PluginManifest& manifest,
+                                            const Plugins::HeaderButtonDescriptor& d) {
+    if (d.structSize < sizeof(Plugins::HeaderButtonDescriptor) || !d.commandId || !FindCommand(d.commandId) ||
+        !d.iconPath) {
+        return false;
+    }
+    auto* strip = window_->findChild<QWidget*>(QStringLiteral("PluginHeaderButtons"));
+    if (!strip || !strip->layout()) {
+        return false;
+    }
+    std::filesystem::path icon = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(d.iconPath)));
+    if (icon.is_relative()) {
+        icon = manifest.root / icon;
+    }
+    auto entry = std::make_unique<HeaderButton>();
+    entry->owner = manifest.id;
+    entry->command = d.commandId;
+    entry->toolTip = QString::fromUtf8(d.toolTip ? d.toolTip : d.commandId);
+    auto* button = new QToolButton(strip);
+    button->setObjectName(QStringLiteral("PluginHeaderButton"));
+    button->setIcon(QIcon(QString::fromStdU16String(icon.u16string())));
+    button->setToolTip(entry->toolTip);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setAutoRaise(true);
+    button->setContextMenuPolicy(Qt::CustomContextMenu);
+    const std::string owner = entry->owner;
+    const std::string command = entry->command;
+    QObject::connect(button, &QToolButton::clicked, button, [this, command] {
+        if (QAction* action = FindCommand(command)) {
+            action->trigger();
+        }
+    });
+    QObject::connect(button, &QWidget::customContextMenuRequested, button, [this, button, owner, command] {
+        QMenu menu(button);
+        menu.addAction(QObject::tr("Hide this icon"), [this, owner, command] { SetHeaderButtonShown(owner, command, false); });
+        menu.addSection(QObject::tr("Show it again from Edit > Plugins (right-click the plugin)"));
+        menu.exec(QCursor::pos());
+    });
+    strip->layout()->addWidget(button);
+    button->setVisible(IsHeaderButtonShown(owner, command));
+    entry->button = button;
+    headerButtons_.push_back(std::move(entry));
+    return true;
+}
+
+std::vector<std::pair<std::string, QString>> EditorPluginHost::HeaderButtons(const std::string& pluginId) const {
+    std::vector<std::pair<std::string, QString>> out;
+    for (const auto& entry : headerButtons_) {
+        if (entry->owner == pluginId) {
+            out.emplace_back(entry->command, entry->toolTip);
+        }
+    }
+    return out;
+}
+
+bool EditorPluginHost::IsHeaderButtonShown(const std::string& pluginId, const std::string& commandId) const {
+    return !QSettings("Hephaestus", "Editor").value(HeaderButtonHiddenKey(pluginId, commandId), false).toBool();
+}
+
+void EditorPluginHost::SetHeaderButtonShown(const std::string& pluginId, const std::string& commandId, bool shown) {
+    QSettings settings("Hephaestus", "Editor");
+    if (shown) {
+        settings.remove(HeaderButtonHiddenKey(pluginId, commandId));
+    } else {
+        settings.setValue(HeaderButtonHiddenKey(pluginId, commandId), true);
+    }
+    for (const auto& entry : headerButtons_) {
+        if (entry->owner == pluginId && entry->command == commandId && entry->button) {
+            entry->button->setVisible(shown);
+        }
+    }
+}
+
 bool EditorPluginHost::ImportAssetPack(const Plugins::AssetPackImportRequest& r, Plugins::AssetPackImportResult& out) {
     out = Plugins::AssetPackImportResult{};
     auto text = [](const char* value) { return std::string(value ? value : ""); };
@@ -144,7 +226,7 @@ QString EditorPluginHost::CustomAssetDisplayName(const QString&p)const{auto id=C
 QIcon EditorPluginHost::CustomAssetIcon(const QString&p)const{auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&!a->icon.empty()){auto*m=system_->FindManifest(a->owner);if(m)return QIcon(QString::fromStdString((m->root/a->icon).string()));}return{};}
 bool EditorPluginHost::OpenCustomAsset(const QString&p){auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&a->open){bool ok=a->open(p.toUtf8().constData(),a->userData);if(ok)EditorAssetServices::Instance().Documents().Register(DocumentKind::Plugin,p.toStdString(),a->dirty&&a->dirty(p.toUtf8().constData(),a->userData));return ok;}return false;}
 std::uint64_t EditorPluginHost::CreatePrimitive(Plugins::PrimitiveKind k,const char*n){auto*c=editorContext_();if(!c||!c->HasActiveScene())return 0;Entity e=c->GetActiveScene()->CreateEntity(n&&*n?n:"Plugin Entity");if(k==Plugins::PrimitiveKind::Cube||k==Plugins::PrimitiveKind::Sphere||k==Plugins::PrimitiveKind::Plane){auto&m=e.AddComponent<MeshRendererComponent>();m.meshAssetPath=k==Plugins::PrimitiveKind::Cube?"builtin://Cube":k==Plugins::PrimitiveKind::Sphere?"builtin://Sphere":"builtin://Plane";}else if(k==Plugins::PrimitiveKind::PointLight)e.AddComponent<LightComponent>();c->SelectEntity(static_cast<entt::entity>(e));c->MarkDirty();sceneChanged_();return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e))+1;}
-void EditorPluginHost::RemoveOwner(const std::string&o){if(toolBridge_)toolBridge_->RemoveOwner(o);auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
+void EditorPluginHost::RemoveOwner(const std::string&o){if(toolBridge_)toolBridge_->RemoveOwner(o);auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=headerButtons_.begin();i!=headerButtons_.end();)if((*i)->owner==o){delete (*i)->button.data();i=headerButtons_.erase(i);}else++i;for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
 
 } // namespace Hephaestus::QtEditor
 #endif

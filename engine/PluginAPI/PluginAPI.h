@@ -53,6 +53,15 @@ struct ToolbarActionDescriptor {
     const char* commandId = nullptr;
 };
 
+/// An icon in the editor's title bar, left of the notifications bell, that runs a command when clicked. Users can
+/// hide it from its right-click menu and show it again from the plugin's right-click menu in Edit > Plugins.
+struct HeaderButtonDescriptor {
+    std::uint32_t structSize = sizeof(HeaderButtonDescriptor);
+    const char* commandId = nullptr; // a command this plugin registered
+    const char* iconPath = nullptr;  // .svg or .png, relative to the plugin folder or absolute
+    const char* toolTip = nullptr;
+};
+
 struct ContextActionDescriptor {
     const char* location = nullptr; // assetBrowser, sceneHierarchy, viewport, inspector
     const char* commandId = nullptr;
@@ -147,6 +156,7 @@ public:
     virtual bool RegisterToolbarAction(const ToolbarActionDescriptor& descriptor) = 0;
     virtual bool RegisterContextAction(const ContextActionDescriptor& descriptor) = 0;
     virtual bool ShowPanel(const char* panelId) = 0;
+    virtual bool RegisterHeaderButton(const HeaderButtonDescriptor&) { return false; }
 };
 
 class IAssetService {

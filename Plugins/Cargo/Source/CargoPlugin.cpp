@@ -265,6 +265,8 @@ public:
         ok &= context.Commands().Register({"cargo.open", "Cargo", "Import models downloaded with KitBash3D Cargo", "",
                                            &Open, this});
         ok &= context.UI().RegisterMenuAction({"Window/Asset Stores", "cargo.open", "open"});
+        // Optional: an editor without title bar buttons still loads the plugin.
+        context.UI().RegisterHeaderButton({sizeof(HeaderButtonDescriptor), "cargo.open", "Resources/CargoLogo.svg", "Cargo"});
         return ok;
     }
     void OnUnload() override {
@@ -277,7 +279,7 @@ private:
         auto* plugin = static_cast<CargoPlugin*>(self);
         ShowToolWindow(plugin->m_panel, [plugin] { return new CargoPanel(*plugin->m_context, nullptr); },
                        QObject::tr("Cargo"),
-                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/cargo.svg"),
+                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/CargoLogo.svg"),
                        520, 620);
     }
 

@@ -9,5 +9,5 @@
   "engineVersion": ">=2026.11.12",
   "type": "editor",
   "entry": "bin/HephaestusCargo.dll",
-  "icon": "Resources/cargo.svg"
+  "icon": "Resources/CargoLogo.svg"
 }
