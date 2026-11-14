@@ -32,7 +32,7 @@ Click **Import Assets...** (or right click a folder and pick **Import**). The fi
 A few tips:
 
 - **FBX from Blender, Maya, Mixamo or 3ds Max** is converted to Hephaestus's axes automatically.
-- **USD files** are converted as they come in: you get a model (`.glb`), its materials and a prefab in a folder named after the file. Import the asset's main `.usd` file (the one named after the asset), not the `geo` or `mtl` files beside it; it brings in everything they reference. If its textures sit in a `Textures` folder further up, as in KitBash3D Cargo kits, they're matched to the materials by name.
+- **USD files** are converted as they come in: each mesh becomes its own model (`.glb`), and a prefab in a folder named after the file puts them back together, with parts like a wheel's tyre, bolts and mount grouped under one node you can move. Repeated parts (four identical wheels) share one model. Import the asset's main `.usd` file (the one named after the asset), not the `geo` or `mtl` files beside it; it brings in everything they reference. If its textures sit in a `Textures` folder further up, as in KitBash3D Cargo kits, they're matched to the materials by name.
 - If you import a **rigged FBX** through Import Assets, you'll be asked whether to import it as a character. Say yes if you want it to animate; otherwise it comes in as a static mesh. [Characters and animation](characters-and-animation.md) has the details.
 - Meshes bring their **material slots** across, but not the materials themselves. You assign Hephaestus materials in the editor, which takes a minute and gives you proper PBR control.
 

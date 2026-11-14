@@ -801,6 +801,8 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         int submeshCount = 0;
         std::vector<std::string> materials;
         Vec3 position{0.0f, 0.0f, 0.0f};
+        std::string group; ///< parent node under the root, created once per name; empty for the root itself
+        Vec3 groupPosition{0.0f, 0.0f, 0.0f};
     };
     // One prefab per model: a root node with a child per mesh (one child unless an FBX was split into its meshes).
     auto writePrefab = [&](const std::string& modelStem, const std::vector<PrefabPart>& parts) {
@@ -812,8 +814,22 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         root.id = "node_0";
         root.name = prefab.name;
         prefab.nodes.push_back(root);
+        std::map<std::string, std::string> groups;
         for (size_t i = 0; i < parts.size(); ++i) {
             const PrefabPart& part = parts[i];
+            std::string parentId = root.id;
+            if (!part.group.empty()) {
+                auto [group, created] = groups.try_emplace(part.group, "group_" + std::to_string(groups.size() + 1));
+                if (created) {
+                    PrefabNode groupNode;
+                    groupNode.id = group->second;
+                    groupNode.name = SanitizeAssetName(part.group);
+                    groupNode.parentId = root.id;
+                    groupNode.localTransform.position = part.groupPosition;
+                    prefab.nodes.push_back(std::move(groupNode));
+                }
+                parentId = group->second;
+            }
             MeshRendererComponent renderer(part.bounds);
             renderer.meshAssetPath = part.meshPath;
             renderer.meshImported = true;
@@ -822,7 +838,7 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
             PrefabNode meshNode;
             meshNode.id = "node_" + std::to_string(i + 1);
             meshNode.name = parts.size() == 1 ? prefab.name + "_Mesh" : SanitizeAssetName(part.name);
-            meshNode.parentId = root.id;
+            meshNode.parentId = parentId;
             meshNode.localTransform.position = part.position;
             meshNode.components.push_back({"MeshRenderer", true, PrefabComponentIO::MeshRendererToJson(renderer)});
             prefab.nodes.push_back(std::move(meshNode));
@@ -892,36 +908,84 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
             }
         }
 
-        // The project keeps a GLB, so games need no USD reader.
+        // The project keeps GLBs, so games need no USD reader. Each Mesh prim is its own model; identical ones
+        // (instances of one prototype) share a file.
         if (Usd::IsUsd(model)) {
-            MeshData mesh;
-            std::vector<int> slotMaterials;
-            if (!Usd::Load(model, mesh, gltfMaterials, slotMaterials, error)) {
+            std::vector<Usd::Part> usdParts;
+            if (!Usd::LoadParts(model, usdParts, gltfMaterials, error)) {
                 outResult.warnings.push_back(error);
                 continue;
             }
-            std::vector<std::string> names;
-            for (const MeshData::Submesh& submesh : mesh.submeshes) {
-                names.push_back(submesh.name);
-            }
-            const fs::path converted = folder / "Models" / (SanitizeAssetName(modelStem) + ".glb");
-            fs::create_directories(converted.parent_path(), ec);
-            if (!Gltf::WriteGlb(converted, mesh, names, error)) {
-                outResult.warnings.push_back(error);
-                continue;
+            std::vector<PrefabPart> parts;
+            std::map<std::string, std::string> written; // geometry and slots -> model path
+            std::set<std::string> fileNames;
+            for (const Usd::Part& usdPart : usdParts) {
+                std::string key(reinterpret_cast<const char*>(usdPart.mesh.vertices.data()),
+                                usdPart.mesh.vertices.size() * sizeof(Vertex));
+                key.append(reinterpret_cast<const char*>(usdPart.mesh.indices.data()),
+                           usdPart.mesh.indices.size() * sizeof(uint32_t));
+                key.append(reinterpret_cast<const char*>(usdPart.slotMaterials.data()),
+                           usdPart.slotMaterials.size() * sizeof(int));
+                PrefabPart part;
+                part.name = usdPart.name;
+                part.group = usdPart.group;
+                part.bounds = usdPart.mesh.bounds;
+                part.submeshCount = static_cast<int>(usdPart.mesh.submeshes.size());
+                part.materials = materialsFor(usdPart.mesh, model, modelStem, usdPart.slotMaterials, gltfMaterials,
+                                              fbxMaterials);
+                part.groupPosition = usdPart.groupOrigin;
+                part.position = usdParts.size() == 1 ? Vec3(0.0f, 0.0f, 0.0f)
+                    : Vec3(usdPart.origin.x - usdPart.groupOrigin.x, usdPart.origin.y - usdPart.groupOrigin.y,
+                           usdPart.origin.z - usdPart.groupOrigin.z);
+                if (const auto found = written.find(key); found != written.end()) {
+                    part.meshPath = found->second;
+                    parts.push_back(std::move(part));
+                    continue;
+                }
+                std::string fileStem = SanitizeAssetName(usdPart.name);
+                for (int n = 2; !fileNames.insert(Lower(fileStem)).second; ++n) {
+                    fileStem = SanitizeAssetName(usdPart.name) + "_" + std::to_string(n);
+                }
+                const fs::path file = usdParts.size() == 1
+                    ? folder / "Models" / (SanitizeAssetName(modelStem) + ".glb")
+                    : folder / "Models" / SanitizeAssetName(modelStem) / (fileStem + ".glb");
+                fs::create_directories(file.parent_path(), ec);
+                std::vector<std::string> names;
+                for (const MeshData::Submesh& submesh : usdPart.mesh.submeshes) {
+                    names.push_back(submesh.name);
+                }
+                MeshData mesh = usdPart.mesh;
+                if (usdParts.size() == 1) {
+                    for (Vertex& vertex : mesh.vertices) { // a lone part keeps the file's own pivot
+                        vertex.pos[0] += usdPart.origin.x;
+                        vertex.pos[1] += usdPart.origin.y;
+                        vertex.pos[2] += usdPart.origin.z;
+                    }
+                    const Vec3 o = usdPart.origin;
+                    auto shift = [&](const AABB& b) {
+                        return AABB(Vec3(b.min.x + o.x, b.min.y + o.y, b.min.z + o.z),
+                                    Vec3(b.max.x + o.x, b.max.y + o.y, b.max.z + o.z));
+                    };
+                    mesh.bounds = shift(mesh.bounds);
+                    for (MeshData::Submesh& submesh : mesh.submeshes) {
+                        submesh.bounds = shift(submesh.bounds);
+                    }
+                    part.bounds = mesh.bounds;
+                }
+                if (!Gltf::WriteGlb(file, mesh, names, error)) {
+                    outResult.warnings.push_back(error);
+                    continue;
+                }
+                part.meshPath = AssetPathPolicy::ToPortableKey(projectRoot, file.generic_string());
+                written.emplace(key, part.meshPath);
+                outResult.models.push_back(part.meshPath);
+                if (!MeshSettings::SaveDefaultMaterials(file, part.materials, error)) {
+                    outResult.warnings.push_back(error);
+                }
+                parts.push_back(std::move(part));
             }
             usedFiles.push_back(model);
-            PrefabPart part;
-            part.name = modelStem;
-            part.meshPath = AssetPathPolicy::ToPortableKey(projectRoot, converted.generic_string());
-            part.bounds = mesh.bounds;
-            part.submeshCount = static_cast<int>(mesh.submeshes.size());
-            part.materials = materialsFor(mesh, model, modelStem, slotMaterials, gltfMaterials, fbxMaterials);
-            outResult.models.push_back(part.meshPath);
-            if (!MeshSettings::SaveDefaultMaterials(converted, part.materials, error)) {
-                outResult.warnings.push_back(error);
-            }
-            writePrefab(modelStem, {part});
+            writePrefab(modelStem, parts);
             continue;
         }
 

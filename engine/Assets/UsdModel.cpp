@@ -221,11 +221,23 @@ int ReadFile(const char* name, uint64_t wanted, uint8_t* out, uint64_t* read, st
     return 0;
 }
 
+void CollectAbstract(const lightusd::PrimSpec& prim, const std::string& parent, std::vector<std::string>& out) {
+    const std::string path = parent + "/" + prim.name();
+    if (prim.specifier() == lightusd::Specifier::Class) {
+        out.push_back(path);
+        return;
+    }
+    for (const lightusd::PrimSpec& child : prim.children()) {
+        CollectAbstract(child, path, out);
+    }
+}
+
 using Selections = std::map<std::string, std::string>;
 
 bool LoadStage(const fs::path& path, const Selections& selections, lightusd::Stage& stage,
                lightusd::USDZAsset& usdz, lightusd::AssetResolutionResolver& resolver, LayerFolders& layers,
-               std::map<std::string, std::vector<std::string>>* outVariantSets, std::string& outError) {
+               std::map<std::string, std::vector<std::string>>* outVariantSets,
+               std::vector<std::string>& outAbstract, std::string& outError) {
     const std::string file = path.string();
     const std::string base = path.parent_path().string();
     std::string warn;
@@ -295,6 +307,9 @@ bool LoadStage(const fs::path& path, const Selections& selections, lightusd::Sta
         }
         layer = std::move(next);
     }
+    for (const auto& [name, prim] : layer.primspecs()) {
+        CollectAbstract(prim, "", outAbstract);
+    }
     if (!lightusd::LayerToStage(std::move(layer), &stage, &warn, &err)) {
         outError = "Could not build the stage of " + path.filename().string() + ": " + err;
         return false;
@@ -302,13 +317,20 @@ bool LoadStage(const fs::path& path, const Selections& selections, lightusd::Sta
     return true;
 }
 
-bool Convert(const fs::path& path, const Selections& selections, tydra::RenderScene& scene,
+/// The composed scene plus the paths of its `class` (abstract) prims, which Tydra converts but are never drawn.
+struct Converted {
+    tydra::RenderScene scene;
+    std::vector<std::string> abstractPaths;
+};
+
+
+bool Convert(const fs::path& path, const Selections& selections, Converted& out,
              std::map<std::string, std::vector<std::string>>* outVariantSets, std::string& outError) {
     lightusd::Stage stage;
     lightusd::USDZAsset usdz;
     lightusd::AssetResolutionResolver resolver;
     LayerFolders layers;
-    if (!LoadStage(path, selections, stage, usdz, resolver, layers, outVariantSets, outError)) {
+    if (!LoadStage(path, selections, stage, usdz, resolver, layers, outVariantSets, out.abstractPaths, outError)) {
         return false;
     }
     tydra::RenderSceneConverter converter;
@@ -318,7 +340,7 @@ bool Convert(const fs::path& path, const Selections& selections, tydra::RenderSc
     env.mesh_config.build_vertex_indices = true;
     env.mesh_config.compute_tangents_and_binormals = false;
     env.scene_config.load_texture_assets = false;
-    if (!converter.ConvertToRenderScene(env, &scene)) {
+    if (!converter.ConvertToRenderScene(env, &out.scene)) {
         outError = "Could not convert " + path.filename().string() + ": " + converter.GetError();
         return false;
     }
@@ -339,6 +361,26 @@ TextureCount CountTextures(const tydra::RenderScene& scene, const fs::path& base
     return count;
 }
 
+bool UnderAny(const std::string& path, const std::vector<std::string>& roots) {
+    return std::any_of(roots.begin(), roots.end(), [&](const std::string& root) {
+        return path == root || (path.size() > root.size() && path.compare(0, root.size(), root) == 0 &&
+                                path[root.size()] == '/');
+    });
+}
+
+std::vector<std::string> Segments(const std::string& path) {
+    std::vector<std::string> out;
+    size_t start = 1;
+    while (start <= path.size()) {
+        const size_t end = std::min(path.find('/', start), path.size());
+        if (end > start) {
+            out.push_back(path.substr(start, end - start));
+        }
+        start = end + 1;
+    }
+    return out;
+}
+
 } // namespace
 
 bool IsUsd(const fs::path& path) {
@@ -346,34 +388,34 @@ bool IsUsd(const fs::path& path) {
     return ext == ".usd" || ext == ".usda" || ext == ".usdc" || ext == ".usdz";
 }
 
-bool Load(const fs::path& path, MeshData& outMesh, std::vector<SourceMaterial>& outMaterials,
-          std::vector<int>& outSlotMaterials, std::string& outError) {
-    outMesh.Clear();
+bool LoadParts(const fs::path& path, std::vector<Part>& outParts, std::vector<SourceMaterial>& outMaterials,
+               std::string& outError) {
+    outParts.clear();
     outMaterials.clear();
-    outSlotMaterials.clear();
-    tydra::RenderScene scene;
+    Converted converted;
     std::map<std::string, std::vector<std::string>> variantSets;
-    if (!Convert(path, {}, scene, &variantSets, outError)) {
+    if (!Convert(path, {}, converted, &variantSets, outError)) {
         return false;
     }
     // Libraries such as Cargo only download some texture variants: use the one with the most files on disk.
-    TextureCount best = CountTextures(scene, path.parent_path());
+    TextureCount best = CountTextures(converted.scene, path.parent_path());
     for (const auto& [setName, choices] : variantSets) {
         for (const std::string& choice : choices) {
             if (best.found > 0 && best.missing == 0) {
                 break;
             }
-            tydra::RenderScene candidate;
+            Converted candidate;
             std::string error;
             if (Convert(path, {{setName, choice}}, candidate, nullptr, error)) {
-                const TextureCount count = CountTextures(candidate, path.parent_path());
+                const TextureCount count = CountTextures(candidate.scene, path.parent_path());
                 if (count.found > best.found) {
                     best = count;
-                    scene = std::move(candidate);
+                    converted = std::move(candidate);
                 }
             }
         }
     }
+    const tydra::RenderScene& scene = converted.scene;
 
     const double unit = scene.meta.metersPerUnit > 0.0 ? scene.meta.metersPerUnit : 1.0;
     const bool zUp = scene.meta.upAxis == "Z";
@@ -384,23 +426,26 @@ bool Load(const fs::path& path, MeshData& outMesh, std::vector<SourceMaterial>& 
         out[2] = static_cast<float>((zUp ? -p[1] : p[2]) * s);
     };
 
-    std::vector<std::vector<uint32_t>> slotIndices;
-    std::map<int, size_t> slotOfMaterial;
-    auto slotFor = [&](int material) {
-        auto [it, inserted] = slotOfMaterial.try_emplace(material, slotIndices.size());
+    MaterialReader reader(scene, path.parent_path());
+    std::map<int, int> materialIndex;
+    auto materialFor = [&](int material) {
+        if (material < 0 || static_cast<size_t>(material) >= scene.materials.size()) {
+            return -1;
+        }
+        auto [it, inserted] = materialIndex.try_emplace(material, static_cast<int>(outMaterials.size()));
         if (inserted) {
-            slotIndices.emplace_back();
-            outSlotMaterials.push_back(material);
+            outMaterials.push_back(reader.Read(scene.materials[static_cast<size_t>(material)]));
         }
         return it->second;
     };
 
-    auto appendMesh = [&](const tydra::RenderMesh& mesh, const lightusd::value::matrix4d& world, int materialOverride) {
+    auto buildPart = [&](const tydra::RenderMesh& mesh, const lightusd::value::matrix4d& world, int materialOverride,
+                         Part& part) {
         const std::vector<uint32_t>& faceVertices = mesh.faceVertexIndices();
         const std::vector<uint32_t>& counts = mesh.faceVertexCounts();
-        double det = world.m[0][0] * (world.m[1][1] * world.m[2][2] - world.m[1][2] * world.m[2][1]) -
-                     world.m[0][1] * (world.m[1][0] * world.m[2][2] - world.m[1][2] * world.m[2][0]) +
-                     world.m[0][2] * (world.m[1][0] * world.m[2][1] - world.m[1][1] * world.m[2][0]);
+        const double det = world.m[0][0] * (world.m[1][1] * world.m[2][2] - world.m[1][2] * world.m[2][1]) -
+                           world.m[0][1] * (world.m[1][0] * world.m[2][2] - world.m[1][2] * world.m[2][0]) +
+                           world.m[0][2] * (world.m[1][0] * world.m[2][1] - world.m[1][1] * world.m[2][0]);
         const bool flip = (det < 0.0) != !mesh.is_rightHanded;
         std::vector<int> faceMaterial(counts.size(), materialOverride >= 0 ? materialOverride : mesh.material_id);
         if (materialOverride < 0) {
@@ -412,7 +457,15 @@ bool Load(const fs::path& path, MeshData& outMesh, std::vector<SourceMaterial>& 
                 }
             }
         }
+        const double translation[3] = {world.m[3][0], world.m[3][1], world.m[3][2]};
+        float origin[3];
+        toEngine(translation, origin, false);
+        part.origin = Vec3(origin[0], origin[1], origin[2]);
+
+        std::vector<std::vector<uint32_t>> slotIndices;
+        std::map<int, size_t> slotOfMaterial;
         std::vector<int64_t> shared(mesh.is_single_indexable ? mesh.points.size() : 0, -1);
+        MeshData& out = part.mesh;
         size_t offset = 0;
         for (size_t face = 0; face < counts.size(); ++face) {
             const uint32_t count = counts[face];
@@ -420,7 +473,11 @@ bool Load(const fs::path& path, MeshData& outMesh, std::vector<SourceMaterial>& 
                 offset += count;
                 continue;
             }
-            std::vector<uint32_t>& target = slotIndices[slotFor(faceMaterial[face])];
+            auto [slotIt, added] = slotOfMaterial.try_emplace(faceMaterial[face], slotIndices.size());
+            if (added) {
+                slotIndices.emplace_back();
+            }
+            std::vector<uint32_t>& target = slotIndices[slotIt->second];
             for (uint32_t corner = 0; corner < 3; ++corner) {
                 const size_t fv = offset + (flip && corner > 0 ? 3 - corner : corner);
                 const uint32_t point = faceVertices[fv];
@@ -433,13 +490,11 @@ bool Load(const fs::path& path, MeshData& outMesh, std::vector<SourceMaterial>& 
                 }
                 Vertex vertex{};
                 const auto& p = mesh.points[point];
-                double local[3] = {p[0], p[1], p[2]};
-                double transformed[3];
+                double relative[3];
                 for (int axis = 0; axis < 3; ++axis) {
-                    transformed[axis] = local[0] * world.m[0][axis] + local[1] * world.m[1][axis] +
-                                        local[2] * world.m[2][axis] + world.m[3][axis];
+                    relative[axis] = p[0] * world.m[0][axis] + p[1] * world.m[1][axis] + p[2] * world.m[2][axis];
                 }
-                toEngine(transformed, vertex.pos, false);
+                toEngine(relative, vertex.pos, false);
                 float n[3] = {0.0f, 1.0f, 0.0f};
                 if (ReadAttribute(mesh.normals, point, fv, 3, n)) {
                     double dir[3];
@@ -462,28 +517,74 @@ bool Load(const fs::path& path, MeshData& outMesh, std::vector<SourceMaterial>& 
                     vertex.texCoord[1] = 1.0f - st[1]; // USD's st origin is bottom-left
                 }
                 if (!shared.empty()) {
-                    shared[point] = static_cast<int64_t>(outMesh.vertices.size());
+                    shared[point] = static_cast<int64_t>(out.vertices.size());
                 }
-                target.push_back(static_cast<uint32_t>(outMesh.vertices.size()));
-                outMesh.vertices.push_back(vertex);
+                target.push_back(static_cast<uint32_t>(out.vertices.size()));
+                out.vertices.push_back(vertex);
             }
             offset += count;
+        }
+        std::vector<int> slotSource(slotIndices.size(), -1);
+        for (const auto& [material, slot] : slotOfMaterial) {
+            slotSource[slot] = material;
+        }
+        for (size_t slot = 0; slot < slotIndices.size(); ++slot) {
+            MeshData::Submesh submesh;
+            submesh.indexOffset = static_cast<uint32_t>(out.indices.size());
+            submesh.indexCount = static_cast<uint32_t>(slotIndices[slot].size());
+            submesh.materialSlot = static_cast<int>(slot);
+            const int material = materialFor(slotSource[slot]);
+            submesh.name = material >= 0 ? outMaterials[static_cast<size_t>(material)].name : std::string("Default");
+            part.slotMaterials.push_back(material);
+            out.indices.insert(out.indices.end(), slotIndices[slot].begin(), slotIndices[slot].end());
+            out.submeshes.push_back(std::move(submesh));
+        }
+        const float big = std::numeric_limits<float>::max();
+        auto boundsOf = [&](uint32_t first, uint32_t count) {
+            Vec3 lo(big, big, big);
+            Vec3 hi(-big, -big, -big);
+            for (uint32_t i = first; i < first + count; ++i) {
+                const float* q = out.vertices[out.indices[i]].pos;
+                lo = Vec3(std::min(lo.x, q[0]), std::min(lo.y, q[1]), std::min(lo.z, q[2]));
+                hi = Vec3(std::max(hi.x, q[0]), std::max(hi.y, q[1]), std::max(hi.z, q[2]));
+            }
+            return AABB(lo, hi);
+        };
+        for (MeshData::Submesh& submesh : out.submeshes) {
+            submesh.bounds = boundsOf(submesh.indexOffset, submesh.indexCount);
+        }
+        out.bounds = boundsOf(0, static_cast<uint32_t>(out.indices.size()));
+        return !out.indices.empty();
+    };
+
+    std::map<std::string, Vec3> nodeOrigins; // prim path -> world position, for group pivots
+    std::vector<std::vector<std::string>> partPaths;
+    auto addPart = [&](const tydra::RenderMesh& mesh, const lightusd::value::matrix4d& world, int materialOverride,
+                       const std::string& absPath) {
+        Part part;
+        if (buildPart(mesh, world, materialOverride, part)) {
+            outParts.push_back(std::move(part));
+            partPaths.push_back(Segments(absPath));
         }
     };
 
     std::function<void(const tydra::Node&, int)> visit = [&](const tydra::Node& node, int depth) {
-        if (depth > 256) {
+        if (depth > 256 || UnderAny(node.abs_path, converted.abstractPaths)) {
             return;
         }
+        const double at[3] = {node.global_matrix.m[3][0], node.global_matrix.m[3][1], node.global_matrix.m[3][2]};
+        float origin[3];
+        toEngine(at, origin, false);
+        nodeOrigins[node.abs_path] = Vec3(origin[0], origin[1], origin[2]);
         if (node.is_instance && node.instance_id >= 0 && static_cast<size_t>(node.instance_id) < scene.instances.size()) {
             const tydra::RenderInstance& instance = scene.instances[static_cast<size_t>(node.instance_id)];
             if (instance.visible && instance.mesh_id >= 0 && static_cast<size_t>(instance.mesh_id) < scene.meshes.size()) {
-                appendMesh(scene.meshes[static_cast<size_t>(instance.mesh_id)], instance.global_matrix,
-                           instance.material_id);
+                addPart(scene.meshes[static_cast<size_t>(instance.mesh_id)], instance.global_matrix,
+                        instance.material_id, node.abs_path);
             }
         } else if (node.nodeType == tydra::NodeType::Mesh && node.id >= 0 &&
                    static_cast<size_t>(node.id) < scene.meshes.size()) {
-            appendMesh(scene.meshes[static_cast<size_t>(node.id)], node.global_matrix, -1);
+            addPart(scene.meshes[static_cast<size_t>(node.id)], node.global_matrix, -1, node.abs_path);
         }
         for (const tydra::Node& child : node.children) {
             visit(child, depth + 1);
@@ -492,48 +593,51 @@ bool Load(const fs::path& path, MeshData& outMesh, std::vector<SourceMaterial>& 
     for (const tydra::Node& node : scene.nodes) {
         visit(node, 0);
     }
-
-    MaterialReader reader(scene, path.parent_path());
-    std::map<int, int> materialIndex;
-    for (size_t slot = 0; slot < slotIndices.size(); ++slot) {
-        MeshData::Submesh submesh;
-        submesh.indexOffset = static_cast<uint32_t>(outMesh.indices.size());
-        submesh.indexCount = static_cast<uint32_t>(slotIndices[slot].size());
-        submesh.materialSlot = static_cast<int>(slot);
-        const int material = outSlotMaterials[slot];
-        if (material >= 0 && static_cast<size_t>(material) < scene.materials.size()) {
-            auto [it, inserted] = materialIndex.try_emplace(material, static_cast<int>(outMaterials.size()));
-            if (inserted) {
-                outMaterials.push_back(reader.Read(scene.materials[static_cast<size_t>(material)]));
-            }
-            submesh.name = outMaterials[static_cast<size_t>(it->second)].name;
-            outSlotMaterials[slot] = it->second;
-        } else {
-            submesh.name = "Default";
-            outSlotMaterials[slot] = -1;
-        }
-        outMesh.indices.insert(outMesh.indices.end(), slotIndices[slot].begin(), slotIndices[slot].end());
-        outMesh.submeshes.push_back(std::move(submesh));
-    }
-    if (outMesh.indices.empty()) {
+    if (outParts.empty()) {
         outError = path.filename().string() + " has no polygon meshes.";
         return false;
     }
-    const float big = std::numeric_limits<float>::max();
-    auto boundsOf = [&](uint32_t first, uint32_t count) {
-        Vec3 lo(big, big, big);
-        Vec3 hi(-big, -big, -big);
-        for (uint32_t i = first; i < first + count; ++i) {
-            const float* p = outMesh.vertices[outMesh.indices[i]].pos;
-            lo = Vec3(std::min(lo.x, p[0]), std::min(lo.y, p[1]), std::min(lo.z, p[2]));
-            hi = Vec3(std::max(hi.x, p[0]), std::max(hi.y, p[1]), std::max(hi.z, p[2]));
+
+    // Names are prim paths below what every part shares (the asset prim and a "geo"-style scope), with a Mesh named
+    // like its Xform said once; a part deeper than its component is grouped under it, so a wheel stays together.
+    size_t common = partPaths.front().size() - 1;
+    for (const std::vector<std::string>& segments : partPaths) {
+        size_t same = 0;
+        while (same < common && same + 1 < segments.size() && segments[same] == partPaths.front()[same]) {
+            ++same;
         }
-        return AABB(lo, hi);
-    };
-    for (MeshData::Submesh& submesh : outMesh.submeshes) {
-        submesh.bounds = boundsOf(submesh.indexOffset, submesh.indexCount);
+        common = same;
     }
-    outMesh.bounds = boundsOf(0, static_cast<uint32_t>(outMesh.indices.size()));
+    std::map<std::string, int> nameUses;
+    for (size_t i = 0; i < outParts.size(); ++i) {
+        std::vector<std::string> segments;
+        for (size_t s = common; s < partPaths[i].size(); ++s) {
+            if (segments.empty() || segments.back() != partPaths[i][s]) {
+                segments.push_back(partPaths[i][s]);
+            }
+        }
+        Part& part = outParts[i];
+        if (segments.size() > 1) {
+            part.group = segments.front();
+            std::string groupPath;
+            for (size_t s = 0; s <= common; ++s) {
+                groupPath += "/" + partPaths[i][s];
+            }
+            if (const auto origin = nodeOrigins.find(groupPath); origin != nodeOrigins.end()) {
+                part.groupOrigin = origin->second;
+            }
+            segments.erase(segments.begin());
+        }
+        for (const std::string& segment : segments) {
+            part.name += (part.name.empty() ? "" : "_") + segment;
+        }
+        if (part.name.empty()) {
+            part.name = "Mesh";
+        }
+        if (const int uses = nameUses[part.group + "/" + part.name]++; uses > 0) {
+            part.name += "_" + std::to_string(uses + 1);
+        }
+    }
     return true;
 }
 

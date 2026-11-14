@@ -505,20 +505,57 @@ over "Box"
 
 over "Box"
 {
-    def Mesh "Quad" (
-        prepend apiSchemas = ["MaterialBindingAPI"]
-    )
+    def Scope "geo"
     {
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        point3f[] points = [(0, 0, 0), (100, 0, 0), (100, 0, 200), (0, 0, 200)]
-        normal3f[] normals = [(0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0)] (
-            interpolation = "vertex"
+        def Mesh "Quad" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
         )
-        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
-            interpolation = "vertex"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (100, 0, 0), (100, 0, 200), (0, 0, 200)]
+            normal3f[] normals = [(0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0)] (
+                interpolation = "vertex"
+            )
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            rel material:binding = </Box/mtl/Paint>
+        }
+
+        def Xform "WheelA" (
+            instanceable = true
+            prepend references = </Box/__prototypes__/Wheel>
         )
-        rel material:binding = </Box/mtl/Paint>
+        {
+            double3 xformOp:translate = (300, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "WheelB" (
+            instanceable = true
+            prepend references = </Box/__prototypes__/Wheel>
+        )
+        {
+            double3 xformOp:translate = (-300, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    class "__prototypes__"
+    {
+        class Xform "Wheel"
+        {
+            def Mesh "Tyre" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </Box/mtl/Paint>
+                int[] faceVertexCounts = [3, 3]
+                int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+                point3f[] points = [(0, 0, 0), (10, 0, 0), (10, 0, 10), (0, 0, 10)]
+            }
+        }
     }
 }
 )";
@@ -570,9 +607,10 @@ bool TestImportUsdKit(const fs::path& scratch) {
     AssetIntakeResult result;
     std::string error;
     ok &= Check(AssetIntake::Import(request, result, error), "USD kit imports: " + error);
-    ok &= Check(result.models == std::vector<std::string>{"assets/Imported/Cargo/Box/Models/Box.glb"} &&
+    ok &= Check(result.models == std::vector<std::string>({"assets/Imported/Cargo/Box/Models/Box/Quad.glb",
+                                                          "assets/Imported/Cargo/Box/Models/Box/Tyre.glb"}) &&
                     result.prefabs.size() == 1 && result.materials.size() == 1,
-                "the root USD file becomes one GLB, one prefab and its bound material");
+                "each Mesh prim becomes its own model; the two wheel instances share one");
     if (!ok) {
         return false;
     }
@@ -590,6 +628,22 @@ bool TestImportUsdKit(const fs::path& scratch) {
     ok &= Check(paint["useAlbedoTexture"] == true &&
                     FirstPixel(project, paint["albedoTexturePath"], 3) == std::vector<int>({200, 10, 10}),
                 "the kit's Textures folder supplies the map named after the material");
+    const json prefab = json::parse(ReadText(project / result.prefabs[0]));
+    std::vector<std::string> tyres;
+    for (const json& node : prefab["nodes"]) {
+        if (node.value("name", "") == "WheelA" || node.value("name", "") == "WheelB") {
+            const float x = node["transform"]["position"][0].get<float>();
+            ok &= Check(std::abs(std::abs(x) - 3.0f) < 1e-4f, "each wheel group sits where its instance is");
+        }
+        for (const json& component : node.value("components", json::array())) {
+            const std::string source = component["data"].value("meshSource", "");
+            if (source.find("Tyre") != std::string::npos) {
+                tyres.push_back(node.value("parentId", ""));
+            }
+        }
+    }
+    ok &= Check(tyres.size() == 2 && tyres[0] != tyres[1] && tyres[0] != "node_0",
+                "the prototype in the class prim is only drawn through its two instances, each in its group");
     ok &= Check(!fs::exists(project / "assets/Imported/Cargo/Box/Textures") &&
                     !fs::exists(project / "assets/Imported/Cargo/Box/Materials/Other.hematerial"),
                 "the kit's other maps are neither copied nor made into materials");
