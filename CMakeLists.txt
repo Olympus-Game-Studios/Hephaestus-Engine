@@ -71,6 +71,29 @@ target_compile_definitions(ufbx PRIVATE
     UFBX_NO_GEOMETRY_CACHE
 )
 
+# tinyusdz (lightusd): USD/USDA/USDC/USDZ reading for model import. Only the reader and Tydra scene converter
+# are built; texture files are left for the engine to load.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/tinyusdz/CMakeLists.txt")
+    message(FATAL_ERROR
+        "tinyusdz is missing at extern/tinyusdz (required for USD import). "
+        "Run: git submodule update --init --recursive")
+endif()
+foreach(_usd_off
+        LIGHTUSD_BUILD_TESTS LIGHTUSD_BUILD_EXAMPLES LIGHTUSD_BUILD_TOOLS LIGHTUSD_BUILD_BENCHMARKS
+        LIGHTUSD_WITH_C_API LIGHTUSD_WITH_PXR_COMPAT_API LIGHTUSD_WITH_PYTHON LIGHTUSD_WITH_USD_TO_GLTF
+        LIGHTUSD_WITH_USDOBJ LIGHTUSD_WITH_USDFBX LIGHTUSD_WITH_USDVOX LIGHTUSD_WITH_AUDIO
+        LIGHTUSD_WITH_TIFF LIGHTUSD_WITH_EXR LIGHTUSD_WITH_TEXTOOLS LIGHTUSD_WITH_FPNGE LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER
+        LIGHTUSD_WITH_MODULE_USDA_WRITER LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT
+        LIGHTUSD_USE_CCACHE)
+    set(${_usd_off} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(LIGHTUSD_PRODUCTION_BUILD ON CACHE BOOL "" FORCE)
+set(LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION OFF CACHE BOOL "" FORCE)
+set(LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION OFF CACHE BOOL "" FORCE)
+add_subdirectory(extern/tinyusdz EXCLUDE_FROM_ALL)
+# Its stb_image is already file-local; keep its stb_image_write file-local too, so it never clashes with the engine's.
+target_compile_definitions(lightusd_static PRIVATE STB_IMAGE_WRITE_STATIC)
+
 function(hephaestus_target_ufbx target)
     cmake_parse_arguments(FBX "STATIC;SKELETAL" "" "" ${ARGN})
     target_link_libraries(${target} PRIVATE ufbx)
@@ -462,6 +485,7 @@ add_library(HephaestusEditorCore STATIC
     engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/EditorAssetImportService.cpp
     engine/Assets/AssetIntake.cpp
+    engine/Assets/UsdModel.cpp
     engine/Assets/EditorViewState.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/RecoveryStore.cpp
@@ -478,6 +502,8 @@ add_library(HephaestusEditorCore STATIC
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 target_link_libraries(HephaestusEditorCore PUBLIC HephaestusRuntime)
+target_link_libraries(HephaestusEditorCore PRIVATE lightusd_static)
+target_include_directories(HephaestusEditorCore PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/extern/tinyusdz/src")
 
 # Shared non-Qt project validation and packaging pipeline used by the editor
 # and headless CLI. Keep compiler/process orchestration out of Qt UI code.

@@ -450,6 +450,152 @@ bool TestRejections(const fs::path& scratch) {
 
 } // namespace
 
+// A kit laid out like KitBash3D Cargo's: the asset's root layer pulls geometry and material bindings in through a
+// payload, materials come from their own files through "../" paths and an internal reference, and the kit keeps
+// one Textures/<variant> folder whose maps are only named after the materials.
+void WriteUsdKit(const fs::path& kit) {
+    fs::create_directories(kit / "Models/Box");
+    fs::create_directories(kit / "Materials/Paint");
+    fs::create_directories(kit / "Textures/png2k");
+    std::ofstream(kit / "Models/Box/Box.usd") << R"(#usda 1.0
+(
+    defaultPrim = "Box"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "Box" (
+    prepend payload = @./payload.usd@
+)
+{
+}
+)";
+    std::ofstream(kit / "Models/Box/payload.usd") << R"(#usda 1.0
+(
+    defaultPrim = "Box"
+)
+
+def Xform "Box" (
+    prepend references = [@./mtl.usd@, @./geo.usd@]
+)
+{
+}
+)";
+    std::ofstream(kit / "Models/Box/mtl.usd") << R"(#usda 1.0
+(
+    defaultPrim = "Box"
+)
+
+over "Box"
+{
+    def Scope "mtl"
+    {
+        def Material "Paint" (
+            prepend references = @../../Materials/Paint/Paint.usd@</Paint>
+        )
+        {
+        }
+    }
+}
+)";
+    std::ofstream(kit / "Models/Box/geo.usd") << R"(#usda 1.0
+(
+    defaultPrim = "Box"
+)
+
+over "Box"
+{
+    def Mesh "Quad" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (100, 0, 0), (100, 0, 200), (0, 0, 200)]
+        normal3f[] normals = [(0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </Box/mtl/Paint>
+    }
+}
+)";
+    std::ofstream(kit / "Materials/Paint/Paint.usd") << R"(#usda 1.0
+(
+    defaultPrim = "Paint"
+)
+
+def Material "Paint" (
+    prepend references = </__src__/Paint>
+)
+{
+}
+
+class "__src__"
+{
+    def Material "Paint"
+    {
+        token outputs:surface.connect = </__src__/Paint/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.25
+            float inputs:metallic = 0.75
+            token outputs:surface
+        }
+    }
+}
+)";
+    const std::vector<uint8_t> red = Rgba(200, 10, 10, 255);
+    std::ofstream(kit / "Textures/png2k/Paint_basecolor.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(red.data()), static_cast<std::streamsize>(red.size()));
+    const std::vector<uint8_t> blue = Rgba(10, 10, 200, 255);
+    std::ofstream(kit / "Textures/png2k/Other_basecolor.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(blue.data()), static_cast<std::streamsize>(blue.size()));
+}
+
+bool TestImportUsdKit(const fs::path& scratch) {
+    bool ok = true;
+    const fs::path project = scratch / "UsdProject";
+    fs::create_directories(project / "assets");
+    const fs::path kit = scratch / "UsdKit";
+    WriteUsdKit(kit);
+    AssetIntakeRequest request;
+    request.source = kit / "Models/Box/Box.usd";
+    request.projectRoot = project;
+    request.targetFolder = "assets/Imported/Cargo/Box";
+    AssetIntakeResult result;
+    std::string error;
+    ok &= Check(AssetIntake::Import(request, result, error), "USD kit imports: " + error);
+    ok &= Check(result.models == std::vector<std::string>{"assets/Imported/Cargo/Box/Models/Box.glb"} &&
+                    result.prefabs.size() == 1 && result.materials.size() == 1,
+                "the root USD file becomes one GLB, one prefab and its bound material");
+    if (!ok) {
+        return false;
+    }
+    MeshData mesh;
+    ok &= Check(ModelImporter::LoadGLTF(project / result.models[0], mesh, error), "converted GLB loads: " + error);
+    ok &= Check(mesh.indices.size() == 6 && mesh.submeshes.size() == 1 && mesh.submeshes[0].name == "Paint",
+                "the quad is triangulated into one slot named after its material");
+    ok &= Check(std::abs(mesh.bounds.max.x - 1.0f) < 1e-4f && std::abs(mesh.bounds.max.y - 2.0f) < 1e-4f &&
+                    std::abs(mesh.bounds.min.z) < 1e-4f,
+                "centimetres and Z up become metres and Y up");
+    const json paint = json::parse(ReadText(project / result.materials[0]));
+    ok &= Check(std::abs(paint["roughness"].get<double>() - 0.25) < 1e-6 &&
+                    std::abs(paint["metallic"].get<double>() - 0.75) < 1e-6,
+                "the shader behind the material file's internal reference is read");
+    ok &= Check(paint["useAlbedoTexture"] == true &&
+                    FirstPixel(project, paint["albedoTexturePath"], 3) == std::vector<int>({200, 10, 10}),
+                "the kit's Textures folder supplies the map named after the material");
+    ok &= Check(!fs::exists(project / "assets/Imported/Cargo/Box/Textures") &&
+                    !fs::exists(project / "assets/Imported/Cargo/Box/Materials/Other.hematerial"),
+                "the kit's other maps are neither copied nor made into materials");
+    return ok;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: AssetIntakeTests <repo_root>\n";
@@ -465,6 +611,7 @@ int main(int argc, char** argv) {
     ok &= TestDuplicateModelsAndEngineTextures(scratch);
     ok &= TestUntexturedPackWarns(scratch);
     ok &= TestRejections(scratch);
+    ok &= TestImportUsdKit(scratch);
     std::cout << (ok ? "AssetIntakeTests passed\n" : "AssetIntakeTests FAILED\n");
     return ok ? 0 : 1;
 }

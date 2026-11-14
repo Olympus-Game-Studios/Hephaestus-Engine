@@ -27,6 +27,8 @@
 #include "../../Assets/CharacterRuntime.h"
 #include "../../Assets/FbxDocument.h"
 #include "../../Assets/AssetPathPolicy.h"
+#include "../../Assets/AssetIntake.h"
+#include "../../Assets/UsdModel.h"
 #include "CharacterImportDialog.h"
 
 #include <QVBoxLayout>
@@ -1910,7 +1912,7 @@ void AssetBrowserWidget::importAssets()
         this,
         tr("Import Assets"),
         QString(),
-        tr("Supported Assets (*.obj *.fbx *.gltf *.glb *.png *.jpg *.jpeg *.tga *.hdr *.exr *.wav *.mp3 *.ogg *.lua *.hematerial *.hpscene *.hpprefab *.hui);;All Files (*)"));
+        tr("Supported Assets (*.obj *.fbx *.gltf *.glb *.usd *.usda *.usdc *.usdz *.png *.jpg *.jpeg *.tga *.hdr *.exr *.wav *.mp3 *.ogg *.lua *.hematerial *.hpscene *.hpprefab *.hui);;All Files (*)"));
     if (files.isEmpty()) {
         return;
     }
@@ -1924,6 +1926,22 @@ void AssetBrowserWidget::importAssets()
     for (const QString& src : files) {
         const QFileInfo info(src);
         const std::filesystem::path srcPath = std::filesystem::path(src.toStdString());
+        if (Hephaestus::Usd::IsUsd(srcPath)) {
+            Hephaestus::AssetIntakeRequest request;
+            request.source = srcPath;
+            request.projectRoot = assetMgr.GetProjectRoot();
+            request.targetFolder = (m_currentPath.isEmpty() ? std::string("assets")
+                                                            : "assets/" + m_currentPath.toStdString()) +
+                                   "/" + Hephaestus::SanitizeAssetName(srcPath.stem().string());
+            Hephaestus::AssetIntakeResult result;
+            std::string error;
+            if (Hephaestus::AssetIntake::Import(request, result, error)) {
+                ++imported;
+            } else {
+                failures << QString("%1 (%2)").arg(info.fileName(), QString::fromStdString(error));
+            }
+            continue;
+        }
         if (Hephaestus::CharacterImporter::IsFbxPath(srcPath)) {
             bool hasSkin = false;
             std::string skinError;

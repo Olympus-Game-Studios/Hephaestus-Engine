@@ -12,6 +12,7 @@
 #include "MeshSettings.h"
 #include "ModelImporter.h"
 #include "ModelMaterialImport.h"
+#include "UsdModel.h"
 #include "../Scene/PrefabComponentIO.h"
 #include "../Scene/PrefabOverrideSystem.h"
 #include "../Scene/PrefabSerializer.h"
@@ -48,7 +49,7 @@ std::string Ext(const fs::path& path) { return Lower(path.extension().string());
 
 bool IsModel(const fs::path& p) {
     const std::string e = Ext(p);
-    return e == ".fbx" || e == ".glb" || e == ".gltf" || e == ".obj";
+    return e == ".fbx" || e == ".glb" || e == ".gltf" || e == ".obj" || Usd::IsUsd(p);
 }
 // The formats stb_image, and so the renderer, can load.
 bool IsImage(const fs::path& p) {
@@ -534,7 +535,7 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         singleModel = request.source;
         packRoot = request.source.parent_path();
     } else {
-        outError = "Choose a .zip, a folder, or an .fbx, .glb, .gltf or .obj file.";
+        outError = "Choose a .zip, a folder, or an .fbx, .glb, .gltf, .obj or .usd file.";
         return false;
     }
 
@@ -567,8 +568,11 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
     std::vector<fs::path> images;
     std::vector<fs::path> extras;
     size_t unrealFiles = 0;
+    size_t usdFiles = 0;
     for (const fs::path& file : files) {
-        if (IsModel(file)) {
+        if (Usd::IsUsd(file)) {
+            ++usdFiles; // a USD asset is spread over several layers; only its root file can be imported
+        } else if (IsModel(file)) {
             if (singleModel.empty()) {
                 models.push_back(file);
             }
@@ -641,6 +645,10 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
             : "The pack has no models (.fbx, .glb, .gltf, .obj) or textures to import.";
         return false;
     }
+    if (usdFiles > 0 && singleModel.empty()) {
+        outResult.warnings.push_back(std::to_string(usdFiles) + " USD files were skipped; import a USD asset's root "
+                                     ".usd file on its own.");
+    }
     if (unrealFiles > 0) {
         outResult.warnings.push_back(std::to_string(unrealFiles) + " Unreal-only files (.uasset, .umap) were skipped.");
     }
@@ -665,6 +673,45 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
             AddToSet(set, kind, image, directX);
         }
     }
+
+    // A USD kit's shared Textures folder only fills materials of exactly the same name.
+    std::map<std::string, TextureSet> librarySets;
+    if (!singleModel.empty() && Usd::IsUsd(singleModel)) {
+        fs::path dir = singleModel.parent_path();
+        for (int up = 0; up < 3 && dir.has_parent_path() && dir.parent_path() != dir; ++up) {
+            dir = dir.parent_path();
+            for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec)) {
+                const std::string name = Lower(entry.path().filename().string());
+                if (!entry.is_directory(ec) || (name != "textures" && name != "texture" && name != "maps")) {
+                    continue;
+                }
+                std::vector<fs::path> library;
+                for (const fs::directory_entry& inner : fs::recursive_directory_iterator(entry.path(), ec)) {
+                    if (inner.is_regular_file(ec) && IsImage(inner.path())) {
+                        library.push_back(inner.path());
+                    }
+                }
+                std::sort(library.begin(), library.end());
+                for (const fs::path& image : library) {
+                    std::string base;
+                    bool directX = false;
+                    const MapKind kind = Classify(image.stem().string(), base, directX);
+                    if (kind != MapKind::None) {
+                        AddToSet(librarySets[base], kind, image, directX);
+                    }
+                }
+            }
+        }
+    }
+    auto librarySet = [&](const std::string& materialName) -> TextureSet* {
+        const std::string key = Squash(MatchKey(materialName));
+        for (auto& [setKey, set] : librarySets) {
+            if (!key.empty() && Squash(setKey) == key) {
+                return &set;
+            }
+        }
+        return nullptr;
+    };
 
     fs::create_directories(folder, ec);
     if (ec) {
@@ -699,7 +746,7 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
     auto materialsFor = [&](const MeshData& mesh, const fs::path& model, const std::string& modelStem,
                             const std::vector<int>& slotMaterials, const std::vector<SourceMaterial>& gltfMaterials,
                             const std::vector<FbxMaterialInfo>& fbxMaterials) {
-        const bool gltf = Ext(model) == ".gltf" || Ext(model) == ".glb";
+        const bool gltf = Ext(model) == ".gltf" || Ext(model) == ".glb" || Usd::IsUsd(model);
         const size_t slots = std::max<size_t>(mesh.submeshes.size(), 1);
         std::vector<std::string> applied;
         for (size_t s = 0; s < slots; ++s) {
@@ -732,6 +779,9 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
             }
             if (!set && sets.size() == 1) {
                 set = &sets.begin()->second;
+            }
+            if (!set) {
+                set = librarySet(material.name);
             }
             if (set) {
                 FillFromSet(material, *set);
@@ -840,6 +890,39 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
                 writePrefab(modelStem, parts);
                 continue;
             }
+        }
+
+        // The project keeps a GLB, so games need no USD reader.
+        if (Usd::IsUsd(model)) {
+            MeshData mesh;
+            std::vector<int> slotMaterials;
+            if (!Usd::Load(model, mesh, gltfMaterials, slotMaterials, error)) {
+                outResult.warnings.push_back(error);
+                continue;
+            }
+            std::vector<std::string> names;
+            for (const MeshData::Submesh& submesh : mesh.submeshes) {
+                names.push_back(submesh.name);
+            }
+            const fs::path converted = folder / "Models" / (SanitizeAssetName(modelStem) + ".glb");
+            fs::create_directories(converted.parent_path(), ec);
+            if (!Gltf::WriteGlb(converted, mesh, names, error)) {
+                outResult.warnings.push_back(error);
+                continue;
+            }
+            usedFiles.push_back(model);
+            PrefabPart part;
+            part.name = modelStem;
+            part.meshPath = AssetPathPolicy::ToPortableKey(projectRoot, converted.generic_string());
+            part.bounds = mesh.bounds;
+            part.submeshCount = static_cast<int>(mesh.submeshes.size());
+            part.materials = materialsFor(mesh, model, modelStem, slotMaterials, gltfMaterials, fbxMaterials);
+            outResult.models.push_back(part.meshPath);
+            if (!MeshSettings::SaveDefaultMaterials(converted, part.materials, error)) {
+                outResult.warnings.push_back(error);
+            }
+            writePrefab(modelStem, {part});
+            continue;
         }
 
         fs::path copied;
