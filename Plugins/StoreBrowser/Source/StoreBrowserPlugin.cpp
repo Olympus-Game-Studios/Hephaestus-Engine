@@ -24,6 +24,16 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#endif
+
 using namespace Hephaestus::Plugins;
 
 namespace {
@@ -161,6 +171,13 @@ class StoreBrowserPlugin final : public IHephaestusPlugin {
 public:
     bool OnLoad(IPluginContext& context) override {
         m_context = &context;
+#ifdef _WIN32
+        // Chromium cannot be unloaded from a running process, and the editor unloads every plugin when a project
+        // opens; pinning this module (and with it Qt WebEngine) keeps it mapped until the editor exits.
+        HMODULE self = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                           reinterpret_cast<LPCWSTR>(&SharedProfile), &self);
+#endif
         // Qt WebEngine and its helper process ship in this plugin's bin folder, not beside the editor.
         const QDir bin(QDir(QString::fromUtf8(context.Project().PluginRoot())).filePath("bin"));
         qputenv("QTWEBENGINEPROCESS_PATH", bin.filePath("QtWebEngineProcess.exe").toLocal8Bit());
