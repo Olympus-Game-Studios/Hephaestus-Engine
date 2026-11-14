@@ -42,31 +42,51 @@ Every graph ends in exactly one **Material Output** node. Its inputs are the mat
 | **Emissive** | Light the surface gives off by itself, for screens, lava, glowing runes. |
 | **Normal Map**, **Roughness Map**, **AO Map** | Texture maps for fine surface detail, roughness variation and ambient occlusion. With a Roughness Map, **Roughness** multiplies it: below 1 makes the surface shinier, above 1 rougher (up to chalk). |
 | **Specular** | Strength of reflections on non metals. Leave it at 0.5 unless you know you need to change it. |
-| **Opacity**, **Opacity Mask** | Cut holes in a surface, for leaves, fences and grates. |
+| **Opacity** | How see-through a Translucent material is, or (with the base color texture's alpha) how much of a Masked material is kept. |
+| **Opacity Mask Clip** | For Masked materials: where Opacity times the base color texture's alpha falls below this, the surface is cut away. 0.5 suits most foliage. |
 | **Refraction** | Reserved for later. It doesn't change anything yet. |
 
-A tip for packed **ORM** textures (one image holding AO, Roughness and Metallic in its red, green and blue channels): the texture nodes pick the right channel for the input you connect them to.
+A tip for packed **ORM** textures (one image holding AO, Roughness and Metallic in its red, green and blue channels): add one **Texture Sample** with the image, connect its **RGBA** to a **Break Vector**, then wire **R** to Ambient Occlusion, **G** to Roughness and **B** to Metallic. Each map reads its own channel of the same texture (a **Component Mask** with one channel ticked works too). The single map nodes (Roughness Texture and friends) read the red channel.
 
 ### Node categories
 
-The library groups nodes into **Inputs** (constants, camera and position values), **Parameters** (named values), **Textures** (sampling, tiling and offset, triplanar, normal unpacking), **Math**, **Utility** (masking, splitting and joining vectors, UVs), **Procedural** (noise, gradients, Fresnel, UV distortion, time), **Logic** (if, step, compare) and **Blend** (lerp, overlay, screen, height blend).
+The library groups nodes into **Inputs** (constants), **Parameters** (named values), **Textures** (sampling, tiling and offset, triplanar, normal unpacking), **Math**, **Utility** (masking, splitting and joining vectors, UVs), **Logic** (if, step, compare) and **Blend** (lerp, overlay, screen, height blend). Plugins add more, in these groups or their own (see Plugin nodes below).
 
-## What the graph can't do yet
+### Blend modes
 
-This is the important bit, so I'll be straight with you. Right now the graph is **worked out once, into a single set of PBR values and textures**, and that's what gets rendered. It isn't turned into a shader that runs for every pixel.
+Pick one in **Blend Mode** under Details:
 
-That means:
+- **Opaque**: a solid surface. The default.
+- **Masked**: solid, but cut away wherever **Opacity** times the base color texture's alpha is below **Opacity Mask Clip**. Use it for leaves, grass, fences, grates and chain link. Masked surfaces are drawn with the solid ones, sort perfectly and cast shadows with the same holes. Imported glTF materials marked MASK and USD materials with an opacity threshold come in as Masked. Two exceptions still cast solid shadows for now: skinned characters, and lights with ray-traced shadows turned on.
+- **Translucent**: blended by **Opacity** times the base color texture's alpha, for glass, water and decals. Drawn after solid surfaces, furthest first, and casts no shadows.
+- **Additive**: adds the base color (times the texture's alpha) plus **Emissive** to the image without lighting, for muzzle flashes, sparks and glows. Drawn after solid surfaces and casts no shadows.
 
-- **Textures, constants, colours and maths on those work great.** Tinting a texture, mixing two colours, scaling roughness: all fine.
-- **Nodes that need to change per pixel or over time don't affect the rendered result yet.** That's TexCoord, Screen Position, Transform, Texture Tiling Offset, Noise, Gradient, Fresnel, UV Distortion, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Static Switch Parameter. The library and the Add Node search label them **(no effect yet)**, and the Validation panel warns you when a graph uses one. You can still place and wire them, and they'll be ready when per pixel materials land, but today they won't animate or vary across a surface.
-- **Blend modes aren't in the Material Editor yet.** A material can be see-through or glowing by adding `"blendMode"` to its `.hematerial` file (the editor keeps it when you save): `"alphaBlend"` blends the surface by **Opacity** times its albedo texture's alpha, for decals and glass; `"additive"` adds the albedo (times the texture's alpha) plus **Emissive** to the image without lighting, for muzzle flashes, sparks and glows. Both are drawn after solid surfaces, furthest first, cast no shadows and only work on meshes that aren't skinned characters.
+Translucent and Additive only work on meshes that aren't skinned characters. In files, the mode is `"blendMode"`: `"masked"`, `"alphaBlend"` or `"additive"` (none means Opaque).
+
+## How a graph becomes a shader
+
+When a graph only uses constants, colours and the material's texture maps (possibly tinted), it draws with the engine's standard surface shader, like every material always has. When it does anything per pixel, such as tiling or scrolling UVs, noise, Fresnel, or maths that mixes textures, saving it compiles it into its own shader. That shader is saved beside the material as `<name>.hemshader`, so the packaged game uses it without needing the editor. The status bar says **Compiled to its own shader** when that happens, the preview shows the compiled result live, and any shader errors appear in **Validation**. If a graph fails to compile, the material is still saved and draws without its per-pixel parts until you fix it.
+
+The Content Browser hides `.hemshader` files and moves, renames and trashes them with their material.
+
+### Plugin nodes
+
+The default library holds the basic nodes. More nodes come from plugins: the **Material Nodes** plugin that ships with Hephaestus adds Noise, Gradient, Fresnel, UV Distortion, Panner, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Screen Position. Turn it off in **Edit > Plugins** and materials that use its nodes keep them and keep their last compiled shader, so they still draw the same in the game; those nodes can't be edited or recompiled until it's back on.
+
+### Texture data
+
+**Texture Sample** and similar nodes have a **Linear data** box. Tick it for normal maps, roughness, metallic, AO and masks so they are read without colour conversion; leave it off for colour textures. The typed nodes (Normal Texture, Roughness Texture and so on) are always right.
+
+### What still isn't there
+
+- **Transform** passes its input through unchanged for now.
+- In a Masked material with its own shader, the cut-out *shadow* follows the base colour texture's alpha, not anything the graph does to it per pixel.
+- Skinned characters and particles draw with the standard surface, not a material's compiled shader.
 - **Scripts can't change materials while the game runs.** There's no material API in Lua yet.
-
-Per pixel materials are on the way. Until then, if a material looks different in the graph than you expected, check whether it relies on one of the nodes above.
 
 ## Older materials
 
-If a material from an earlier version of Hephaestus has no graph, it opens in **Legacy PBR** mode, where you edit the values directly. Click **Convert to graph** when you want node editing. Nothing is lost either way.
+A material from an earlier version of Hephaestus that has no graph opens as one: the editor builds a graph from its values and textures (a Multiply node where a texture is tinted or scaled) that renders exactly the same. The file only changes when you save. If a material uses something a graph can't express yet (a world-aligned material reading a packed map's green, blue or alpha channel), or its saved graph is broken, it opens in **Legacy PBR** mode instead, where you edit the values directly, and **Convert to graph** is there when you want node editing anyway.
 
 ## Particle effects
 

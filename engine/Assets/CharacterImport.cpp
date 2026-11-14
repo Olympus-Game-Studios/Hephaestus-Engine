@@ -8,12 +8,9 @@
 #include "AssetPathPolicy.h"
 #include "CharacterRuntime.h"
 #include "FbxDocument.h"
+#include "ModelMaterialImport.h"
 
 #include <nlohmann/json.hpp>
-#include "stb_image.h"
-#define STB_IMAGE_WRITE_STATIC
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "../../extern/glfw/deps/stb_image_write.h"
 
 #include <algorithm>
 #include <cctype>
@@ -27,57 +24,6 @@ namespace {
 
 std::string SanitizeCharacterName(std::string name);
 
-// Writes a texture beside the material and returns its portable path, or empty when there is none.
-std::string WriteImportedTexture(const FbxTextureSource& texture, const std::filesystem::path& folder,
-                                 const std::string& stem, const std::filesystem::path& projectRoot) {
-    if (!texture.Exists()) {
-        return {};
-    }
-    std::error_code ec;
-    std::filesystem::path target;
-    if (!texture.embedded.empty()) {
-        target = folder / (stem + texture.extension);
-        std::ofstream out(target, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(texture.embedded.data()),
-                  static_cast<std::streamsize>(texture.embedded.size()));
-        if (!out) {
-            return {};
-        }
-    } else {
-        target = folder / (stem + texture.file.extension().string());
-        std::filesystem::copy_file(texture.file, target, std::filesystem::copy_options::overwrite_existing, ec);
-        if (ec) {
-            return {};
-        }
-    }
-    return AssetPathPolicy::ToPortableKey(projectRoot, target.generic_string());
-}
-
-// The glossiness map scales the Phong shininess exponent; each texel converts with the same formula ufbx and
-// Blender use for the exponent itself (roughness = 1 - sqrt(exponent) / 10). Returns the PNG's portable path.
-std::string WriteRoughnessFromGlossiness(const FbxTextureSource& gloss, float shininessExponent,
-                                         const std::filesystem::path& folder, const std::string& stem,
-                                         const std::filesystem::path& projectRoot) {
-    int width = 0, height = 0, channels = 0;
-    stbi_uc* pixels = gloss.embedded.empty()
-        ? stbi_load(gloss.file.string().c_str(), &width, &height, &channels, 1)
-        : stbi_load_from_memory(gloss.embedded.data(), static_cast<int>(gloss.embedded.size()), &width, &height,
-                                &channels, 1);
-    if (!pixels) {
-        return {};
-    }
-    const size_t count = static_cast<size_t>(width) * static_cast<size_t>(height);
-    for (size_t i = 0; i < count; ++i) {
-        const float exponent = std::max(0.0f, shininessExponent) * (static_cast<float>(pixels[i]) / 255.0f);
-        const float roughness = std::clamp(1.0f - std::sqrt(exponent) / 10.0f, 0.0f, 1.0f);
-        pixels[i] = static_cast<stbi_uc>(std::lround(roughness * 255.0f));
-    }
-    const std::filesystem::path target = folder / (stem + ".png");
-    const bool written = stbi_write_png(target.string().c_str(), width, height, 1, pixels, width) != 0;
-    stbi_image_free(pixels);
-    return written ? AssetPathPolicy::ToPortableKey(projectRoot, target.generic_string()) : std::string();
-}
-
 // Gives each empty submesh slot a material built from the FBX material of the same name.
 void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std::filesystem::path& sourceFbx,
                             const std::filesystem::path& ownedAbs, CharacterAsset& asset) {
@@ -86,7 +32,7 @@ void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std:
     if (!ReadFbxMaterials(sourceFbx, materials, error)) {
         return;
     }
-    const std::filesystem::path folder = ownedAbs / "materials";
+    MaterialAssetWriter writer(projectRoot, ownedAbs / "materials");
     for (CharacterSubmeshSlot& slot : asset.mesh.submeshes) {
         if (!slot.material.empty()) {
             continue;
@@ -96,35 +42,11 @@ void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std:
         if (found == materials.end()) {
             continue;
         }
-        std::error_code ec;
-        std::filesystem::create_directories(folder, ec);
-        const std::string stem = SanitizeCharacterName(slot.name);
-        const std::string albedo = WriteImportedTexture(found->baseColorTexture, folder, stem + "_BaseColor",
-                                                        projectRoot);
-        const std::string normal = WriteImportedTexture(found->normalTexture, folder, stem + "_Normal", projectRoot);
-        std::string roughnessMap = WriteImportedTexture(found->roughnessTexture, folder, stem + "_Roughness",
-                                                        projectRoot);
-        if (roughnessMap.empty() && found->glossinessTexture.Exists()) {
-            roughnessMap = WriteRoughnessFromGlossiness(found->glossinessTexture, found->shininessExponent, folder,
-                                                        stem + "_Roughness", projectRoot);
-        }
-        nlohmann::json material = {
-            {"albedo", {found->baseColor.x, found->baseColor.y, found->baseColor.z}},
-            {"metallic", found->metallic},
-            {"roughness", roughnessMap.empty() ? found->roughness : 1.0f},
-            {"ao", 1.0},
-            {"useAlbedoTexture", !albedo.empty()},
-            {"albedoTexturePath", albedo},
-            {"useNormalTexture", !normal.empty()},
-            {"normalTexturePath", normal},
-            {"useRoughnessTexture", !roughnessMap.empty()},
-            {"roughnessTexturePath", roughnessMap},
-        };
-        const std::filesystem::path materialAbs = folder / (stem + ".hematerial");
-        std::ofstream out(materialAbs, std::ios::trunc);
-        out << material.dump(2) << '\n';
-        if (out) {
-            slot.material = AssetPathPolicy::ToPortableKey(projectRoot, materialAbs.generic_string());
+        std::string writeError;
+        const std::string written =
+            writer.Write(SourceMaterialFromFbx(*found), SanitizeCharacterName(slot.name), writeError);
+        if (!written.empty()) {
+            slot.material = written;
         }
     }
 }

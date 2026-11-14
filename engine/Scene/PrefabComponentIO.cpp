@@ -331,6 +331,9 @@ void CaptureMaterial(const MaterialComponent& material, JsonValue& data) {
     data.objectValue["useMetallicTexture"] = MakeBool(material.useMetallicTexture);
     data.objectValue["aoTexturePath"] = MakeString(material.aoTexturePath);
     data.objectValue["useAoTexture"] = MakeBool(material.useAoTexture);
+    if (material.roughnessChannel != 0) data.objectValue["roughnessChannel"] = MakeNumber(material.roughnessChannel);
+    if (material.metallicChannel != 0) data.objectValue["metallicChannel"] = MakeNumber(material.metallicChannel);
+    if (material.aoChannel != 0) data.objectValue["aoChannel"] = MakeNumber(material.aoChannel);
     data.objectValue["useWorldAlignedTexture"] = MakeBool(material.useWorldAlignedTexture);
     data.objectValue["worldTextureScale"] = MakeNumber(material.worldTextureScale);
 }
@@ -419,6 +422,13 @@ void ApplyMaterial(MaterialComponent& material, const JsonValue& data) {
     }
     if (const JsonValue* useAoValue = data.Find("useAoTexture")) {
         material.useAoTexture = ParseBoolLike(*useAoValue, material.useAoTexture);
+    }
+    for (auto [key, channel] : {std::pair{"roughnessChannel", &material.roughnessChannel},
+                                std::pair{"metallicChannel", &material.metallicChannel},
+                                std::pair{"aoChannel", &material.aoChannel}}) {
+        if (const JsonValue* value = data.Find(key); value && value->IsNumber()) {
+            *channel = static_cast<uint32_t>(value->AsNumber()) & 3u;
+        }
     }
     if (const JsonValue* worldAlignedValue = data.Find("useWorldAlignedTexture")) {
         material.useWorldAlignedTexture = ParseBoolLike(*worldAlignedValue, material.useWorldAlignedTexture);
@@ -1309,6 +1319,18 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         return true;
     }
     return false;
+}
+
+JsonValue MeshRendererToJson(const MeshRendererComponent& mesh) {
+    JsonValue data;
+    CaptureMeshRenderer(mesh, data);
+    return data;
+}
+
+JsonValue MeshColliderToJson(const MeshColliderComponent& collider) {
+    JsonValue data;
+    CaptureMeshCollider(collider, data);
+    return data;
 }
 
 bool CaptureFromEntity(Entity entity, std::vector<PrefabComponentEntry>& out) {

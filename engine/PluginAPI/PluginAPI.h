@@ -53,6 +53,15 @@ struct ToolbarActionDescriptor {
     const char* commandId = nullptr;
 };
 
+/// An icon in the editor's title bar, left of the notifications bell, that runs a command when clicked. Users can
+/// hide it from its right-click menu and show it again from the plugin's right-click menu in Edit > Plugins.
+struct HeaderButtonDescriptor {
+    std::uint32_t structSize = sizeof(HeaderButtonDescriptor);
+    const char* commandId = nullptr; // a command this plugin registered
+    const char* iconPath = nullptr;  // .svg or .png, relative to the plugin folder or absolute
+    const char* toolTip = nullptr;
+};
+
 struct ContextActionDescriptor {
     const char* location = nullptr; // assetBrowser, sceneHierarchy, viewport, inspector
     const char* commandId = nullptr;
@@ -81,6 +90,74 @@ struct ImporterDescriptor {
     void* userData = nullptr;
 };
 
+/// A downloaded asset pack to import into the open project (IAssetService::ImportAssetPack).
+/// Credit fields are optional; when title, author or license is set the asset is added to the project's
+/// generated credits (assets/scripts/ImportedCredits.lua).
+struct AssetPackImportRequest {
+    std::uint32_t structSize = sizeof(AssetPackImportRequest);
+    const char* sourcePath = nullptr;   // .zip, folder, or one .fbx/.glb/.gltf/.obj file
+    const char* targetFolder = nullptr; // portable folder under assets/, e.g. "assets/Imported/Sketchfab/Crate"
+    const char* title = nullptr;
+    const char* source = nullptr;       // e.g. "Sketchfab"
+    const char* sourceUrl = nullptr;
+    const char* author = nullptr;
+    const char* authorUrl = nullptr;
+    const char* license = nullptr;
+    const char* licenseUrl = nullptr;
+};
+
+struct AssetPackImportResult {
+    std::uint32_t structSize = sizeof(AssetPackImportResult);
+    std::uint32_t prefabCount = 0;
+    std::uint32_t materialCount = 0;
+    std::uint32_t warningCount = 0;
+    char folder[512] = {};   // portable folder the pack was imported into
+    char message[2048] = {}; // the error on failure, otherwise the warnings, one per line
+};
+
+/// Called on the editor's main thread with the tool's arguments as a JSON object. The plugin answers with
+/// IAutomationToolService::CompleteCall(callId, ...), before returning or later (after network work, for
+/// example). MCP clients give up on a call after about 30 seconds, so longer work should start a job and
+/// return at once, with another tool to ask how it is going.
+using AutomationToolCallback = void (*)(const char* argumentsJson, std::uint64_t callId, void* userData);
+
+struct AutomationToolDescriptor {
+    const char* name = nullptr;            // [A-Za-z0-9_.-], e.g. "sketchfab.search"
+    const char* description = nullptr;     // what the tool does, for AI clients
+    const char* inputSchemaJson = nullptr; // JSON Schema of the arguments object
+    bool mutatesProject = false;           // true: only offered while the editor is not playing
+    AutomationToolCallback call = nullptr;
+    void* userData = nullptr;
+};
+
+/// The number types material node pins carry.
+enum class MaterialValueType : std::uint32_t { Float = 1, Float2 = 2, Float3 = 3, Float4 = 4 };
+
+/// One pin of a material node. For an output, `glsl` is the expression that computes it; for an input, the value
+/// used when nothing is connected (null means zero). Both may use {0}..{9} for the node's inputs (converted to
+/// their declared types) and {uv}, {worldPos}, {normal}, {viewDir}, {cameraPos}, {time} (seconds), {objectPos} and
+/// {screenPos} (gl_FragCoord).
+struct MaterialNodePin {
+    const char* name = nullptr;
+    MaterialValueType type = MaterialValueType::Float;
+    const char* glsl = nullptr;
+};
+
+/// A node for the Material Editor's graph. It is compiled into each material's own shader, so packaged games need
+/// nothing from the plugin; materials keep the node by typeName while the plugin is off.
+struct MaterialNodeDescriptor {
+    std::uint32_t structSize = sizeof(MaterialNodeDescriptor);
+    const char* typeName = nullptr;    // saved in materials, [A-Za-z0-9_.], unique across core and plugin nodes
+    const char* displayName = nullptr;
+    const char* category = nullptr;    // the library group; "Plugins" when null
+    const char* tooltip = nullptr;
+    const MaterialNodePin* inputs = nullptr;
+    std::uint32_t inputCount = 0;      // up to 10
+    const MaterialNodePin* outputs = nullptr;
+    std::uint32_t outputCount = 0;     // 1 to 8
+    const char* glslFunctions = nullptr; // optional GLSL functions the expressions call, added once per material
+};
+
 enum class SettingScope : std::uint32_t { Editor, Project };
 struct SettingDescriptor {
     const char* id = nullptr;
@@ -107,6 +184,7 @@ public:
     virtual bool RegisterToolbarAction(const ToolbarActionDescriptor& descriptor) = 0;
     virtual bool RegisterContextAction(const ContextActionDescriptor& descriptor) = 0;
     virtual bool ShowPanel(const char* panelId) = 0;
+    virtual bool RegisterHeaderButton(const HeaderButtonDescriptor&) { return false; }
 };
 
 class IAssetService {
@@ -114,6 +192,10 @@ public:
     virtual ~IAssetService() = default;
     virtual bool RegisterAssetType(const AssetTypeDescriptor& descriptor) = 0;
     virtual bool RegisterImporter(const ImporterDescriptor& descriptor) = 0;
+    /// Imports models, materials (applied through one prefab per model), textures and the licence record.
+    /// Appended to API 1 after its first release; an older editor's vtable has no such entry, so a plugin that
+    /// calls it requires a matching "engineVersion" in its manifest.
+    virtual bool ImportAssetPack(const AssetPackImportRequest& request, AssetPackImportResult& result) = 0;
 };
 
 class ISceneService {
@@ -150,6 +232,23 @@ public:
     virtual bool Set(const char* settingId, const char* value) = 0;
 };
 
+/// Tools a plugin adds to the editor's automation surface, which the Hephaestus MCP plugin offers to AI clients.
+/// A plugin's tools disappear when it unloads.
+class IAutomationToolService {
+public:
+    virtual ~IAutomationToolService() = default;
+    virtual bool RegisterTool(const AutomationToolDescriptor& descriptor) = 0;
+    /// success: resultJson is the JSON object returned to the caller; otherwise it is the error message.
+    virtual bool CompleteCall(std::uint64_t callId, bool success, const char* resultJson) = 0;
+};
+
+/// Nodes a plugin adds to material graphs. They disappear from the editor when the plugin unloads.
+class IMaterialNodeService {
+public:
+    virtual ~IMaterialNodeService() = default;
+    virtual bool RegisterNode(const MaterialNodeDescriptor& descriptor) = 0;
+};
+
 class IPluginContext {
 public:
     virtual ~IPluginContext() = default;
@@ -161,6 +260,11 @@ public:
     virtual IUndoService& Undo() = 0;
     virtual IProjectService& Project() = 0;
     virtual ISettingsService& Settings() = 0;
+    /// Appended to API 1 after its first release (see IAssetService::ImportAssetPack); null where the host has
+    /// no automation.
+    virtual IAutomationToolService* AutomationTools() { return nullptr; }
+    /// Appended to API 1 after AutomationTools; null where the host has no Material Editor.
+    virtual IMaterialNodeService* MaterialNodes() { return nullptr; }
 };
 
 class IHephaestusPlugin {

@@ -17,6 +17,7 @@ struct Value {
     std::string texturePath;
     bool isWorldAligned = false;
     float worldAlignedScale = 1.0f;
+    uint32_t channel = 0; ///< channel of a texture a scalar map reads, set by Break Vector and Component Mask
 };
 
 Value MakeDefault(ValueType type) {
@@ -36,14 +37,6 @@ Value MakeDefault(ValueType type) {
         break;
     }
     return value;
-}
-
-Float3 Add(const Float3& a, const Float3& b) {
-    return Float3{a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-Float3 Multiply(const Float3& a, const Float3& b) {
-    return Float3{a.x * b.x, a.y * b.y, a.z * b.z};
 }
 
 Float3 Lerp(const Float3& a, const Float3& b, float alpha) {
@@ -95,6 +88,26 @@ Value Coerce(Value value, ValueType targetType) {
         value.type = targetType;
     }
     return value;
+}
+
+/** Add, Subtract, Multiply and Divide work on the widest of their inputs, broadcasting a scalar. */
+template <typename Op>
+Value Arithmetic(Value a, Value b, Op op) {
+    ValueType type = ValueTypeComponentCount(a.type) >= ValueTypeComponentCount(b.type) ? a.type : b.type;
+    if (!IsNumericValueType(type)) {
+        type = ValueType::Float1;
+    }
+    a = Coerce(a, type);
+    b = Coerce(b, type);
+    Value result;
+    result.type = type;
+    if (type == ValueType::Float1) {
+        result.scalar = op(a.scalar, b.scalar);
+    } else {
+        result.vec = Float3{op(a.vec.x, b.vec.x), op(a.vec.y, b.vec.y), op(a.vec.z, b.vec.z)};
+        result.scalar = result.vec.x;
+    }
+    return result;
 }
 
 bool EvaluateOutputPin(const Graph& graph,
@@ -245,50 +258,30 @@ bool EvaluateOutputPin(const Graph& graph,
         }
         break;
     }
-    case NodeType::Add: {
-        Value a = Coerce(fetchInput(0), pin->valueType);
-        Value b = Coerce(fetchInput(1), pin->valueType);
-        if (pin->valueType == ValueType::Float1) {
-            result.scalar = a.scalar + b.scalar;
-        } else {
-            result.vec = Add(a.vec, b.vec);
-        }
+    case NodeType::Add:
+        result = Arithmetic(fetchInput(0), fetchInput(1), [](float x, float y) { return x + y; });
         break;
-    }
-    case NodeType::Subtract: {
-        Value a = Coerce(fetchInput(0), pin->valueType);
-        Value b = Coerce(fetchInput(1), pin->valueType);
-        if (pin->valueType == ValueType::Float1) {
-            result.scalar = a.scalar - b.scalar;
-        } else {
-            result.vec = Float3{a.vec.x - b.vec.x, a.vec.y - b.vec.y, a.vec.z - b.vec.z};
-        }
+    case NodeType::Subtract:
+        result = Arithmetic(fetchInput(0), fetchInput(1), [](float x, float y) { return x - y; });
         break;
-    }
     case NodeType::Multiply: {
-        Value a = Coerce(fetchInput(0), pin->valueType);
-        Value b = Coerce(fetchInput(1), pin->valueType);
-        if (pin->valueType == ValueType::Float1) {
-            result.scalar = a.scalar * b.scalar;
-        } else {
-            result.vec = Multiply(a.vec, b.vec);
+        const Value a = fetchInput(0);
+        const Value b = fetchInput(1);
+        result = Arithmetic(a, b, [](float x, float y) { return x * y; });
+        if (a.hasTexture != b.hasTexture) {
+            const Value& sampled = a.hasTexture ? a : b;
+            result.hasTexture = true;
+            result.texturePath = sampled.texturePath;
+            result.isWorldAligned = sampled.isWorldAligned;
+            result.worldAlignedScale = sampled.worldAlignedScale;
+            result.channel = sampled.channel;
         }
         break;
     }
-    case NodeType::Divide: {
-        Value a = Coerce(fetchInput(0), pin->valueType);
-        Value b = Coerce(fetchInput(1), pin->valueType);
-        if (pin->valueType == ValueType::Float1) {
-            result.scalar = std::abs(b.scalar) > 0.00001f ? a.scalar / b.scalar : 0.0f;
-        } else {
-            result.vec = Float3{
-                std::abs(b.vec.x) > 0.00001f ? a.vec.x / b.vec.x : 0.0f,
-                std::abs(b.vec.y) > 0.00001f ? a.vec.y / b.vec.y : 0.0f,
-                std::abs(b.vec.z) > 0.00001f ? a.vec.z / b.vec.z : 0.0f
-            };
-        }
+    case NodeType::Divide:
+        result = Arithmetic(fetchInput(0), fetchInput(1),
+                            [](float x, float y) { return std::abs(y) > 0.00001f ? x / y : 0.0f; });
         break;
-    }
     case NodeType::Clamp: {
         Value value = fetchInput(0);
         Value minValue = fetchInput(1);
@@ -354,6 +347,13 @@ bool EvaluateOutputPin(const Graph& graph,
         const int count = (node->maskR ? 1 : 0) + (node->maskG ? 1 : 0) + (node->maskB ? 1 : 0) + (node->maskA ? 1 : 0);
         result.type = count <= 1 ? ValueType::Float1 : (count == 2 ? ValueType::Float2 : (count == 3 ? ValueType::Float3 : ValueType::Float4));
         result.scalar = node->maskR ? value.vec.x : (node->maskG ? value.vec.y : (node->maskB ? value.vec.z : 1.0f));
+        if (value.hasTexture && count == 1) {
+            result.hasTexture = true;
+            result.texturePath = value.texturePath;
+            result.isWorldAligned = value.isWorldAligned;
+            result.worldAlignedScale = value.worldAlignedScale;
+            result.channel = node->maskR ? 0u : (node->maskG ? 1u : (node->maskB ? 2u : 3u));
+        }
         result.vec = Float3{
             node->maskR ? value.vec.x : result.scalar,
             node->maskG ? value.vec.y : result.scalar,
@@ -374,6 +374,13 @@ bool EvaluateOutputPin(const Graph& graph,
             }
         }
         result.scalar = outputIndex == 0 ? value.vec.x : (outputIndex == 1 ? value.vec.y : (outputIndex == 2 ? value.vec.z : 1.0f));
+        if (value.hasTexture) {
+            result.hasTexture = true;
+            result.texturePath = value.texturePath;
+            result.isWorldAligned = value.isWorldAligned;
+            result.worldAlignedScale = value.worldAlignedScale;
+            result.channel = static_cast<uint32_t>(std::clamp(outputIndex, 0, 3));
+        }
         break;
     }
     case NodeType::NormalUnpack: {
@@ -427,21 +434,10 @@ bool EvaluateOutputPin(const Graph& graph,
         break;
     }
     case NodeType::TexCoord:
-    case NodeType::ScreenPosition:
     case NodeType::Transform:
     case NodeType::TextureTilingOffset:
-    case NodeType::Noise:
-    case NodeType::Gradient:
-    case NodeType::Fresnel:
-    case NodeType::UVDistortion:
-    case NodeType::Time:
-    case NodeType::CameraVector:
-    case NodeType::ViewDirection:
-    case NodeType::ReflectionVector:
-    case NodeType::WorldPosition:
-    case NodeType::ObjectPosition:
-    case NodeType::DistanceToCamera:
     case NodeType::StaticSwitchParameter:
+    case NodeType::Custom:
         // Per-fragment/runtime-only nodes are represented by the shader generator.
         break;
     case NodeType::MaterialOutput:
@@ -476,7 +472,8 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
 
     auto resolveColor = [&](PinID inputPin, const Float3& fallback, bool affectTexture, Vec3& outColor, bool& outUseTexture, std::string& outTexturePath, bool* outWorldAligned = nullptr, float* outWorldScale = nullptr) {
         bool connected = false;
-        Value value = EvaluateInputPin(graph, inputPin, cache, active, outErrorMessage, &connected);
+        const Value value = Coerce(EvaluateInputPin(graph, inputPin, cache, active, outErrorMessage, &connected),
+                                   ValueType::Float3);
         if (!outErrorMessage.empty()) {
             return;
         }
@@ -491,6 +488,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
             return;
         }
         if ((value.hasTexture || !value.texturePath.empty()) && affectTexture) {
+            outColor = Vec3(value.vec.x, value.vec.y, value.vec.z);
             outUseTexture = true;
             outTexturePath = value.texturePath;
             // Handle world-aligned texture
@@ -525,9 +523,11 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
 
     const float emissiveStrength = outMaterial.emissiveStrength;
     const float reflectionStrength = outMaterial.reflectionStrength;
+    const MaterialBlendMode blendMode = outMaterial.blendMode;
     outMaterial = MaterialComponent();
     outMaterial.emissiveStrength = emissiveStrength;
     outMaterial.reflectionStrength = reflectionStrength;
+    outMaterial.blendMode = blendMode;
 
     // Track if any texture uses world-aligned mode
     bool anyWorldAligned = false;
@@ -559,6 +559,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useMetallicTexture = true;
             outMaterial.metallicTexturePath = texValue.texturePath;
+            outMaterial.metallicChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
@@ -576,6 +577,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useRoughnessTexture = true;
             outMaterial.roughnessTexturePath = texValue.texturePath;
+            outMaterial.roughnessChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
@@ -616,6 +618,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
             // A map keeps the Roughness pin's value, which the shader multiplies it by.
             outMaterial.useRoughnessTexture = true;
             outMaterial.roughnessTexturePath = texValue.texturePath;
+            outMaterial.roughnessChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
@@ -638,6 +641,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useAoTexture = true;
             outMaterial.aoTexturePath = texValue.texturePath;
+            outMaterial.aoChannel = texValue.channel;
             if (texValue.isWorldAligned) {
                 anyWorldAligned = true;
                 worldScale = texValue.worldAlignedScale;
@@ -664,6 +668,238 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
     }
 
     return true;
+}
+
+namespace {
+
+struct FixedFunctionInfo {
+    bool exact = true;
+    bool textured = false;
+    bool scaled = false;       ///< a texture multiplied by a factor
+    bool worldAligned = false;
+    ValueType type = ValueType::Float1;
+};
+
+class FixedFunctionCheck {
+public:
+    explicit FixedFunctionCheck(const Graph& graph) : m_graph(graph) {}
+
+    FixedFunctionInfo Input(const Node& node, size_t index) {
+        if (index >= node.inputs.size()) {
+            return {};
+        }
+        const PinID source = m_graph.FindInputSource(node.inputs[index]);
+        return source == 0 ? FixedFunctionInfo{} : Output(source);
+    }
+
+    bool Connected(const Node& node, size_t index) const {
+        return index < node.inputs.size() && m_graph.FindInputSource(node.inputs[index]) != 0;
+    }
+
+    std::vector<bool> worldAlignedTextures;
+
+private:
+    FixedFunctionInfo Output(PinID pinId) {
+        if (const auto it = m_cache.find(pinId); it != m_cache.end()) {
+            return it->second;
+        }
+        if (!m_active.insert(pinId).second) {
+            return {false};
+        }
+        const Pin* pin = m_graph.FindPin(pinId);
+        const Node* node = pin ? m_graph.FindNode(pin->node) : nullptr;
+        FixedFunctionInfo info;
+        if (!pin || !node) {
+            info.exact = false;
+        } else {
+            info = Evaluate(*node, *pin);
+        }
+        m_active.erase(pinId);
+        m_cache[pinId] = info;
+        return info;
+    }
+
+    FixedFunctionInfo Texture(bool worldAligned, ValueType type) {
+        worldAlignedTextures.push_back(worldAligned);
+        FixedFunctionInfo info;
+        info.textured = true;
+        info.worldAligned = worldAligned;
+        info.type = type;
+        return info;
+    }
+
+    FixedFunctionInfo Evaluate(const Node& node, const Pin& pin) {
+        FixedFunctionInfo info;
+        info.type = pin.valueType;
+        switch (node.type) {
+        case NodeType::ConstantFloat:
+        case NodeType::ConstantVec3:
+        case NodeType::ColorParameter:
+        case NodeType::FloatParameter:
+        case NodeType::BoolParameter:
+        case NodeType::Vector2Parameter:
+            return info;
+        case NodeType::AlbedoTextureSample:
+        case NodeType::NormalTextureSample:
+        case NodeType::RoughnessTextureSample:
+        case NodeType::MetallicTextureSample:
+        case NodeType::AoTextureSample:
+            return Texture(false, pin.valueType);
+        case NodeType::WorldAlignedTexture:
+            return Texture(true, pin.valueType);
+        case NodeType::TextureSample:
+            if (Connected(node, 0)) {
+                return {false};
+            }
+            return Texture(false, pin.valueType);
+        case NodeType::BreakVector:
+        case NodeType::ComponentMask: {
+            const FixedFunctionInfo source = Input(node, 0);
+            const int masked = node.type == NodeType::BreakVector ? 1
+                : (node.maskR ? 1 : 0) + (node.maskG ? 1 : 0) + (node.maskB ? 1 : 0) + (node.maskA ? 1 : 0);
+            if (!source.exact || source.scaled || (source.textured && masked != 1)) {
+                return {false};
+            }
+            info.textured = source.textured;
+            info.worldAligned = source.worldAligned;
+            info.type = masked == 1 ? ValueType::Float1 : source.type;
+            return info;
+        }
+        case NodeType::Multiply:
+        case NodeType::Add:
+        case NodeType::Subtract:
+        case NodeType::Divide: {
+            const FixedFunctionInfo a = Input(node, 0);
+            const FixedFunctionInfo b = Input(node, 1);
+            const bool multiply = node.type == NodeType::Multiply;
+            if (!a.exact || !b.exact || (a.textured && b.textured) || (!multiply && (a.textured || b.textured))) {
+                return {false};
+            }
+            info.textured = a.textured || b.textured;
+            info.scaled = info.textured;
+            info.worldAligned = a.worldAligned || b.worldAligned;
+            info.type = ValueTypeComponentCount(a.type) >= ValueTypeComponentCount(b.type) ? a.type : b.type;
+            return info;
+        }
+        case NodeType::Clamp:
+        case NodeType::Saturate:
+        case NodeType::Power:
+        case NodeType::Abs:
+        case NodeType::Min:
+        case NodeType::Max:
+        case NodeType::OneMinus:
+        case NodeType::Step:
+        case NodeType::SmoothStep:
+        case NodeType::If:
+        case NodeType::Compare:
+            for (size_t i = 0; i < node.inputs.size(); ++i) {
+                const FixedFunctionInfo input = Input(node, i);
+                if (!input.exact || input.textured || input.type != ValueType::Float1) {
+                    return {false};
+                }
+            }
+            return info;
+        default:
+            return {false};
+        }
+    }
+
+    const Graph& m_graph;
+    std::unordered_map<PinID, FixedFunctionInfo> m_cache;
+    std::unordered_set<PinID> m_active;
+};
+
+} // namespace
+
+bool GraphNeedsCompiledShader(const Graph& graph) {
+    const Node* output = nullptr;
+    for (const Node& node : graph.GetNodes()) {
+        if (node.type == NodeType::MaterialOutput) {
+            output = &node;
+            break;
+        }
+    }
+    if (!output) {
+        return false;
+    }
+    enum Pin { BaseColor, Metallic, Roughness, Emissive, NormalMap, RoughnessMap, AoMap };
+    FixedFunctionCheck check(graph);
+    for (size_t pin = 0; pin < output->inputs.size(); ++pin) {
+        if (!check.Connected(*output, pin)) {
+            continue;
+        }
+        const FixedFunctionInfo info = check.Input(*output, pin);
+        if (!info.exact) {
+            return true;
+        }
+        if (!info.textured) {
+            if (pin == NormalMap) {
+                return true;
+            }
+            continue;
+        }
+        const bool scalarMap = pin == Metallic || pin == Roughness || pin == RoughnessMap || pin == AoMap;
+        if (pin == BaseColor) {
+            if (info.type == ValueType::Float1) {
+                return true;
+            }
+        } else if (pin == NormalMap) {
+            if (info.scaled) {
+                return true;
+            }
+        } else if (!scalarMap) {
+            return true;
+        }
+    }
+    const auto& aligned = check.worldAlignedTextures;
+    return std::find(aligned.begin(), aligned.end(), true) != aligned.end() &&
+           std::find(aligned.begin(), aligned.end(), false) != aligned.end();
+}
+
+std::string DescribeRenderedDifferences(const MaterialComponent& a, const MaterialComponent& b) {
+    std::string out;
+    auto num = [&](const char* name, float x, float y) {
+        if (std::abs(x - y) > 1e-5f) out += std::string(" ") + name;
+    };
+    auto vec = [&](const char* name, const Vec3& x, const Vec3& y) {
+        num(name, x.x, y.x);
+        num(name, x.y, y.y);
+        num(name, x.z, y.z);
+    };
+    auto map = [&](const char* name, bool useA, const std::string& pathA, bool useB, const std::string& pathB) {
+        const bool onA = useA && !pathA.empty();
+        const bool onB = useB && !pathB.empty();
+        if (onA != onB || (onA && pathA != pathB)) out += std::string(" ") + name;
+    };
+    vec("albedo", a.albedo, b.albedo);
+    num("metallic", a.metallic, b.metallic);
+    num("roughness", a.roughness, b.roughness);
+    num("ao", a.ao, b.ao);
+    vec("emissive", a.emissive, b.emissive);
+    num("emissiveStrength", a.emissiveStrength, b.emissiveStrength);
+    num("reflectionStrength", a.reflectionStrength, b.reflectionStrength);
+    num("specular", a.specular, b.specular);
+    num("opacity", a.opacity, b.opacity);
+    num("opacityMask", a.opacityMask, b.opacityMask);
+    num("refraction", a.refraction, b.refraction);
+    if (a.blendMode != b.blendMode) out += " blendMode";
+    map("albedoTexture", a.useAlbedoTexture, a.albedoTexturePath, b.useAlbedoTexture, b.albedoTexturePath);
+    map("normalTexture", a.useNormalTexture, a.normalTexturePath, b.useNormalTexture, b.normalTexturePath);
+    map("roughnessTexture", a.useRoughnessTexture, a.roughnessTexturePath, b.useRoughnessTexture,
+        b.roughnessTexturePath);
+    map("metallicTexture", a.useMetallicTexture, a.metallicTexturePath, b.useMetallicTexture, b.metallicTexturePath);
+    map("aoTexture", a.useAoTexture, a.aoTexturePath, b.useAoTexture, b.aoTexturePath);
+    if (a.useRoughnessTexture && a.roughnessChannel != b.roughnessChannel) out += " roughnessChannel";
+    if (a.useMetallicTexture && a.metallicChannel != b.metallicChannel) out += " metallicChannel";
+    if (a.useAoTexture && a.aoChannel != b.aoChannel) out += " aoChannel";
+    const bool textured = (a.useAlbedoTexture && !a.albedoTexturePath.empty()) ||
+                          (a.useNormalTexture && !a.normalTexturePath.empty()) ||
+                          (a.useRoughnessTexture && !a.roughnessTexturePath.empty()) ||
+                          (a.useMetallicTexture && !a.metallicTexturePath.empty()) ||
+                          (a.useAoTexture && !a.aoTexturePath.empty());
+    if (textured && a.useWorldAlignedTexture != b.useWorldAlignedTexture) out += " useWorldAlignedTexture";
+    if (textured && a.useWorldAlignedTexture) num("worldTextureScale", a.worldTextureScale, b.worldTextureScale);
+    return out;
 }
 
 } // namespace MaterialEditor

@@ -141,8 +141,44 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
         fragCode = readFile("shaders/" + fragmentShader);
     }
 
-    VkShaderModule vertShader = createShaderModule(vertCode);
+    m_vertexCode = vertCode;
+
+    // Push constant for model matrix (64 bytes = 4x4 float matrix)
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = 64; // sizeof(Mat4) = 16 floats * 4 bytes
+
+    std::vector<VkDescriptorSetLayout> setLayouts = {descriptorSetLayout};
+    setLayouts.insert(setLayouts.end(), extraSetLayouts.begin(), extraSetLayouts.end());
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    layoutInfo.pSetLayouts = setLayouts.data();
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
+    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create pipeline layout");
+
     VkShaderModule fragShader = createShaderModule(fragCode);
+    SurfacePipelines surface;
+    const bool built = buildSurfacePipelines(fragShader, enableWireframe, surface);
+    vkDestroyShaderModule(device, fragShader, nullptr);
+    if (!built) {
+        throw std::runtime_error("Failed to create graphics pipeline");
+    }
+    pipeline = surface.opaque;
+    pipelineBackface = surface.opaqueBackface;
+    pipelineWireframe = surface.wireframe;
+    pipelineWireframeBackface = surface.wireframeBackface;
+    pipelineAlphaBlend = surface.alphaBlend;
+    pipelineAdditive = surface.additive;
+}
+
+bool VulkanPipeline::buildSurfacePipelines(VkShaderModule fragShader, bool wireframe, SurfacePipelines& out)
+{
+    out = {};
+    VkShaderModule vertShader = createShaderModule(m_vertexCode);
 
     VkPipelineShaderStageCreateInfo vertStage{};
     vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -212,23 +248,6 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     blend.attachmentCount = 1;
     blend.pAttachments = &colorAttach;
 
-    // Push constant for model matrix (64 bytes = 4x4 float matrix)
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = 64; // sizeof(Mat4) = 16 floats * 4 bytes
-
-    std::vector<VkDescriptorSetLayout> setLayouts = {descriptorSetLayout};
-    setLayouts.insert(setLayouts.end(), extraSetLayouts.begin(), extraSetLayouts.end());
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
-    layoutInfo.pSetLayouts = setLayouts.data();
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushConstantRange;
-    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &layout) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create pipeline layout");
-
     VkGraphicsPipelineCreateInfo basePci{};
     basePci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     basePci.stageCount = 2;
@@ -251,6 +270,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     dyn.pDynamicStates = dynamics;
     basePci.pDynamicState = &dyn;
 
+    bool ok = true;
     auto buildPipeline = [&](VkCullModeFlags cullMode, VkPolygonMode polygonMode) -> VkPipeline {
         VkPipelineRasterizationStateCreateInfo raster = rasterBase;
         raster.cullMode = cullMode;
@@ -261,17 +281,17 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
 
         VkPipeline handle = VK_NULL_HANDLE;
         if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &handle) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create graphics pipeline");
+            ok = false;
         }
         return handle;
     };
 
-    pipeline = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
-    pipelineBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT, VK_POLYGON_MODE_FILL);
+    out.opaque = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+    out.opaqueBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT, VK_POLYGON_MODE_FILL);
 
-    if (enableWireframe) {
-        pipelineWireframe = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_LINE);
-        pipelineWireframeBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT, VK_POLYGON_MODE_LINE);
+    if (wireframe) {
+        out.wireframe = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_LINE);
+        out.wireframeBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT, VK_POLYGON_MODE_LINE);
     }
 
     depth.depthWriteEnable = VK_FALSE;
@@ -283,13 +303,44 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     colorAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    pipelineAlphaBlend = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+    out.alphaBlend = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
     colorAttach.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    pipelineAdditive = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+    out.additive = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
 
     vkDestroyShaderModule(device, vertShader, nullptr);
+    if (!ok) {
+        DestroySurfacePipelines(out);
+    }
+    return ok;
+}
+
+bool VulkanPipeline::CreateSurfacePipelines(const std::vector<std::uint32_t>& fragmentSpirv, SurfacePipelines& out)
+{
+    if (device == VK_NULL_HANDLE || layout == VK_NULL_HANDLE || fragmentSpirv.empty()) {
+        return false;
+    }
+    VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    ci.codeSize = fragmentSpirv.size() * sizeof(std::uint32_t);
+    ci.pCode = fragmentSpirv.data();
+    VkShaderModule fragShader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device, &ci, nullptr, &fragShader) != VK_SUCCESS) {
+        return false;
+    }
+    const bool built = buildSurfacePipelines(fragShader, false, out);
     vkDestroyShaderModule(device, fragShader, nullptr);
+    return built;
+}
+
+void VulkanPipeline::DestroySurfacePipelines(SurfacePipelines& pipelines) const
+{
+    for (VkPipeline* handle : {&pipelines.opaque, &pipelines.opaqueBackface, &pipelines.wireframe,
+                               &pipelines.wireframeBackface, &pipelines.alphaBlend, &pipelines.additive}) {
+        if (*handle != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, *handle, nullptr);
+            *handle = VK_NULL_HANDLE;
+        }
+    }
 }
 
 void VulkanPipeline::CreateOutlinePipeline()

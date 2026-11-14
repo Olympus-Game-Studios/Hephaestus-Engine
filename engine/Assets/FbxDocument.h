@@ -78,6 +78,8 @@ struct FbxMaterialInfo {
     FbxTextureSource normalTexture;
     FbxTextureSource roughnessTexture;   ///< roughness map, used as is
     FbxTextureSource glossinessTexture;  ///< glossiness map (Mixamo, Phong exporters), scales shininessExponent
+    FbxTextureSource metallicTexture;
+    FbxTextureSource aoTexture;
     float shininessExponent = 20.0f;      ///< FBX ShininessExponent the glossiness map scales
 };
 

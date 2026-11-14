@@ -6,6 +6,7 @@
 #include "Scene/PrefabOverrideSystem.h"
 #include "UI/MaterialEditor/MaterialAssetSerializer.h"
 #include "UI/MaterialEditor/MaterialGraph.h"
+#include "UI/MaterialEditor/MaterialGraphEvaluator.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -383,6 +384,73 @@ void RegisterMaterialAutomation(AutomationService& service)
                                {"graphAuthored", graph.HasSourceGraph() && !graph.IsLegacyMode()}}},
                  {"properties", MaterialToJson(material)},
                  {"saved", true}});
+        }, true));
+
+    RegisterOrThrow(service, Definition(
+        "material.convert_to_graph",
+        "Give materials that have no node graph one built from their own values and textures, as the Material "
+        "Editor does when it opens them. path is a material or a folder (searched recursively). A material is only "
+        "written when its graph renders exactly like it; the others are listed with the reason.",
+        ObjectSchema({{"path", {{"type", "string"}}}}, Json::array({"path"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            Hephaestus::AssetManager* assets = RequireAssets(context, failure);
+            if (!assets) return failure;
+            if (!arguments.contains("path") || !arguments["path"].is_string()) {
+                return Failure(ErrorCode::InvalidArguments, "A material or folder path is required");
+            }
+            std::string error;
+            const auto root = ResolveAssetPath(assets->GetProjectRoot(), assets->GetAssetRoot(),
+                                               arguments["path"].get<std::string>(), error);
+            if (!root) return Failure(ErrorCode::InvalidArguments, error);
+            std::vector<std::filesystem::path> files;
+            std::error_code ec;
+            if (std::filesystem::is_directory(*root, ec)) {
+                for (std::filesystem::recursive_directory_iterator it(*root, ec), end; it != end; it.increment(ec)) {
+                    if (ec) break;
+                    if (it->is_regular_file(ec) && it->path().extension() == ".hematerial") files.push_back(it->path());
+                }
+                std::sort(files.begin(), files.end());
+            } else if (std::filesystem::is_regular_file(*root, ec)) {
+                files.push_back(*root);
+            } else {
+                return Failure(ErrorCode::InvalidArguments, "Not found: " + arguments["path"].get<std::string>());
+            }
+
+            Json converted = Json::array();
+            Json skipped = Json::array();
+            for (const std::filesystem::path& file : files) {
+                const std::string portable = AssetPathPolicy::ToPortableKey(assets->GetProjectRoot(), file.generic_string());
+                MaterialComponent material;
+                MaterialEditor::Graph graph;
+                std::string displayName;
+                if (!MaterialEditor::LoadMaterialAssetCompat(file, material, displayName, graph, error)) {
+                    skipped.push_back({{"path", portable}, {"reason", error}});
+                    continue;
+                }
+                if (graph.HasSourceGraph()) {
+                    skipped.push_back({{"path", portable}, {"reason", "already has a graph"}});
+                    continue;
+                }
+                MaterialEditor::BuildMinimalGraphFromLegacyPbr(material, graph);
+                MaterialComponent evaluated = material;
+                if (!MaterialEditor::EvaluateGraph(graph, evaluated, error)) {
+                    skipped.push_back({{"path", portable}, {"reason", error}});
+                    continue;
+                }
+                const std::string differences = MaterialEditor::DescribeRenderedDifferences(material, evaluated);
+                if (!differences.empty()) {
+                    skipped.push_back({{"path", portable}, {"reason", "a graph cannot express:" + differences}});
+                    continue;
+                }
+                if (!MaterialEditor::SaveMaterialAssetCompat(file, material, displayName, graph, {}, error)) {
+                    skipped.push_back({{"path", portable}, {"reason", error}});
+                    continue;
+                }
+                converted.push_back(portable);
+            }
+            if (!converted.empty()) context.Backend().NotifyAssetChanged();
+            return ToolResult::Success({{"converted", converted}, {"skipped", skipped}});
         }, true));
 
     RegisterOrThrow(service, Definition(

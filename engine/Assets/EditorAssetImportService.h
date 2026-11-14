@@ -25,6 +25,11 @@ public:
     bool QueueReimport(const std::string& absoluteSource, std::string& outError) override;
     bool PollCompletion(const std::string& absoluteSource,
                         Hephaestus::Automation::AssetImportStatus& outStatus) override;
+    bool ImportPack(const Hephaestus::AssetIntakeRequest& request, Hephaestus::AssetIntakeResult& outResult,
+                    std::string& outError) override
+    {
+        return Hephaestus::AssetIntake::Import(request, outResult, outError);
+    }
 
 private:
     static std::string NormalizeKey(const std::string& path);

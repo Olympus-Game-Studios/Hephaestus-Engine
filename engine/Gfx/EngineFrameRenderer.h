@@ -25,6 +25,7 @@
 #include <chrono>
 #include <filesystem>
 
+#include "VulkanPipeline.h"
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
 #include "../Scene/EditorIcons.h"
@@ -34,6 +35,7 @@
 #include "SkyIrradiance.h"
 #include "ProbeBake.h"
 #include "ProbeGI.h"
+#include "../Assets/CompiledMaterialShader.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -219,6 +221,10 @@ public:
      * already loaded are reloaded at the new size, so this waits for the GPU to go idle when anything changes.
      */
     void SetMaxMaterialTextureSize(uint32_t pixels);
+
+    /// Draws a material that is not a file (the Material Editor preview's) with a compiled graph; null removes it.
+    /// The component must stay at the same address while the override is set.
+    void SetMaterialShaderOverride(const MaterialComponent* material, const CompiledMaterialShader* shader);
     uint32_t GetMaxMaterialTextureSize() const { return m_maxMaterialTextureSize; }
 
     /**
@@ -425,7 +431,7 @@ private:
     void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera,
                          const FrameRenderConfig& config);
     void updateLightingUBO(uint32_t imageIndex, Scene* scene, const RenderCamera& camera);
-    void recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera,
+    void recordShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const RenderCamera& camera,
                           const FrameRenderConfig& config);
     void recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
                         const FrameRenderConfig& config);
@@ -585,10 +591,23 @@ private:
     static constexpr uint32_t kMaxMaterialsPerFrame = 1024;
 
     // Material asset cache (hot-reloads from .hematerial files)
+    // A material's compiled graph (`.hemshader`); its pipelines are built on first draw and dropped with the swapchain.
+    struct MaterialShaderProgram {
+        CompiledMaterialShader compiled;
+        SurfacePipelines pipelines;
+        bool pipelinesFailed = false;
+    };
     struct MaterialCacheEntry {
         MaterialComponent material;
         std::filesystem::file_time_type lastWriteTime{};
+        std::filesystem::file_time_type shaderWriteTime{};
+        std::unique_ptr<MaterialShaderProgram> shader;
     };
+    std::unordered_map<const MaterialComponent*, MaterialShaderProgram*> m_materialShaderPrograms;
+    std::unordered_map<const MaterialComponent*, std::unique_ptr<MaterialShaderProgram>> m_materialShaderOverrides;
+    /// The compiled graph's pipelines for a material, or null to draw it with the standard surface shader.
+    const SurfacePipelines* materialShaderPipelines(const MaterialComponent* material);
+    void destroyMaterialShaderPipelines();
     std::unordered_map<std::string, MaterialCacheEntry> m_materialAssetCache;
     std::unordered_map<std::string, std::filesystem::file_time_type> m_materialAssetCacheFailed;
     // What each material path resolved to and when its file was last checked, so draws don't touch the disk.
@@ -598,6 +617,13 @@ private:
     };
     std::unordered_map<std::string, MaterialPathCheck> m_materialPathChecks;
     static constexpr std::chrono::milliseconds kMaterialRecheckInterval{500};
+    // Each model's default slot materials (MeshSettings, <model>.hpmesh), rechecked like material paths.
+    struct MeshDefaultsCheck {
+        std::vector<std::string> materials;
+        std::chrono::steady_clock::time_point checkedAt{};
+    };
+    std::unordered_map<std::string, MeshDefaultsCheck> m_meshDefaultMaterials;
+    const std::vector<std::string>& meshDefaultMaterials(const std::string& meshAssetPath);
 
     // Material system helpers
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
@@ -651,14 +677,20 @@ private:
     bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
     bool createLocalShadowResources();
     void transitionShadowMapForSampling(VkImage image);
-    void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
+    void recordLocalShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const FrameRenderConfig& config);
     // The ray-query build of triangle.frag reads the scene acceleration structure in ProbeGI's set.
     const char* surfaceFragmentShader() const {
         return m_probeGI.HardwareRayTracingAvailable() ? "triangle_rt.frag.spv" : "triangle.frag.spv";
     }
-    void drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config, const Mat4& viewProj,
-                           const Vec3* cullCenter, float cullRadius);
+    void drawShadowCasters(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const FrameRenderConfig& config,
+                           const Mat4& viewProj, const Vec3* cullCenter, float cullRadius);
+    // Masked (alpha cutout) static surfaces in the shadow passes; reads materialTextures from the main set 0.
+    VkPipelineLayout m_maskedShadowLayout = VK_NULL_HANDLE;
+    VkPipeline m_maskedShadowPipeline = VK_NULL_HANDLE;
+    bool createMaskedShadowPipeline();
+    void destroyMaskedShadowPipeline();
 
+    std::chrono::steady_clock::time_point m_startTime = std::chrono::steady_clock::now();  // material graph Time
     ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 

@@ -39,7 +39,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/$<CONFIG>")
 
-find_package(Vulkan REQUIRED)
+find_package(Vulkan REQUIRED OPTIONAL_COMPONENTS glslang SPIRV-Tools)
 
 if(APPLE)
     # On macOS, we might need to link against MoltenVK explicitly if not handled by the loader
@@ -70,6 +70,29 @@ target_compile_definitions(ufbx PRIVATE
     UFBX_NO_TESSELLATION
     UFBX_NO_GEOMETRY_CACHE
 )
+
+# tinyusdz (lightusd): USD/USDA/USDC/USDZ reading for model import. Only the reader and Tydra scene converter
+# are built; texture files are left for the engine to load.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/tinyusdz/CMakeLists.txt")
+    message(FATAL_ERROR
+        "tinyusdz is missing at extern/tinyusdz (required for USD import). "
+        "Run: git submodule update --init --recursive")
+endif()
+foreach(_usd_off
+        LIGHTUSD_BUILD_TESTS LIGHTUSD_BUILD_EXAMPLES LIGHTUSD_BUILD_TOOLS LIGHTUSD_BUILD_BENCHMARKS
+        LIGHTUSD_WITH_C_API LIGHTUSD_WITH_PXR_COMPAT_API LIGHTUSD_WITH_PYTHON LIGHTUSD_WITH_USD_TO_GLTF
+        LIGHTUSD_WITH_USDOBJ LIGHTUSD_WITH_USDFBX LIGHTUSD_WITH_USDVOX LIGHTUSD_WITH_AUDIO
+        LIGHTUSD_WITH_TIFF LIGHTUSD_WITH_EXR LIGHTUSD_WITH_TEXTOOLS LIGHTUSD_WITH_FPNGE LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER
+        LIGHTUSD_WITH_MODULE_USDA_WRITER LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT
+        LIGHTUSD_USE_CCACHE)
+    set(${_usd_off} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(LIGHTUSD_PRODUCTION_BUILD ON CACHE BOOL "" FORCE)
+set(LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION OFF CACHE BOOL "" FORCE)
+set(LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION OFF CACHE BOOL "" FORCE)
+add_subdirectory(extern/tinyusdz EXCLUDE_FROM_ALL)
+# Its stb_image is already file-local; keep its stb_image_write file-local too, so it never clashes with the engine's.
+target_compile_definitions(lightusd_static PRIVATE STB_IMAGE_WRITE_STATIC)
 
 function(hephaestus_target_ufbx target)
     cmake_parse_arguments(FBX "STATIC;SKELETAL" "" "" ${ARGN})
@@ -226,6 +249,9 @@ if(HEPHAESTUS_USE_QT)
         if(Qt6_FOUND)
             find_package(Qt6 COMPONENTS Svg QUIET)
             find_package(Qt6 COMPONENTS Concurrent QUIET)
+            find_package(Qt6 COMPONENTS Network QUIET)
+            find_package(Qt6 COMPONENTS Sql QUIET)
+            find_package(Qt6 COMPONENTS WebEngineWidgets QUIET)
         endif()
     endif()
 
@@ -274,6 +300,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/SceneAutomation.cpp
     engine/Automation/ScriptAutomation.cpp
     engine/Automation/ToolRegistry.cpp
+    engine/Automation/PluginToolBridge.cpp
     engine/Automation/UIAutomation.cpp
     engine/Automation/PhysicsAutomation.cpp
     engine/Automation/ViewportAutomation.cpp
@@ -327,6 +354,7 @@ add_library(HephaestusRuntime STATIC
     engine/Audio/AudioEngine.cpp
     engine/Audio/AudioMath.cpp
     engine/Audio/MiniaudioImplementation.c
+    engine/Assets/GltfDocument.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/FbxDocument.cpp
     engine/Assets/FbxStaticImporter.cpp
@@ -335,9 +363,12 @@ add_library(HephaestusRuntime STATIC
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
     engine/Assets/CharacterAsset.cpp
+    engine/Assets/CompiledMaterialShader.cpp
     engine/Assets/CharacterRuntime.cpp
     engine/Assets/CharacterRuntimeGpu.cpp
     engine/Assets/CharacterImport.cpp
+    engine/Assets/ModelMaterialImport.cpp
+    engine/Assets/MeshSettings.cpp
     engine/Assets/SkeletalModelImporter.cpp
     engine/Animation/Skeleton.cpp
     engine/Animation/AnimationClip.cpp
@@ -455,6 +486,8 @@ add_library(HephaestusEditorCore STATIC
     engine/Assets/AssetThumbnailRenderer.cpp
     engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/EditorAssetImportService.cpp
+    engine/Assets/AssetIntake.cpp
+    engine/Assets/UsdModel.cpp
     engine/Assets/EditorViewState.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/RecoveryStore.cpp
@@ -467,10 +500,36 @@ add_library(HephaestusEditorCore STATIC
     engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
     engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
+    engine/UI/MaterialEditor/MaterialShaderCompiler.cpp
     engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 target_link_libraries(HephaestusEditorCore PUBLIC HephaestusRuntime)
+target_link_libraries(HephaestusEditorCore PRIVATE lightusd_static)
+# Material graphs compile to SPIR-V in the editor only; packaged games load the result (CompiledMaterialShader).
+set(HEPHAESTUS_GLSLANG_EXTRA_FOUND TRUE)
+set(HEPHAESTUS_GLSLANG_EXTRA_LIBS)
+# glslang-default-resource-limits and the SPIR-V optimizer glslang calls are not part of Vulkan::glslang.
+foreach(_lib glslang-default-resource-limits SPIRV-Tools-opt)
+    string(MAKE_C_IDENTIFIER "${_lib}" _id)
+    find_library(HEPHAESTUS_${_id}_LIB NAMES ${_lib} HINTS "$ENV{VULKAN_SDK}/Lib" "$ENV{VULKAN_SDK}/lib")
+    find_library(HEPHAESTUS_${_id}_DEBUG_LIB NAMES ${_lib}d HINTS "$ENV{VULKAN_SDK}/Lib" "$ENV{VULKAN_SDK}/lib")
+    if(NOT HEPHAESTUS_${_id}_LIB)
+        set(HEPHAESTUS_GLSLANG_EXTRA_FOUND FALSE)
+    elseif(HEPHAESTUS_${_id}_DEBUG_LIB)
+        list(APPEND HEPHAESTUS_GLSLANG_EXTRA_LIBS optimized "${HEPHAESTUS_${_id}_LIB}" debug "${HEPHAESTUS_${_id}_DEBUG_LIB}")
+    else()
+        list(APPEND HEPHAESTUS_GLSLANG_EXTRA_LIBS "${HEPHAESTUS_${_id}_LIB}")
+    endif()
+endforeach()
+if(TARGET Vulkan::glslang AND TARGET Vulkan::SPIRV-Tools AND HEPHAESTUS_GLSLANG_EXTRA_FOUND)
+    target_link_libraries(HephaestusEditorCore PRIVATE Vulkan::glslang ${HEPHAESTUS_GLSLANG_EXTRA_LIBS} Vulkan::SPIRV-Tools)
+    target_compile_definitions(HephaestusEditorCore PRIVATE HEPHAESTUS_MATERIAL_SHADER_COMPILER=1)
+    message(STATUS "Material graph shader compiler: glslang from the Vulkan SDK")
+else()
+    message(WARNING "glslang not found in the Vulkan SDK; material graphs with per-pixel nodes cannot be compiled")
+endif()
+target_include_directories(HephaestusEditorCore PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/extern/tinyusdz/src")
 
 # Shared non-Qt project validation and packaging pipeline used by the editor
 # and headless CLI. Keep compiler/process orchestration out of Qt UI code.
@@ -782,6 +841,91 @@ if(HEPHAESTUS_USE_QT)
         )
         add_dependencies(HephaestusEngine HephaestusFPS)
 
+        # Asset store plugins: Fab (packs from disk and Fab in Launcher's socket export) and Sketchfab over its
+        # Download API. Both need Qt Network.
+        foreach(_store Fab Sketchfab Cargo)
+            if(NOT TARGET Qt6::Network)
+                message(WARNING "Qt6 Network not found; the ${_store} plugin is not built.")
+                continue()
+            endif()
+            add_library(Hephaestus${_store} SHARED Plugins/${_store}/Source/${_store}Plugin.cpp)
+            target_include_directories(Hephaestus${_store} PRIVATE engine)
+            target_link_libraries(Hephaestus${_store} PRIVATE Qt6::Widgets Qt6::Network)
+            set_target_properties(Hephaestus${_store} PROPERTIES
+                OUTPUT_NAME "Hephaestus${_store}"
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/${_store}/bin"
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/${_store}/bin"
+            )
+            add_custom_command(TARGET Hephaestus${_store} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/${_store}/${_store}.hpplugin"
+                    "$<TARGET_FILE_DIR:Hephaestus${_store}>/../${_store}.hpplugin"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/${_store}/Resources"
+                    "$<TARGET_FILE_DIR:Hephaestus${_store}>/../Resources"
+                VERBATIM
+            )
+            add_dependencies(HephaestusEngine Hephaestus${_store})
+        endforeach()
+        if(TARGET HephaestusCargo)
+            if(TARGET Qt6::Sql)
+                target_link_libraries(HephaestusCargo PRIVATE Qt6::Sql)
+            else()
+                message(WARNING "Qt6 Sql not found; the Cargo plugin is not built.")
+                set_target_properties(HephaestusCargo PROPERTIES EXCLUDE_FROM_ALL ON)
+            endif()
+        endif()
+        if(TARGET HephaestusSketchfab AND WIN32)
+            target_link_libraries(HephaestusSketchfab PRIVATE Advapi32)
+        endif()
+        # Store browser: Qt WebEngine lives in this plugin's bin folder (deployed by windeployqt), never beside
+        # the editor, so only installs that include the plugin carry it.
+        if(TARGET Qt6::WebEngineWidgets)
+            add_library(HephaestusStoreBrowser SHARED Plugins/StoreBrowser/Source/StoreBrowserPlugin.cpp)
+            target_include_directories(HephaestusStoreBrowser PRIVATE engine)
+            target_link_libraries(HephaestusStoreBrowser PRIVATE Qt6::Widgets Qt6::Svg Qt6::Network Qt6::WebEngineWidgets)
+            set_target_properties(HephaestusStoreBrowser PROPERTIES
+                OUTPUT_NAME "HephaestusStoreBrowser"
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/StoreBrowser/bin"
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/StoreBrowser/bin"
+            )
+            get_target_property(_store_qt_widgets Qt6::Widgets LOCATION)
+            get_filename_component(_store_qt_bin "${_store_qt_widgets}" DIRECTORY)
+            add_custom_command(TARGET HephaestusStoreBrowser POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/StoreBrowser/StoreBrowser.hpplugin"
+                    "$<TARGET_FILE_DIR:HephaestusStoreBrowser>/../StoreBrowser.hpplugin"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/StoreBrowser/Resources"
+                    "$<TARGET_FILE_DIR:HephaestusStoreBrowser>/../Resources"
+                COMMAND "${_store_qt_bin}/windeployqt.exe" $<IF:$<CONFIG:Debug>,--debug,--release>
+                    --dir "$<TARGET_FILE_DIR:HephaestusStoreBrowser>" --no-compiler-runtime --no-opengl-sw
+                    --no-system-d3d-compiler --no-system-dxc-compiler --no-quick-import --no-translations
+                    --skip-plugin-types generic,networkinformation,platforminputcontexts,qmltooling,position,tls
+                    "$<TARGET_FILE:HephaestusStoreBrowser>"
+                # Chromium falls back to English; the other 50 MB of locales are left out.
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_store_qt_bin}/../translations/qtwebengine_locales/en-US.pak"
+                    "$<TARGET_FILE_DIR:HephaestusStoreBrowser>/translations/qtwebengine_locales/en-US.pak"
+                COMMENT "Deploying Qt WebEngine into the store browser plugin"
+                VERBATIM
+            )
+            add_dependencies(HephaestusEngine HephaestusStoreBrowser)
+        else()
+            message(STATUS "Qt6 WebEngineWidgets not found; the store browser plugin is not built.")
+        endif()
+
+        if(TARGET HephaestusFab AND HEPHAESTUS_BUILD_COMPAT_TESTS)
+            add_executable(FabLauncherBridgeTests engine/Tests/FabLauncherBridgeTests.cpp)
+            target_include_directories(FabLauncherBridgeTests PRIVATE engine extern)
+            target_link_libraries(FabLauncherBridgeTests PRIVATE HephaestusEditorCore Qt6::Widgets Qt6::Network)
+            add_dependencies(FabLauncherBridgeTests HephaestusFab HephaestusEngine)
+            add_test(NAME FabLauncherBridge
+                     COMMAND FabLauncherBridgeTests ${CMAKE_CURRENT_SOURCE_DIR} $<TARGET_FILE:HephaestusFab>)
+            set_tests_properties(FabLauncherBridge PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen")
+        endif()
+
         # Official MCP editor plugin. A first-party consumer of the Automation
         # API: it links the Qt-free McpCore and never the engine's internals.
         add_library(HephaestusMCP SHARED
@@ -801,6 +945,23 @@ if(HEPHAESTUS_USE_QT)
             VERBATIM
         )
         add_dependencies(HephaestusEngine HephaestusMCP)
+
+        add_library(HephaestusMaterialNodes SHARED
+            Plugins/MaterialNodes/Source/MaterialNodesPlugin.cpp
+        )
+        target_include_directories(HephaestusMaterialNodes PRIVATE engine)
+        set_target_properties(HephaestusMaterialNodes PROPERTIES
+            OUTPUT_NAME "HephaestusMaterialNodes"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/MaterialNodes/bin"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/MaterialNodes/bin"
+        )
+        add_custom_command(TARGET HephaestusMaterialNodes POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/MaterialNodes/MaterialNodes.hpplugin"
+                "$<TARGET_FILE_DIR:HephaestusMaterialNodes>/../MaterialNodes.hpplugin"
+            VERBATIM
+        )
+        add_dependencies(HephaestusEngine HephaestusMaterialNodes)
 
         # Copy Qt DLLs to output directory (Windows)
         if(WIN32)
@@ -823,6 +984,30 @@ if(HEPHAESTUS_USE_QT)
                     "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Svg.dll"
                 COMMENT "Copying Qt6 DLLs to output directory"
             )
+            if(TARGET HephaestusSketchfab)
+                add_custom_command(TARGET HephaestusEngine POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/Qt6Network.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Network.dll"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HephaestusEngine>/tls"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/../plugins/tls/qschannelbackend.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/tls/qschannelbackend.dll"
+                    COMMENT "Copying Qt6 Network and its Windows TLS backend for the Sketchfab plugin"
+                )
+            endif()
+            if(TARGET HephaestusCargo AND TARGET Qt6::Sql)
+                add_custom_command(TARGET HephaestusEngine POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/Qt6Sql.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Sql.dll"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HephaestusEngine>/sqldrivers"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_qt6_bin_dir}/../plugins/sqldrivers/qsqlite.dll"
+                        "$<TARGET_FILE_DIR:HephaestusEngine>/sqldrivers/qsqlite.dll"
+                    COMMENT "Copying Qt6 Sql and its SQLite driver for the Cargo plugin"
+                )
+            endif()
 
             # Copy Qt platform plugin (required for Qt apps to run)
             add_custom_command(TARGET HephaestusEngine POST_BUILD
@@ -1072,6 +1257,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_skinned.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_masked.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_masked.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.vert
@@ -1088,6 +1275,8 @@ if (GLSLC_EXECUTABLE)
     set(SHADER_INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/lighting_common.glsl
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_common.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/material_common.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/material_surface.glsl
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -1125,6 +1314,20 @@ if (GLSLC_EXECUTABLE)
         VERBATIM
     )
     list(APPEND SHADER_OUTPUTS ${RT_FRAG_OUT})
+
+    # The editor compiles material graphs against the surface shader's source (MaterialShaderCompiler.cpp).
+    foreach(SRC ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag ${SHADER_INCLUDES})
+        get_filename_component(FN ${SRC} NAME)
+        set(OUT ${SHADER_OUTPUT_DIR}/source/${FN})
+        add_custom_command(
+            OUTPUT ${OUT}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}/source
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SRC} ${OUT}
+            DEPENDS ${SRC}
+            VERBATIM
+        )
+        list(APPEND SHADER_OUTPUTS ${OUT})
+    endforeach()
 
     add_custom_target(Shaders ALL DEPENDS ${SHADER_OUTPUTS})
     
@@ -1313,6 +1516,10 @@ install(DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/shaders/"
     DESTINATION shaders
     OPTIONAL
     FILES_MATCHING PATTERN "*.spv"
+)
+install(DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/shaders/source/"
+    DESTINATION shaders/source
+    OPTIONAL
 )
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes/
     DESTINATION .engine/meshes
@@ -2212,6 +2419,19 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AssetOperationTransaction
         COMMAND AssetOperationTransactionTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AssetIntakeTests
+        engine/Tests/AssetIntakeTests.cpp
+    )
+    target_link_libraries(AssetIntakeTests PRIVATE HephaestusEditorCore)
+    target_include_directories(AssetIntakeTests PRIVATE
+        engine
+        extern
+    )
+    add_test(
+        NAME AssetIntake
+        COMMAND AssetIntakeTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(RecoveryStoreTests

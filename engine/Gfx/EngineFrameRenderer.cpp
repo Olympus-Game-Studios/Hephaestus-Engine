@@ -4,6 +4,7 @@
  */
 
 #include "EngineFrameRenderer.h"
+#include "../Assets/MeshSettings.h"
 #include "VulkanDevice.h"
 #include "VulkanSwapchain.h"
 #include "VulkanPipeline.h"
@@ -39,6 +40,8 @@ struct alignas(16) UniformBufferObject {
     Mat4 proj;
     Vec3 viewPos;
     float shadingMode; // 0 = Lit, 1 = Unlit
+    float time;        // seconds since the renderer started (material graph Time)
+    float timePadding[3];
 };
 
 struct alignas(16) MaterialUBO {
@@ -71,8 +74,11 @@ struct alignas(16) MaterialUBO {
     float opacityMask;
     float refraction;
     uint32_t blendMode;
-    uint32_t paddingTail;
+    uint32_t textureChannels; // roughness, metallic, AO map channel, 2 bits each
+    uint32_t graphPadding[2];
+    uint32_t graphTextureSlots[16]; // shaders/triangle.frag graphTextureSlots, read by compiled material graphs
 };
+static_assert(offsetof(MaterialUBO, graphTextureSlots) == 144);
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
 constexpr float kLightIconHalfExtent = 0.045f; // fraction of the viewport half-height
@@ -100,6 +106,17 @@ static Mat4 CharacterAwareModelMatrix(Scene* scene, Entity entity, const MeshRen
     }
     return Mat4::Multiply(model, Mat4::Translation(Vec3(0.0f, -minY, 0.0f)));
 }
+
+// Layout must match shaders/shadowmap_masked.vert:MaskedShadowPush (128 bytes, the guaranteed push constant size).
+struct MaskedShadowPushConstants {
+    Mat4 lightModelViewProj;
+    float modelRows[12];
+    uint32_t albedoTextureIndex;
+    float opacity;
+    float clipThreshold;
+    float worldTextureScale;
+};
+static_assert(sizeof(MaskedShadowPushConstants) == 128);
 
 static VkShaderModule LoadSpvModule(VkDevice device, const std::string& name) {
     const std::string candidates[] = {
@@ -449,6 +466,9 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     if (!createSkinnedMainPipelines()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned mesh pipelines\n";
     }
+    if (m_directionalShadow.IsValid() && !createMaskedShadowPipeline()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create masked shadow pipeline (cutouts cast solid shadows)\n";
+    }
     if (!createToneMapResources()) {
         std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
         return false;
@@ -741,6 +761,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         if (!createSkinnedMainPipelines()) {
             std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned mesh pipelines\n";
         }
+        if (m_directionalShadow.IsValid() && !createMaskedShadowPipeline()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate masked shadow pipeline\n";
+        }
         for (auto& pending : m_pendingTextureSlotUpdates) {
             for (uint32_t slotIndex = 0;
                  slotIndex < static_cast<uint32_t>(m_materialTextureSlots.size());
@@ -945,11 +968,11 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     // Record shadow pass (before main pass)
     if (config.renderShadows && m_directionalShadow.IsValid() && !(scene && m_sunRayTraced)) {
-        recordShadowPass(cmd, scene, camera, config);
+        recordShadowPass(cmd, imageIndex, scene, camera, config);
     }
     m_probeGI.RecordScene(cmd, imageIndex);
     if (config.renderShadows && m_localShadow.IsValid() && !m_localShadowJobs.empty()) {
-        recordLocalShadowPass(cmd, scene, config);
+        recordLocalShadowPass(cmd, imageIndex, scene, config);
     }
     if (m_probeGI.Active()) {
         m_probeGI.BeginTiming(cmd, imageIndex);
@@ -1750,6 +1773,121 @@ bool EngineFrameRenderer::createSkinnedShadowPipeline()
     vkDestroyShaderModule(m_device->device, vert, nullptr);
     vkDestroyShaderModule(m_device->device, frag, nullptr);
     return result == VK_SUCCESS;
+}
+
+bool EngineFrameRenderer::createMaskedShadowPipeline()
+{
+    if (!m_device || !m_pipeline || !m_directionalShadow.IsValid()) {
+        return false;
+    }
+    destroyMaskedShadowPipeline();
+
+    VkPushConstantRange push{};
+    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    push.size = sizeof(MaskedShadowPushConstants);
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &m_pipeline->descriptorSetLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &push;
+    if (vkCreatePipelineLayout(m_device->device, &layoutInfo, nullptr, &m_maskedShadowLayout) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkShaderModule vert = LoadSpvModule(m_device->device, "shadowmap_masked.vert.spv");
+    VkShaderModule frag = LoadSpvModule(m_device->device, "shadowmap_masked.frag.spv");
+    if (!vert || !frag) {
+        if (vert) vkDestroyShaderModule(m_device->device, vert, nullptr);
+        if (frag) vkDestroyShaderModule(m_device->device, frag, nullptr);
+        destroyMaskedShadowPipeline();
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag;
+    stages[1].pName = "main";
+
+    const VkVertexInputBindingDescription binding = Vertex::getBindingDescription();
+    std::vector<VkVertexInputAttributeDescription> attribs;
+    for (const VkVertexInputAttributeDescription& attribute : Vertex::getAttributeDescriptions()) {
+        if (attribute.location == 0 || attribute.location == 1 || attribute.location == 3) {
+            attribs.push_back(attribute);
+        }
+    }
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribs.size());
+    vertexInput.pVertexAttributeDescriptions = attribs.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = 1.5f;
+    rasterizer.depthBiasSlopeFactor = 1.5f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+
+    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = m_maskedShadowLayout;
+    pipelineInfo.renderPass = m_directionalShadow.renderPass;
+
+    const VkResult result = vkCreateGraphicsPipelines(m_device->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+                                                      &m_maskedShadowPipeline);
+    vkDestroyShaderModule(m_device->device, vert, nullptr);
+    vkDestroyShaderModule(m_device->device, frag, nullptr);
+    if (result != VK_SUCCESS) {
+        destroyMaskedShadowPipeline();
+        return false;
+    }
+    return true;
+}
+
+void EngineFrameRenderer::destroyMaskedShadowPipeline()
+{
+    if (!m_device || !m_device->device) return;
+    DestroyPipeline(m_device->device, m_maskedShadowPipeline);
+    DestroyPipelineLayout(m_device->device, m_maskedShadowLayout);
 }
 
 bool EngineFrameRenderer::createSkinnedOutlinePipelines()
@@ -2969,6 +3107,7 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
     m_frameViewFrame = viewFrame;
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
+    ubo.time = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_startTime).count();
     
     void* mapped = nullptr;
     vmaMapMemory(m_device->allocator, m_uniformBuffers[imageIndex].allocation, &mapped);
@@ -3181,7 +3320,7 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     vmaUnmapMemory(m_device->allocator, m_lightingBuffers[imageIndex].allocation);
 }
 
-void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera,
+void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const RenderCamera& camera,
                                            const FrameRenderConfig& config)
 {
     if (!m_directionalShadow.IsValid() || !scene) {
@@ -3279,7 +3418,7 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
         sc.extent = { halfRes, halfRes };
         vkCmdSetScissor(cmd, 0, 1, &sc);
         
-        drawShadowCasters(cmd, scene, config, cascadeVPs[cascade], nullptr, 0.0f);
+        drawShadowCasters(cmd, imageIndex, scene, config, cascadeVPs[cascade], nullptr, 0.0f);
     }
 
     static bool shadowPassDebugPrinted = false;
@@ -3291,8 +3430,9 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
     vkCmdEndRenderPass(cmd);
 }
 
-void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config,
-                                            const Mat4& viewProj, const Vec3* cullCenter, float cullRadius)
+void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
+                                            const FrameRenderConfig& config, const Mat4& viewProj,
+                                            const Vec3* cullCenter, float cullRadius)
 {
     auto& registry = scene->GetRegistry();
     auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
@@ -3303,8 +3443,30 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, c
     {
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
         VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
-        bool usingSkinnedShadow = false;
+        enum class ShadowPipeline { Plain, Skinned, Masked };
+        ShadowPipeline boundPipeline = ShadowPipeline::Plain;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
+        auto bindPipeline = [&](ShadowPipeline wanted) {
+            if (wanted == boundPipeline) return;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              wanted == ShadowPipeline::Skinned  ? m_skinned.shadowPipeline
+                              : wanted == ShadowPipeline::Masked ? m_maskedShadowPipeline
+                                                                 : m_directionalShadow.pipeline);
+            if (wanted == ShadowPipeline::Masked) {
+                // Set 0 may hold a skinned bone set since the last masked draw.
+                const uint32_t dynamicOffset = 0;
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_maskedShadowLayout, 0, 1,
+                                        &m_descriptorSets[imageIndex], 1, &dynamicOffset);
+            }
+            boundPipeline = wanted;
+        };
+
+        struct ShadowRange {
+            uint32_t indexOffset = 0;
+            uint32_t indexCount = 0;
+            const MaterialComponent* material = nullptr;
+        };
+        std::vector<ShadowRange> ranges;
 
         for (auto entity : meshView) {
             auto& meshComp = meshView.get<MeshRendererComponent>(entity);
@@ -3312,11 +3474,8 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, c
             if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
             if (config.isPlaying && meshComp.hideInGame) continue;
             if (meshComp.viewModel || !meshComp.castShadows) continue;
-            {
-                Entity owner(entity, scene);
-                const MaterialComponent* surface = resolveMaterialForSlot(owner, meshComp, 0);
-                if (surface && surface->blendMode != MaterialBlendMode::Opaque) continue;
-            }
+            Entity owner(entity, scene);
+            const MaterialComponent* surface = resolveMaterialForSlot(owner, meshComp, 0);
 
             const CharacterComponent* character = registry.try_get<CharacterComponent>(entity);
             const std::vector<size_t> handles = MeshHandlesForDraw(meshComp);
@@ -3326,36 +3485,30 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, c
                 VkDescriptorSet boneSet = resolveSkinnedBoneSet(entity, character, mesh);
                 const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
                                      m_skinned.shadowPipeline != VK_NULL_HANDLE;
-                if (skinned != usingSkinnedShadow) {
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      skinned ? m_skinned.shadowPipeline : m_directionalShadow.pipeline);
-                    currentVertexBuffer = VK_NULL_HANDLE;
-                    currentIndexBuffer = VK_NULL_HANDLE;
-                    usingSkinnedShadow = skinned;
-                }
-                if (skinned) {
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skinned.shadowLayout,
-                                            0, 1, &boneSet, 0, nullptr);
+
+                ranges.clear();
+                if (skinned || mesh.submeshes.empty()) {
+                    ranges.push_back({0, mesh.indexCount, surface});
+                } else {
+                    bool allOpaque = true;
+                    for (const auto& submesh : mesh.submeshes) {
+                        if (submesh.indexCount == 0) continue;
+                        const MaterialComponent* material =
+                            resolveMaterialForSlot(owner, meshComp, submesh.materialSlot);
+                        ranges.push_back({submesh.indexOffset, submesh.indexCount, material});
+                        allOpaque &= !material || material->blendMode == MaterialBlendMode::Opaque;
+                    }
+                    if (allOpaque) {
+                        ranges.assign(1, {0, mesh.indexCount, nullptr});
+                    }
                 }
 
-                if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
-                    VkDeviceSize offset = 0;
-                    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
-                    currentVertexBuffer = mesh.vertexBuffer.buffer;
-                }
-                if (mesh.indexBuffer.buffer != currentIndexBuffer) {
-                    vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-                    currentIndexBuffer = mesh.indexBuffer.buffer;
-                }
-
-                ShadowPushConstants pc;
-                pc.lightViewProj = viewProj;
-                pc.model = CharacterAwareModelMatrix(scene, Entity(entity, scene), meshComp);
+                const Mat4 model = CharacterAwareModelMatrix(scene, owner, meshComp);
                 if (cullCenter) {
                     // Bounding sphere of the mesh AABB against the light's range.
                     const Vec3 lo = mesh.bounds.min, hi = mesh.bounds.max;
                     const Vec3 local((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f);
-                    const float* m = pc.model.m;
+                    const float* m = model.m;
                     const Vec3 center(m[0] * local.x + m[4] * local.y + m[8] * local.z + m[12],
                                       m[1] * local.x + m[5] * local.y + m[9] * local.z + m[13],
                                       m[2] * local.x + m[6] * local.y + m[10] * local.z + m[14]);
@@ -3364,12 +3517,59 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, c
                     const float radius = 0.5f * vlen(vsub(hi, lo)) * scale;
                     if (vlen(vsub(center, *cullCenter)) > cullRadius + radius) continue;
                 }
-                const VkPipelineLayout shadowLayout =
-                    skinned ? m_skinned.shadowLayout : m_directionalShadow.pipelineLayout;
-                vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                                  0, sizeof(pc), &pc);
 
-                vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+                for (const ShadowRange& range : ranges) {
+                    const MaterialBlendMode mode = range.material ? range.material->blendMode : MaterialBlendMode::Opaque;
+                    if (IsTranslucentBlendMode(mode)) continue;
+                    const bool masked = !skinned && mode == MaterialBlendMode::Masked &&
+                                        m_maskedShadowPipeline != VK_NULL_HANDLE;
+                    const ShadowPipeline wanted = masked    ? ShadowPipeline::Masked
+                                                  : skinned ? ShadowPipeline::Skinned
+                                                            : ShadowPipeline::Plain;
+                    if (wanted != boundPipeline) {
+                        bindPipeline(wanted);
+                        currentVertexBuffer = VK_NULL_HANDLE;
+                        currentIndexBuffer = VK_NULL_HANDLE;
+                    }
+                    if (skinned) {
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skinned.shadowLayout,
+                                                0, 1, &boneSet, 0, nullptr);
+                    }
+                    if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                        VkDeviceSize offset = 0;
+                        vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
+                        currentVertexBuffer = mesh.vertexBuffer.buffer;
+                    }
+                    if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                        vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                        currentIndexBuffer = mesh.indexBuffer.buffer;
+                    }
+
+                    if (masked) {
+                        const MaterialComponent& material = *range.material;
+                        MaskedShadowPushConstants pc{};
+                        pc.lightModelViewProj = Mat4::Multiply(viewProj, model);
+                        for (int row = 0; row < 3; ++row) {
+                            for (int column = 0; column < 4; ++column) {
+                                pc.modelRows[row * 4 + column] = model.m[column * 4 + row];
+                            }
+                        }
+                        pc.albedoTextureIndex = material.useAlbedoTexture && !material.albedoTexturePath.empty()
+                            ? ensureMaterialTextureSlot(material.albedoTexturePath)
+                            : m_defaultMaterialTextureSlot;
+                        pc.opacity = material.opacity;
+                        pc.clipThreshold = material.opacityMask;
+                        pc.worldTextureScale = material.useWorldAlignedTexture ? material.worldTextureScale : 0.0f;
+                        vkCmdPushConstants(cmd, m_maskedShadowLayout,
+                                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                           sizeof(pc), &pc);
+                    } else {
+                        const ShadowPushConstants pc{viewProj, model};
+                        vkCmdPushConstants(cmd, skinned ? m_skinned.shadowLayout : m_directionalShadow.pipelineLayout,
+                                           VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+                    }
+                    vkCmdDrawIndexed(cmd, range.indexCount, 1, range.indexOffset, 0, 0);
+                }
             }
         }
     }
@@ -3446,7 +3646,8 @@ void EngineFrameRenderer::transitionShadowMapForSampling(VkImage image)
     vkFreeCommandBuffers(m_device->device, m_device->commandPool, 1, &cmd);
 }
 
-void EngineFrameRenderer::recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config)
+void EngineFrameRenderer::recordLocalShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
+                                                const FrameRenderConfig& config)
 {
     if (!scene) return;
     VkClearValue clear{};
@@ -3466,7 +3667,7 @@ void EngineFrameRenderer::recordLocalShadowPass(VkCommandBuffer cmd, Scene* scen
         const VkRect2D scissor{{static_cast<int32_t>(x), static_cast<int32_t>(y)}, {kLocalShadowTile, kLocalShadowTile}};
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
-        drawShadowCasters(cmd, scene, config, job.viewProj, &job.lightPos, job.range);
+        drawShadowCasters(cmd, imageIndex, scene, config, job.viewProj, &job.lightPos, job.range);
     }
     vkCmdEndRenderPass(cmd);
 }
@@ -3522,10 +3723,16 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         : fs::file_time_type{};
     if (timeError) return nullptr;
 
+    const fs::path shaderPath = CompiledMaterialShaderPath(resolvedPath);
+    std::error_code shaderTimeError;
+    const auto shaderTimestamp = fs::exists(shaderPath, shaderTimeError)
+        ? fs::last_write_time(shaderPath, shaderTimeError)
+        : fs::file_time_type{};
+
     // Check cache
     auto cached = m_materialAssetCache.find(cacheKey);
     if (cached != m_materialAssetCache.end()) {
-        if (cached->second.lastWriteTime == timestamp) {
+        if (cached->second.lastWriteTime == timestamp && cached->second.shaderWriteTime == shaderTimestamp) {
             return &cached->second.material;
         }
     }
@@ -3576,9 +3783,7 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         if (j.contains("opacityMask")) loadedMaterial.opacityMask = j["opacityMask"].get<float>();
         if (j.contains("refraction")) loadedMaterial.refraction = j["refraction"].get<float>();
         if (j.contains("blendMode") && j["blendMode"].is_string()) {
-            const std::string mode = j["blendMode"].get<std::string>();
-            loadedMaterial.blendMode = mode == "additive" ? MaterialBlendMode::Additive
-                : mode == "alphaBlend" ? MaterialBlendMode::AlphaBlend : MaterialBlendMode::Opaque;
+            loadedMaterial.blendMode = MaterialBlendModeFromName(j["blendMode"].get<std::string>());
         }
 
         // Texture paths and flags
@@ -3588,24 +3793,99 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         if (j.contains("normalTexturePath")) loadedMaterial.normalTexturePath = j["normalTexturePath"].get<std::string>();
         if (j.contains("useRoughnessTexture")) loadedMaterial.useRoughnessTexture = j["useRoughnessTexture"].get<bool>();
         if (j.contains("roughnessTexturePath")) loadedMaterial.roughnessTexturePath = j["roughnessTexturePath"].get<std::string>();
+        if (j.contains("useMetallicTexture")) loadedMaterial.useMetallicTexture = j["useMetallicTexture"].get<bool>();
+        if (j.contains("metallicTexturePath")) loadedMaterial.metallicTexturePath = j["metallicTexturePath"].get<std::string>();
         if (j.contains("useAoTexture")) loadedMaterial.useAoTexture = j["useAoTexture"].get<bool>();
         if (j.contains("aoTexturePath")) loadedMaterial.aoTexturePath = j["aoTexturePath"].get<std::string>();
+        loadedMaterial.roughnessChannel = j.value("roughnessChannel", 0u) & 3u;
+        loadedMaterial.metallicChannel = j.value("metallicChannel", 0u) & 3u;
+        loadedMaterial.aoChannel = j.value("aoChannel", 0u) & 3u;
         if (j.contains("useWorldAlignedTexture")) loadedMaterial.useWorldAlignedTexture = j["useWorldAlignedTexture"].get<bool>();
         if (j.contains("worldTextureScale")) loadedMaterial.worldTextureScale = j["worldTextureScale"].get<float>();
     }
 
-    // Update or insert cache entry
-    if (cached != m_materialAssetCache.end()) {
-        cached->second.material = loadedMaterial;
-        cached->second.lastWriteTime = timestamp;
-        return &cached->second.material;
+    std::unique_ptr<MaterialShaderProgram> program;
+    if (shaderTimestamp != fs::file_time_type{}) {
+        program = std::make_unique<MaterialShaderProgram>();
+        std::string shaderError;
+        if (!ReadCompiledMaterialShader(shaderPath, program->compiled, shaderError)) {
+            std::cerr << "[EngineFrameRenderer] " << shaderError << "; drawing " << cacheKey
+                      << " with the standard surface shader\n";
+            program.reset();
+        }
     }
 
-    MaterialCacheEntry entry;
+    // Update or insert cache entry
+    if (cached == m_materialAssetCache.end()) {
+        cached = m_materialAssetCache.emplace(cacheKey, MaterialCacheEntry{}).first;
+    } else if (cached->second.shader && m_pipeline) {
+        if (cached->second.shader->pipelines.opaque != VK_NULL_HANDLE ||
+            cached->second.shader->pipelines.alphaBlend != VK_NULL_HANDLE) {
+            vkDeviceWaitIdle(m_device->device);
+        }
+        m_pipeline->DestroySurfacePipelines(cached->second.shader->pipelines);
+    }
+    MaterialCacheEntry& entry = cached->second;
     entry.material = loadedMaterial;
     entry.lastWriteTime = timestamp;
-    auto insertResult = m_materialAssetCache.emplace(cacheKey, std::move(entry));
-    return &insertResult.first->second.material;
+    entry.shaderWriteTime = shaderTimestamp;
+    entry.shader = std::move(program);
+    if (entry.shader) {
+        m_materialShaderPrograms[&entry.material] = entry.shader.get();
+    } else {
+        m_materialShaderPrograms.erase(&entry.material);
+    }
+    return &entry.material;
+}
+
+const SurfacePipelines* EngineFrameRenderer::materialShaderPipelines(const MaterialComponent* material)
+{
+    if (!material || !m_pipeline) return nullptr;
+    const auto it = m_materialShaderPrograms.find(material);
+    if (it == m_materialShaderPrograms.end()) return nullptr;
+    MaterialShaderProgram& program = *it->second;
+    if (program.pipelines.opaque == VK_NULL_HANDLE && !program.pipelinesFailed) {
+        const bool rayTraced = m_probeGI.HardwareRayTracingAvailable() && !program.compiled.spirvRayTraced.empty();
+        if (!m_pipeline->CreateSurfacePipelines(rayTraced ? program.compiled.spirvRayTraced : program.compiled.spirv,
+                                                program.pipelines)) {
+            std::cerr << "[EngineFrameRenderer] A compiled material shader failed to build; drawing it with the "
+                         "standard surface shader\n";
+            program.pipelinesFailed = true;
+        }
+    }
+    return program.pipelinesFailed ? nullptr : &program.pipelines;
+}
+
+void EngineFrameRenderer::SetMaterialShaderOverride(const MaterialComponent* material,
+                                                    const CompiledMaterialShader* shader)
+{
+    if (!material) return;
+    if (const auto existing = m_materialShaderOverrides.find(material); existing != m_materialShaderOverrides.end()) {
+        if (m_pipeline) {
+            if (existing->second->pipelines.opaque != VK_NULL_HANDLE ||
+                existing->second->pipelines.alphaBlend != VK_NULL_HANDLE) {
+                vkDeviceWaitIdle(m_device->device);
+            }
+            m_pipeline->DestroySurfacePipelines(existing->second->pipelines);
+        }
+        m_materialShaderOverrides.erase(existing);
+        m_materialShaderPrograms.erase(material);
+    }
+    if (shader) {
+        auto program = std::make_unique<MaterialShaderProgram>();
+        program->compiled = *shader;
+        m_materialShaderPrograms[material] = program.get();
+        m_materialShaderOverrides[material] = std::move(program);
+    }
+}
+
+void EngineFrameRenderer::destroyMaterialShaderPipelines()
+{
+    if (!m_pipeline) return;
+    for (auto& [material, program] : m_materialShaderPrograms) {
+        m_pipeline->DestroySurfacePipelines(program->pipelines);
+        program->pipelinesFailed = false;
+    }
 }
 
 uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPath, bool linear)
@@ -3933,12 +4213,43 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& ent
             }
         }
     }
-    // 2) Fallback: entity's own MaterialComponent (single material for all submeshes)
+    // 2) The model's default material for this slot
+    if (!renderer.meshAssetPath.empty()) {
+        const std::vector<std::string>& defaults = meshDefaultMaterials(renderer.meshAssetPath);
+        if (static_cast<size_t>(slot) < defaults.size() && !defaults[slot].empty()) {
+            if (const MaterialComponent* mat = resolveMaterialFromPath(defaults[slot])) {
+                return mat;
+            }
+        }
+    }
+    // 3) Fallback: entity's own MaterialComponent (single material for all submeshes)
     if (entity.HasComponent<MaterialComponent>()) {
         return &entity.GetComponent<MaterialComponent>();
     }
-    // 3) No material assigned
+    // 4) No material assigned
     return nullptr;
+}
+
+const std::vector<std::string>& EngineFrameRenderer::meshDefaultMaterials(const std::string& meshAssetPath)
+{
+    const auto now = std::chrono::steady_clock::now();
+    MeshDefaultsCheck& entry = m_meshDefaultMaterials[meshAssetPath];
+    if (entry.checkedAt != std::chrono::steady_clock::time_point{} && now - entry.checkedAt < kMaterialRecheckInterval) {
+        return entry.materials;
+    }
+    entry.checkedAt = now;
+    std::filesystem::path model(meshAssetPath);
+    if (meshAssetPath.rfind("builtin://", 0) == 0) {
+        entry.materials.clear();
+        return entry.materials;
+    }
+    if (!model.is_absolute() && !m_projectRoot.empty()) {
+        std::error_code ec;
+        const std::filesystem::path rooted = std::filesystem::path(m_projectRoot) / model;
+        model = std::filesystem::exists(rooted, ec) ? rooted : std::filesystem::path(m_projectRoot) / "assets" / model;
+    }
+    entry.materials = Hephaestus::MeshSettings::LoadDefaultMaterials(model);
+    return entry.materials;
 }
 
 // Static geometry the probes bake against and the probe sun map draws.
@@ -4255,7 +4566,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             defaultMat.useWorldAlignedTexture = 0;
             defaultMat.worldTextureScale = 1.0f;
             defaultMat.blendMode = 0u;
-            defaultMat.paddingTail = 0u;
+            defaultMat.textureChannels = 0u;
             std::memcpy(matMappedBase, &defaultMat, sizeof(defaultMat));
             matSlotNext = 1;
         }
@@ -4335,7 +4646,14 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.opacityMask = mat.opacityMask;
                 matUBO.refraction = mat.refraction;
                 matUBO.blendMode = static_cast<uint32_t>(mat.blendMode);
-                matUBO.paddingTail = 0u;
+                if (const auto program = m_materialShaderPrograms.find(material); program != m_materialShaderPrograms.end()) {
+                    const auto& textures = program->second->compiled.textures;
+                    for (size_t i = 0; i < textures.size() && i < std::size(matUBO.graphTextureSlots); ++i) {
+                        matUBO.graphTextureSlots[i] = ensureMaterialTextureSlot(textures[i].path, textures[i].linear);
+                    }
+                }
+                matUBO.textureChannels = (mat.roughnessChannel & 3u) | ((mat.metallicChannel & 3u) << 2) |
+                                         ((mat.aoChannel & 3u) << 4);
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
@@ -4367,7 +4685,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.opacityMask = 1.0f;
                 matUBO.refraction = 0.0f;
                 matUBO.blendMode = 0u;
-                matUBO.paddingTail = 0u;
+                matUBO.textureChannels = 0u;
             }
         };
         
@@ -4573,7 +4891,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
 
                 // Translucent submeshes of unskinned meshes are drawn after every opaque surface.
                 auto drawOrDefer = [&](const MaterialComponent* mat, uint32_t offset, uint32_t count, int si, int slot) {
-                    if (mat && mat->blendMode != MaterialBlendMode::Opaque && !skinned &&
+                    if (mat && IsTranslucentBlendMode(mat->blendMode) && !skinned &&
                         m_pipeline->GetTranslucentPipeline(1) != VK_NULL_HANDLE) {
                         TranslucentDraw draw;
                         draw.mesh = &mesh;
@@ -4589,6 +4907,16 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                         draw.slot = slot;
                         translucentDraws.push_back(draw);
                         return;
+                    }
+                    VkPipeline surfacePipeline = desiredPipeline;
+                    if (!skinned && !wantWireframe) {
+                        if (const SurfacePipelines* own = materialShaderPipelines(mat)) {
+                            surfacePipeline = renderer.backfaceCulling ? own->opaqueBackface : own->opaque;
+                        }
+                    }
+                    if (surfacePipeline != currentPipeline) {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, surfacePipeline);
+                        currentPipeline = surfacePipeline;
                     }
                     drawWithMaterial(mat, offset, count, entityName, si, slot);
                 };
@@ -4707,8 +5035,12 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                              return a.distance > b.distance;
                          });
         for (const TranslucentDraw& draw : translucentDraws) {
-            const VkPipeline translucentPipeline =
+            VkPipeline translucentPipeline =
                 m_pipeline->GetTranslucentPipeline(static_cast<uint32_t>(draw.material->blendMode));
+            if (const SurfacePipelines* own = materialShaderPipelines(draw.material)) {
+                translucentPipeline = draw.material->blendMode == MaterialBlendMode::Additive ? own->additive
+                                                                                              : own->alphaBlend;
+            }
             if (translucentPipeline != currentPipeline) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, translucentPipeline);
                 currentPipeline = translucentPipeline;
@@ -5120,6 +5452,8 @@ void EngineFrameRenderer::cleanupSwapchainResources()
     if (!m_device || !m_device->device) return;
 
     cleanupSkinnedGraphicsPipelines();
+    destroyMaskedShadowPipeline();
+    destroyMaterialShaderPipelines();
     cleanupToneMapResources();
     m_probeGI.DestroySwapchainResources();
 
@@ -5285,6 +5619,9 @@ void EngineFrameRenderer::destroyAllResources()
     m_materialTextureSlots.clear();
     m_materialTextureLookup.clear();
     m_pendingTextureSlotUpdates.clear();
+    destroyMaterialShaderPipelines();
+    m_materialShaderPrograms.clear();
+    m_materialShaderOverrides.clear();
     m_materialAssetCache.clear();
     m_materialAssetCacheFailed.clear();
     m_materialPathChecks.clear();
@@ -5340,6 +5677,7 @@ void EngineFrameRenderer::destroyAllResources()
     m_localShadow = ShadowMap{};
 
     // Cleanup shadow map resources
+    destroyMaskedShadowPipeline();
     if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(m_device->device, m_directionalShadow.pipeline, nullptr);
         m_directionalShadow.pipeline = VK_NULL_HANDLE;
@@ -5371,6 +5709,7 @@ void EngineFrameRenderer::destroyAllResources()
     }
 
     // Cleanup pipeline
+    destroyMaterialShaderPipelines();
     if (m_pipeline) {
         m_pipeline->Cleanup();
         m_pipeline.reset();

@@ -81,6 +81,8 @@ foreach ($notice in @("LICENSE.md", "THIRD_PARTY_NOTICES.md")) {
 
 New-Item -ItemType Directory -Path (Join-Path $OutputPath "shaders") | Out-Null
 Copy-Item (Join-Path $BuildOutput "shaders\*.spv") (Join-Path $OutputPath "shaders")
+# The editor compiles material graphs against the surface shader source.
+Copy-Item -Recurse (Join-Path $BuildOutput "shaders\source") (Join-Path $OutputPath "shaders\source")
 Copy-Item -Recurse (Join-Path $ProjectRoot "assets") (Join-Path $OutputPath "assets")
 Remove-Item -Recurse -Force (Join-Path $OutputPath "assets\tests")
 Copy-Item -Recurse (Join-Path $ProjectRoot "editor") (Join-Path $OutputPath "editor")
@@ -98,22 +100,30 @@ Get-ChildItem $OutputPath -Recurse -File -Include *.pdb, *.lib, *.exp, *.ilk | R
 
 Write-Host "Deploying Qt"
 $qtTargets = @((Join-Path $OutputPath "HephaestusEngine.exe"), (Join-Path $OutputPath "HephaestusLauncher.exe")) +
-    @(Get-ChildItem (Join-Path $OutputPath "Plugins") -Recurse -Filter "*.dll" | ForEach-Object FullName)
+    @(Get-ChildItem (Join-Path $OutputPath "Plugins") -Recurse -Filter "*.dll" |
+      # The store browser deploys its own Qt (WebEngine) into its bin folder at build time.
+      Where-Object { $_.FullName -notlike "*\Plugins\StoreBrowser\*" } | ForEach-Object FullName)
 & $WinDeployQt --release --dir $OutputPath --no-translations --no-compiler-runtime `
     --no-system-d3d-compiler --no-system-dxc-compiler --no-opengl-sw `
-    --skip-plugin-types generic,networkinformation,tls $qtTargets
+    --skip-plugin-types generic,networkinformation $qtTargets
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+# The Sketchfab plugin's HTTPS uses Windows' own TLS (Schannel); the OpenSSL backend would need OpenSSL DLLs.
+Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $OutputPath "tls\qopensslbackend.dll"), (Join-Path $OutputPath "tls\qcertonlybackend.dll")
+# The Cargo plugin reads Cargo's settings through Qt's SQLite driver; the other SQL drivers are not used.
+Get-ChildItem (Join-Path $OutputPath "sqldrivers") -Filter "*.dll" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne "qsqlite.dll" } | Remove-Item -Force
 # windeployqt copies Windows' own ICU from System32; Windows 10 and later already have it.
 Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $OutputPath "icuuc.dll")
 
 $problems = @()
 foreach ($required in @("HephaestusLauncher.exe", "HephaestusEngine.exe", "HephaestusGame.exe",
                         "tools\HephaestusBuild.exe", "Qt6Core.dll", "Qt6Widgets.dll", "Qt6Svg.dll",
+                        "Qt6Network.dll", "tls\qschannelbackend.dll", "Qt6Sql.dll", "sqldrivers\qsqlite.dll",
                         "platforms\qwindows.dll", "LICENSE.md", "THIRD_PARTY_NOTICES.md",
-                        "editor", "assets", "shaders", ".engine\meshes", ".engine\hdris", "Plugins")) {
+                        "editor", "assets", "shaders", "shaders\source\triangle.frag", ".engine\meshes", ".engine\hdris", "Plugins")) {
     if (-not (Test-Path (Join-Path $OutputPath $required))) { $problems += "missing $required" }
 }
-$problems += @(Get-ChildItem $OutputPath -Recurse -File -Include *.pdb, vc_redist*, msvcp*.dll, vcruntime*.dll, icu*.dll, dxcompiler.dll, Qt6Network.dll |
+$problems += @(Get-ChildItem $OutputPath -Recurse -File -Include *.pdb, vc_redist*, msvcp*.dll, vcruntime*.dll, icu*.dll, dxcompiler.dll, qopensslbackend.dll |
     ForEach-Object { "unexpected $($_.FullName)" })
 foreach ($plugin in $ExcludedPlugins) {
     if (Test-Path (Join-Path $OutputPath "Plugins\$plugin")) { $problems += "excluded plugin $plugin is present" }
