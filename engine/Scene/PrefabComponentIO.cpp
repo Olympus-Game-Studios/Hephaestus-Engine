@@ -1327,6 +1327,12 @@ JsonValue MeshRendererToJson(const MeshRendererComponent& mesh) {
     return data;
 }
 
+JsonValue MeshColliderToJson(const MeshColliderComponent& collider) {
+    JsonValue data;
+    CaptureMeshCollider(collider, data);
+    return data;
+}
+
 bool CaptureFromEntity(Entity entity, std::vector<PrefabComponentEntry>& out) {
     out.clear();
     if (!entity) {

@@ -368,6 +368,19 @@ std::string Upper(std::string value) {
     return value;
 }
 
+/// Collision meshes shipped beside the visible ones: Unreal's UCX_/UBX_/USP_/UCP_ prefixes, a "collision" or
+/// "collider" word, or Godot's "-col"/"-colonly" suffix.
+bool IsCollisionMesh(const std::string& name) {
+    const std::vector<std::string> tokens = Tokens(name);
+    for (const std::string& token : tokens) {
+        if (token == "ucx" || token == "ubx" || token == "usp" || token == "ucp" || token == "collision" ||
+            token == "collider" || token == "collisions") {
+            return true;
+        }
+    }
+    return !tokens.empty() && tokens.size() > 1 && (tokens.back() == "col" || tokens.back() == "colonly");
+}
+
 struct StagingFolder {
     fs::path path;
     ~StagingFolder() {
@@ -801,6 +814,7 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         int submeshCount = 0;
         std::vector<std::string> materials;
         Vec3 position{0.0f, 0.0f, 0.0f};
+        bool collision = false; ///< hidden mesh used only as the prefab's static collider
         std::string group; ///< parent node under the root, created once per name; empty for the root itself
         Vec3 groupPosition{0.0f, 0.0f, 0.0f};
     };
@@ -835,12 +849,23 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
             renderer.meshImported = true;
             renderer.submeshCount = part.submeshCount;
             renderer.appliedMaterialPaths = part.materials;
+            if (part.collision) {
+                renderer.visible = false;
+                renderer.castShadows = false;
+            }
             PrefabNode meshNode;
             meshNode.id = "node_" + std::to_string(i + 1);
             meshNode.name = parts.size() == 1 ? prefab.name + "_Mesh" : SanitizeAssetName(part.name);
             meshNode.parentId = parentId;
             meshNode.localTransform.position = part.position;
             meshNode.components.push_back({"MeshRenderer", true, PrefabComponentIO::MeshRendererToJson(renderer)});
+            if (part.collision) {
+                MeshColliderComponent collider;
+                collider.isStatic = true;
+                collider.useComplexCollision = true;
+                meshNode.components.push_back(
+                    {"MeshCollider", true, PrefabComponentIO::MeshColliderToJson(collider)});
+            }
             prefab.nodes.push_back(std::move(meshNode));
         }
         fs::path prefabPath = folder / "Prefabs" / (prefab.name + ".hpprefab");
@@ -892,7 +917,10 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
                     part.meshPath = AssetPathPolicy::ToPortableKey(projectRoot, partFile.generic_string());
                     part.bounds = fbxPart.mesh.bounds;
                     part.submeshCount = static_cast<int>(fbxPart.mesh.submeshes.size());
-                    part.materials = materialsFor(fbxPart.mesh, model, modelStem, {}, gltfMaterials, fbxMaterials);
+                    part.collision = IsCollisionMesh(fbxPart.name);
+                    if (!part.collision) {
+                        part.materials = materialsFor(fbxPart.mesh, model, modelStem, {}, gltfMaterials, fbxMaterials);
+                    }
                     part.position = fbxPart.origin;
                     if (!MeshSettings::SaveDefaultMaterials(partFile, part.materials, error)) {
                         outResult.warnings.push_back(error);
@@ -931,8 +959,11 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
                 part.group = usdPart.group;
                 part.bounds = usdPart.mesh.bounds;
                 part.submeshCount = static_cast<int>(usdPart.mesh.submeshes.size());
-                part.materials = materialsFor(usdPart.mesh, model, modelStem, usdPart.slotMaterials, gltfMaterials,
-                                              fbxMaterials);
+                part.collision = IsCollisionMesh(usdPart.name);
+                if (!part.collision) {
+                    part.materials = materialsFor(usdPart.mesh, model, modelStem, usdPart.slotMaterials,
+                                                  gltfMaterials, fbxMaterials);
+                }
                 part.groupPosition = usdPart.groupOrigin;
                 part.position = usdParts.size() == 1 ? Vec3(0.0f, 0.0f, 0.0f)
                     : Vec3(usdPart.origin.x - usdPart.groupOrigin.x, usdPart.origin.y - usdPart.groupOrigin.y,

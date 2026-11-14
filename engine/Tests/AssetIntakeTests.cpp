@@ -523,6 +523,13 @@ over "Box"
             rel material:binding = </Box/mtl/Paint>
         }
 
+        def Mesh "UCX_Quad"
+        {
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0, 0, 0), (100, 0, 0), (100, 0, 200)]
+        }
+
         def Xform "WheelA" (
             instanceable = true
             prepend references = </Box/__prototypes__/Wheel>
@@ -608,6 +615,7 @@ bool TestImportUsdKit(const fs::path& scratch) {
     std::string error;
     ok &= Check(AssetIntake::Import(request, result, error), "USD kit imports: " + error);
     ok &= Check(result.models == std::vector<std::string>({"assets/Imported/Cargo/Box/Models/Box/Quad.glb",
+                                                          "assets/Imported/Cargo/Box/Models/Box/UCX_Quad.glb",
                                                           "assets/Imported/Cargo/Box/Models/Box/Tyre.glb"}) &&
                     result.prefabs.size() == 1 && result.materials.size() == 1,
                 "each Mesh prim becomes its own model; the two wheel instances share one");
@@ -630,7 +638,20 @@ bool TestImportUsdKit(const fs::path& scratch) {
                 "the kit's Textures folder supplies the map named after the material");
     const json prefab = json::parse(ReadText(project / result.prefabs[0]));
     std::vector<std::string> tyres;
+    bool collisionHidden = false;
     for (const json& node : prefab["nodes"]) {
+        if (node.value("name", "") == "UCX_Quad") {
+            bool hasCollider = false;
+            for (const json& component : node["components"]) {
+                hasCollider |= component["type"] == "MeshCollider" && component["data"]["useComplexCollision"] == true &&
+                               component["data"]["isStatic"] == true;
+                if (component["type"] == "MeshRenderer") {
+                    collisionHidden = component["data"]["visible"] == false &&
+                                      component["data"]["appliedMaterialPaths"].empty();
+                }
+            }
+            collisionHidden &= hasCollider;
+        }
         if (node.value("name", "") == "WheelA" || node.value("name", "") == "WheelB") {
             const float x = node["transform"]["position"][0].get<float>();
             ok &= Check(std::abs(std::abs(x) - 3.0f) < 1e-4f, "each wheel group sits where its instance is");
@@ -642,6 +663,7 @@ bool TestImportUsdKit(const fs::path& scratch) {
             }
         }
     }
+    ok &= Check(collisionHidden, "a UCX_ collision mesh becomes a hidden static mesh collider without materials");
     ok &= Check(tyres.size() == 2 && tyres[0] != tyres[1] && tyres[0] != "node_0",
                 "the prototype in the class prim is only drawn through its two instances, each in its group");
     ok &= Check(!fs::exists(project / "assets/Imported/Cargo/Box/Textures") &&
