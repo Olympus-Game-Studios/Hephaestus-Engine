@@ -3,7 +3,7 @@
 #include "MaterialNodeDefinitions.h"
 
 #include <algorithm>
-#include <sstream>
+#include <charconv>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -13,6 +13,7 @@ namespace {
 struct Expression {
     ValueType type = ValueType::Float1;
     std::string code = "0.0";
+    std::string alpha; ///< alpha of the texture a colour came from, for Base Color's coverage; empty means 1
 };
 
 struct GeneratorContext {
@@ -21,7 +22,6 @@ struct GeneratorContext {
     std::unordered_map<PinID, Expression> cache;
     std::unordered_set<PinID> active;
     int tempIndex = 0;
-    int samplerIndex = 0;
 };
 
 std::string GlslType(ValueType type) {
@@ -46,80 +46,115 @@ std::string DefaultExpression(ValueType type) {
     return "0.0";
 }
 
-std::string SanitizeIdentifier(std::string value, const char* fallback) {
-    std::string out;
-    for (char ch : value) {
-        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
-            out.push_back(ch);
-        } else if (!out.empty() && out.back() != '_') {
-            out.push_back('_');
-        }
+std::string FloatLiteral(float value) {
+    char buffer[32];
+    const auto [end, error] = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::general);
+    std::string text = error == std::errc() ? std::string(buffer, end) : std::string("0.0");
+    if (text.find_first_of(".eEn") == std::string::npos) {
+        text += ".0";
     }
-    if (out.empty() || (out[0] >= '0' && out[0] <= '9')) {
-        out = fallback + out;
+    if (text == "inf" || text == "-inf" || text.find("nan") != std::string::npos) {
+        return "0.0";
     }
-    return out;
+    return text;
 }
 
 std::string CoerceExpression(const Expression& expression, ValueType targetType) {
-    if (expression.type == targetType) {
+    if (expression.type == targetType || expression.type == ValueType::Sampler2D || targetType == ValueType::Sampler2D) {
         return expression.code;
     }
-    if (expression.type == ValueType::Float1 && IsNumericValueType(targetType)) {
+    const int from = ValueTypeComponentCount(expression.type);
+    const int to = ValueTypeComponentCount(targetType);
+    if (from == 1) {
         return GlslType(targetType) + "(" + expression.code + ")";
     }
-    if (targetType == ValueType::Float1 && expression.type != ValueType::Sampler2D) {
-        return expression.code + ".x";
+    if (to < from) {
+        static const char* swizzles[] = {"", ".x", ".xy", ".xyz"};
+        return "(" + expression.code + ")" + swizzles[to];
     }
-    return expression.code;
+    std::string padded = GlslType(targetType) + "(" + expression.code;
+    for (int i = from; i < to; ++i) {
+        padded += i == 3 ? ", 1.0" : ", 0.0";
+    }
+    return padded + ")";
+}
+
+ValueType Widest(ValueType a, ValueType b) {
+    const ValueType type = ValueTypeComponentCount(a) >= ValueTypeComponentCount(b) ? a : b;
+    return IsNumericValueType(type) ? type : ValueType::Float1;
 }
 
 Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin);
 
-Expression GenerateInput(GeneratorContext& ctx, const Node& node, int inputIndex, ValueType fallbackType = ValueType::Float1) {
-    if (inputIndex < 0 || inputIndex >= static_cast<int>(node.inputs.size())) {
-        return {fallbackType, DefaultExpression(fallbackType)};
-    }
-
-    const Pin* input = ctx.graph.FindPin(node.inputs[inputIndex]);
-    const ValueType inputType = input ? input->valueType : fallbackType;
-    const PinID source = ctx.graph.FindInputSource(node.inputs[inputIndex]);
-    if (source == 0) {
-        return {inputType, DefaultExpression(inputType)};
-    }
-    return GenerateOutput(ctx, source);
+bool IsInputConnected(const GeneratorContext& ctx, const Node& node, int inputIndex) {
+    return inputIndex >= 0 && inputIndex < static_cast<int>(node.inputs.size()) &&
+           ctx.graph.FindInputSource(node.inputs[inputIndex]) != 0;
 }
 
-Expression MakeTemp(GeneratorContext& ctx, ValueType type, const std::string& expression) {
+Expression GenerateInput(GeneratorContext& ctx, const Node& node, int inputIndex, ValueType fallbackType,
+                         const std::string& unconnected = {}) {
+    if (!IsInputConnected(ctx, node, inputIndex)) {
+        const Pin* input = inputIndex >= 0 && inputIndex < static_cast<int>(node.inputs.size())
+            ? ctx.graph.FindPin(node.inputs[inputIndex])
+            : nullptr;
+        const ValueType inputType = input ? input->valueType : fallbackType;
+        return {inputType, unconnected.empty() ? DefaultExpression(inputType) : unconnected};
+    }
+    return GenerateOutput(ctx, ctx.graph.FindInputSource(node.inputs[inputIndex]));
+}
+
+Expression MakeTemp(GeneratorContext& ctx, ValueType type, const std::string& expression, std::string alpha = {}) {
     const std::string name = "matNode_" + std::to_string(ctx.tempIndex++);
     ctx.result.body += "    " + GlslType(type) + " " + name + " = " + expression + ";\n";
-    return {type, name};
+    return {type, name, std::move(alpha)};
 }
 
 std::string RegisterSampler(GeneratorContext& ctx, const Node& node) {
-    std::string name = node.parameterName.empty() ? ("materialTexture_" + std::to_string(ctx.samplerIndex)) : SanitizeIdentifier(node.parameterName, "texture_");
-    if (node.parameterName.empty()) {
-        ++ctx.samplerIndex;
+    const bool linear = TextureNodeIsLinear(node);
+    const auto existing = std::find_if(ctx.result.samplers.begin(), ctx.result.samplers.end(),
+                                       [&](const GeneratedSamplerBinding& binding) {
+                                           return binding.resourcePath == node.resourcePath && binding.linear == linear;
+                                       });
+    size_t index = static_cast<size_t>(existing - ctx.result.samplers.begin());
+    if (existing == ctx.result.samplers.end()) {
+        if (ctx.result.samplers.size() >= kMaxGraphTextures) {
+            ctx.result.ok = false;
+            ctx.result.diagnostics.push_back("A material graph can use at most " + std::to_string(kMaxGraphTextures) +
+                                             " different textures.");
+            return "materialTextures[0]";
+        }
+        ctx.result.samplers.push_back({"texture" + std::to_string(ctx.result.samplers.size()), node.resourcePath, linear});
+        index = ctx.result.samplers.size() - 1;
     }
-    ctx.result.samplers.push_back({name, node.resourcePath});
-    ctx.result.declarations += "layout(set = 1, binding = " + std::to_string(ctx.result.samplers.size() - 1) + ") uniform sampler2D " + name + ";\n";
-    return name;
+    return "materialTextures[material.graphTextureSlots[" + std::to_string(index / 4) + "][" +
+           std::to_string(index % 4) + "] % MAX_TEXTURE_SLOTS]";
 }
 
-Expression TextureSampleExpression(GeneratorContext& ctx, const Node& node, PinID outputPin, const std::string& samplerName) {
-    int outputIndex = 0;
+int OutputIndex(const Node& node, PinID outputPin) {
     for (size_t i = 0; i < node.outputs.size(); ++i) {
         if (node.outputs[i] == outputPin) {
-            outputIndex = static_cast<int>(i);
-            break;
+            return static_cast<int>(i);
         }
     }
+    return 0;
+}
 
-    const Expression uv = GenerateInput(ctx, node, node.type == NodeType::TextureSampleFromObject ? 1 : 0, ValueType::Float2);
-    const std::string sample = "texture(" + samplerName + ", " + CoerceExpression(uv, ValueType::Float2) + ")";
-    if (outputIndex == 0) return MakeTemp(ctx, ValueType::Float4, sample);
-    if (outputIndex == 1) return MakeTemp(ctx, ValueType::Float3, sample + ".rgb");
-    return MakeTemp(ctx, ValueType::Float1, sample + ".r");
+Expression TextureSampleExpression(GeneratorContext& ctx, const Node& node, const Pin& pin, const std::string& sampler) {
+    std::string uv = "surface.texCoord";
+    if (node.type == NodeType::WorldAlignedTexture || node.type == NodeType::TriplanarTexture) {
+        uv = "getWorldAlignedUV(fragWorldPos, N, " + FloatLiteral(node.worldAlignedScale) + ")";
+    } else if (node.type == NodeType::TextureSample || node.type == NodeType::TextureSampleFromObject) {
+        const int uvInput = node.type == NodeType::TextureSampleFromObject ? 1 : 0;
+        uv = CoerceExpression(GenerateInput(ctx, node, uvInput, ValueType::Float2, "surface.texCoord"), ValueType::Float2);
+    }
+    const Expression sample = MakeTemp(ctx, ValueType::Float4, "texture(" + sampler + ", " + uv + ")");
+    const std::string alpha = sample.code + ".a";
+    switch (pin.valueType) {
+    case ValueType::Float4: return {ValueType::Float4, sample.code, alpha};
+    case ValueType::Float3: return {ValueType::Float3, sample.code + ".rgb", alpha};
+    case ValueType::Float2: return {ValueType::Float2, sample.code + ".rg", alpha};
+    default: return {ValueType::Float1, sample.code + ".r"};
+    }
 }
 
 Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
@@ -133,40 +168,46 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
     }
 
     const Pin* pin = ctx.graph.FindPin(outputPin);
-    if (!pin) {
-        return {};
-    }
-    const Node* node = ctx.graph.FindNode(pin->node);
-    if (!node) {
+    const Node* node = pin ? ctx.graph.FindNode(pin->node) : nullptr;
+    if (!pin || !node) {
+        ctx.active.erase(outputPin);
         return {};
     }
 
-    auto input = [&](int index, ValueType type = ValueType::Float1) { return GenerateInput(ctx, *node, index, type); };
+    auto input = [&](int index, ValueType type = ValueType::Float1, const std::string& unconnected = {}) {
+        return GenerateInput(ctx, *node, index, type, unconnected);
+    };
+    auto scalar = [&](int index, const std::string& unconnected = {}) {
+        return CoerceExpression(input(index, ValueType::Float1, unconnected), ValueType::Float1);
+    };
+    auto vector = [&](int index, ValueType type, const std::string& unconnected = {}) {
+        return CoerceExpression(input(index, type, unconnected), type);
+    };
     auto binary = [&](const char* op) {
         const Expression a = input(0, pin->valueType);
         const Expression b = input(1, pin->valueType);
-        ValueType type = ValueTypeComponentCount(a.type) >= ValueTypeComponentCount(b.type) ? a.type : b.type;
-        if (!IsNumericValueType(type)) {
-            type = ValueType::Float1;
-        }
-        return MakeTemp(ctx, type, "(" + CoerceExpression(a, type) + " " + op + " " + CoerceExpression(b, type) + ")");
+        const ValueType type = Widest(a.type, b.type);
+        return MakeTemp(ctx, type, "(" + CoerceExpression(a, type) + " " + op + " " + CoerceExpression(b, type) + ")",
+                        a.alpha.empty() ? b.alpha : a.alpha);
     };
+    auto scalarCall = [&](const std::string& call) { return MakeTemp(ctx, ValueType::Float1, call); };
 
     Expression expression{pin->valueType, DefaultExpression(pin->valueType)};
     switch (node->type) {
     case NodeType::ConstantFloat:
     case NodeType::FloatParameter:
-        expression = {ValueType::Float1, std::to_string(node->scalar)};
+        expression = {ValueType::Float1, FloatLiteral(node->scalar)};
         break;
     case NodeType::BoolParameter:
         expression = {ValueType::Float1, node->boolValue ? "1.0" : "0.0"};
         break;
     case NodeType::ConstantVec3:
     case NodeType::ColorParameter:
-        expression = {ValueType::Float3, "vec3(" + std::to_string(node->color.x) + ", " + std::to_string(node->color.y) + ", " + std::to_string(node->color.z) + ")"};
+        expression = {ValueType::Float3, "vec3(" + FloatLiteral(node->color.x) + ", " + FloatLiteral(node->color.y) +
+                                             ", " + FloatLiteral(node->color.z) + ")"};
         break;
     case NodeType::Vector2Parameter:
-        expression = {ValueType::Float2, "vec2(" + std::to_string(node->color.x) + ", " + std::to_string(node->color.y) + ")"};
+        expression = {ValueType::Float2, "vec2(" + FloatLiteral(node->color.x) + ", " + FloatLiteral(node->color.y) + ")"};
         break;
     case NodeType::TextureObject:
     case NodeType::TextureParameter:
@@ -178,12 +219,18 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
     case NodeType::MetallicTextureSample:
     case NodeType::AoTextureSample:
     case NodeType::TextureSample:
+    case NodeType::WorldAlignedTexture:
     case NodeType::TriplanarTexture:
-        expression = TextureSampleExpression(ctx, *node, outputPin, RegisterSampler(ctx, *node));
+        expression = TextureSampleExpression(ctx, *node, *pin, RegisterSampler(ctx, *node));
         break;
     case NodeType::TextureSampleFromObject: {
-        Expression sampler = input(0, ValueType::Sampler2D);
-        expression = TextureSampleExpression(ctx, *node, outputPin, sampler.code);
+        const Expression sampler = input(0, ValueType::Sampler2D);
+        if (sampler.type != ValueType::Sampler2D || sampler.code.empty()) {
+            ctx.result.ok = false;
+            ctx.result.diagnostics.push_back("Texture Sample From Object needs a Texture Object or Texture Parameter.");
+            break;
+        }
+        expression = TextureSampleExpression(ctx, *node, *pin, sampler.code);
         break;
     }
     case NodeType::Add: expression = binary("+"); break;
@@ -191,21 +238,34 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
     case NodeType::Multiply: expression = binary("*"); break;
     case NodeType::Divide: expression = binary("/"); break;
     case NodeType::Clamp:
-        expression = MakeTemp(ctx, ValueType::Float1, "clamp(" + input(0).code + ", " + input(1).code + ", " + input(2).code + ")");
+        expression = scalarCall("clamp(" + scalar(0) + ", " + scalar(1) + ", " +
+                                (IsInputConnected(ctx, *node, 2) ? scalar(2) : FloatLiteral(node->scalar)) + ")");
         break;
-    case NodeType::Saturate:
-        expression = MakeTemp(ctx, ValueType::Float1, "clamp(" + input(0).code + ", 0.0, 1.0)");
+    case NodeType::Saturate: expression = scalarCall("clamp(" + scalar(0) + ", 0.0, 1.0)"); break;
+    case NodeType::Power: expression = scalarCall("pow(max(" + scalar(0) + ", 0.0), " + scalar(1, "1.0") + ")"); break;
+    case NodeType::Abs: expression = scalarCall("abs(" + scalar(0) + ")"); break;
+    case NodeType::Min: expression = scalarCall("min(" + scalar(0) + ", " + scalar(1) + ")"); break;
+    case NodeType::Max: expression = scalarCall("max(" + scalar(0) + ", " + scalar(1) + ")"); break;
+    case NodeType::OneMinus: expression = scalarCall("(1.0 - " + scalar(0) + ")"); break;
+    case NodeType::DotProduct:
+        expression = scalarCall("dot(" + vector(0, ValueType::Float3) + ", " + vector(1, ValueType::Float3) + ")");
         break;
-    case NodeType::Power: expression = MakeTemp(ctx, ValueType::Float1, "pow(max(" + input(0).code + ", 0.0), " + input(1).code + ")"); break;
-    case NodeType::Abs: expression = MakeTemp(ctx, ValueType::Float1, "abs(" + input(0).code + ")"); break;
-    case NodeType::Min: expression = MakeTemp(ctx, ValueType::Float1, "min(" + input(0).code + ", " + input(1).code + ")"); break;
-    case NodeType::Max: expression = MakeTemp(ctx, ValueType::Float1, "max(" + input(0).code + ", " + input(1).code + ")"); break;
-    case NodeType::OneMinus: expression = MakeTemp(ctx, ValueType::Float1, "(1.0 - " + input(0).code + ")"); break;
-    case NodeType::DotProduct: expression = MakeTemp(ctx, ValueType::Float1, "dot(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + ", " + CoerceExpression(input(1, ValueType::Float3), ValueType::Float3) + ")"); break;
-    case NodeType::CrossProduct: expression = MakeTemp(ctx, ValueType::Float3, "cross(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + ", " + CoerceExpression(input(1, ValueType::Float3), ValueType::Float3) + ")"); break;
-    case NodeType::Normalize: expression = MakeTemp(ctx, ValueType::Float3, "normalize(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + ")"); break;
-    case NodeType::Length: expression = MakeTemp(ctx, ValueType::Float1, "length(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + ")"); break;
-    case NodeType::Lerp: expression = MakeTemp(ctx, pin->valueType, "mix(" + CoerceExpression(input(0, pin->valueType), pin->valueType) + ", " + CoerceExpression(input(1, pin->valueType), pin->valueType) + ", " + input(2).code + ")"); break;
+    case NodeType::CrossProduct:
+        expression = MakeTemp(ctx, ValueType::Float3, "cross(" + vector(0, ValueType::Float3) + ", " + vector(1, ValueType::Float3) + ")");
+        break;
+    case NodeType::Normalize:
+        expression = MakeTemp(ctx, ValueType::Float3, "normalize(" + vector(0, ValueType::Float3) + ")");
+        break;
+    case NodeType::Length: expression = scalarCall("length(" + vector(0, ValueType::Float3) + ")"); break;
+    case NodeType::Lerp: {
+        const Expression a = input(0);
+        const Expression b = input(1);
+        const ValueType type = Widest(a.type, b.type);
+        expression = MakeTemp(ctx, type, "mix(" + CoerceExpression(a, type) + ", " + CoerceExpression(b, type) + ", " +
+                                              scalar(2) + ")",
+                              a.alpha.empty() ? b.alpha : a.alpha);
+        break;
+    }
     case NodeType::ComponentMask: {
         std::string swizzle;
         if (node->maskR) swizzle += "r";
@@ -213,50 +273,97 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
         if (node->maskB) swizzle += "b";
         if (node->maskA) swizzle += "a";
         if (swizzle.empty()) swizzle = "r";
-        expression = MakeTemp(ctx, swizzle.size() == 1 ? ValueType::Float1 : (swizzle.size() == 2 ? ValueType::Float2 : (swizzle.size() == 3 ? ValueType::Float3 : ValueType::Float4)), CoerceExpression(input(0, ValueType::Float4), ValueType::Float4) + "." + swizzle);
+        const ValueType type = swizzle.size() == 1 ? ValueType::Float1
+            : swizzle.size() == 2                  ? ValueType::Float2
+            : swizzle.size() == 3                  ? ValueType::Float3
+                                                   : ValueType::Float4;
+        expression = MakeTemp(ctx, type, vector(0, ValueType::Float4) + "." + swizzle);
         break;
     }
-    case NodeType::AppendVector: expression = MakeTemp(ctx, ValueType::Float2, "vec2(" + input(0).code + ", " + input(1).code + ")"); break;
+    case NodeType::AppendVector:
+        expression = MakeTemp(ctx, ValueType::Float2, "vec2(" + scalar(0) + ", " + scalar(1) + ")");
+        break;
     case NodeType::BreakVector: {
-        int outputIndex = 0;
-        for (size_t i = 0; i < node->outputs.size(); ++i) {
-            if (node->outputs[i] == outputPin) {
-                outputIndex = static_cast<int>(i);
-                break;
-            }
-        }
         static const char* components[] = {"r", "g", "b", "a"};
-        expression = MakeTemp(ctx, ValueType::Float1, CoerceExpression(input(0, ValueType::Float4), ValueType::Float4) + "." + components[outputIndex]);
+        expression = MakeTemp(ctx, ValueType::Float1,
+                              vector(0, ValueType::Float4) + "." + components[std::clamp(OutputIndex(*node, outputPin), 0, 3)]);
         break;
     }
     case NodeType::Transform: expression = input(0, ValueType::Float3); break;
     case NodeType::TexCoord: expression = {ValueType::Float2, "fragTexCoord"}; break;
     case NodeType::ScreenPosition: expression = {ValueType::Float4, "gl_FragCoord"}; break;
-    case NodeType::TextureTilingOffset: expression = MakeTemp(ctx, ValueType::Float2, CoerceExpression(input(0, ValueType::Float2), ValueType::Float2) + " * " + CoerceExpression(input(1, ValueType::Float2), ValueType::Float2) + " + " + CoerceExpression(input(2, ValueType::Float2), ValueType::Float2)); break;
-    case NodeType::NormalUnpack: expression = MakeTemp(ctx, ValueType::Float3, "normalize(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + " * 2.0 - 1.0)"); break;
-    case NodeType::Noise: expression = MakeTemp(ctx, ValueType::Float1, "fract(sin(dot(" + CoerceExpression(input(0, ValueType::Float2), ValueType::Float2) + " * " + input(1).code + ", vec2(12.9898, 78.233))) * 43758.5453)"); break;
-    case NodeType::Gradient: expression = MakeTemp(ctx, ValueType::Float1, node->operation == "Radial" ? "length(" + CoerceExpression(input(0, ValueType::Float2), ValueType::Float2) + " - vec2(0.5)) * 2.0" : CoerceExpression(input(0, ValueType::Float2), ValueType::Float2) + ".x"); break;
-    case NodeType::Fresnel: expression = MakeTemp(ctx, ValueType::Float1, "pow(1.0 - max(dot(normalize(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + "), normalize(ubo.viewPos - fragWorldPos)), 0.0), max(" + input(1).code + ", 0.001))"); break;
-    case NodeType::UVDistortion: expression = MakeTemp(ctx, ValueType::Float2, CoerceExpression(input(0, ValueType::Float2), ValueType::Float2) + " + " + CoerceExpression(input(1, ValueType::Float2), ValueType::Float2) + " * " + input(2).code); break;
-    case NodeType::Time: expression = {ValueType::Float1, "materialTime"}; ctx.result.uniforms.push_back({"materialTime", ValueType::Float1}); break;
+    case NodeType::TextureTilingOffset:
+        expression = MakeTemp(ctx, ValueType::Float2, vector(0, ValueType::Float2, "fragTexCoord") + " * " +
+                                                          vector(1, ValueType::Float2, "vec2(1.0)") + " + " +
+                                                          vector(2, ValueType::Float2));
+        break;
+    case NodeType::NormalUnpack:
+        expression = MakeTemp(ctx, ValueType::Float3, "normalize(" + vector(0, ValueType::Float3) + " * 2.0 - 1.0)");
+        break;
+    case NodeType::Noise:
+        expression = scalarCall("fract(sin(dot(" + vector(0, ValueType::Float2, "fragTexCoord") + " * " + scalar(1, "1.0") +
+                                ", vec2(12.9898, 78.233))) * 43758.5453)");
+        break;
+    case NodeType::Gradient:
+        expression = scalarCall(node->operation == "Radial"
+                                    ? "length(" + vector(0, ValueType::Float2, "fragTexCoord") + " - vec2(0.5)) * 2.0"
+                                    : vector(0, ValueType::Float2, "fragTexCoord") + ".x");
+        break;
+    case NodeType::Fresnel:
+        expression = scalarCall("pow(1.0 - max(dot(normalize(" + vector(0, ValueType::Float3, "N") +
+                                "), normalize(ubo.viewPos - fragWorldPos)), 0.0), max(" + scalar(1, "5.0") + ", 0.001))");
+        break;
+    case NodeType::UVDistortion:
+        expression = MakeTemp(ctx, ValueType::Float2, vector(0, ValueType::Float2, "fragTexCoord") + " + " +
+                                                          vector(1, ValueType::Float2) + " * " + scalar(2, "1.0"));
+        break;
+    case NodeType::Time: expression = {ValueType::Float1, "ubo.time"}; break;
     case NodeType::CameraVector:
     case NodeType::ViewDirection: expression = {ValueType::Float3, "normalize(ubo.viewPos - fragWorldPos)"}; break;
-    case NodeType::ReflectionVector: expression = MakeTemp(ctx, ValueType::Float3, "reflect(-normalize(ubo.viewPos - fragWorldPos), normalize(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + "))"); break;
+    case NodeType::ReflectionVector:
+        expression = MakeTemp(ctx, ValueType::Float3, "reflect(-normalize(ubo.viewPos - fragWorldPos), normalize(" +
+                                                          vector(0, ValueType::Float3, "N") + "))");
+        break;
     case NodeType::WorldPosition: expression = {ValueType::Float3, "fragWorldPos"}; break;
-    case NodeType::ObjectPosition: expression = {ValueType::Float3, "vec3(model[3])"}; break;
-    case NodeType::DistanceToCamera: expression = MakeTemp(ctx, ValueType::Float1, "length(ubo.viewPos - fragWorldPos)"); break;
-    case NodeType::If: expression = MakeTemp(ctx, ValueType::Float1, "(" + input(0).code + " > " + input(1).code + " ? " + input(2).code + " : " + input(3).code + ")"); break;
-    case NodeType::Step: expression = MakeTemp(ctx, ValueType::Float1, "step(" + input(0).code + ", " + input(1).code + ")"); break;
-    case NodeType::SmoothStep: expression = MakeTemp(ctx, ValueType::Float1, "smoothstep(" + input(0).code + ", " + input(1).code + ", " + input(2).code + ")"); break;
-    case NodeType::Compare: expression = MakeTemp(ctx, ValueType::Float1, "(" + input(0).code + " " + (node->operation.empty() ? ">" : node->operation) + " " + input(1).code + " ? 1.0 : 0.0)"); break;
-    case NodeType::Overlay: expression = MakeTemp(ctx, ValueType::Float3, "mix(2.0 * " + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + " * " + CoerceExpression(input(1, ValueType::Float3), ValueType::Float3) + ", 1.0 - 2.0 * (1.0 - " + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + ") * (1.0 - " + CoerceExpression(input(1, ValueType::Float3), ValueType::Float3) + "), step(vec3(0.5), " + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + "))"); break;
-    case NodeType::Screen: expression = MakeTemp(ctx, ValueType::Float3, "1.0 - (1.0 - " + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + ") * (1.0 - " + CoerceExpression(input(1, ValueType::Float3), ValueType::Float3) + ")"); break;
-    case NodeType::HeightBlend: expression = MakeTemp(ctx, ValueType::Float3, "mix(" + CoerceExpression(input(0, ValueType::Float3), ValueType::Float3) + ", " + CoerceExpression(input(1, ValueType::Float3), ValueType::Float3) + ", clamp((" + input(2).code + " - 0.5) * max(" + input(3).code + ", 1.0) + 0.5, 0.0, 1.0))"); break;
+    case NodeType::ObjectPosition: expression = {ValueType::Float3, "fragObjectPos"}; break;
+    case NodeType::DistanceToCamera: expression = scalarCall("length(ubo.viewPos - fragWorldPos)"); break;
+    case NodeType::If:
+        expression = scalarCall("(" + scalar(0) + " > " + scalar(1) + " ? " + scalar(2) + " : " + scalar(3) + ")");
+        break;
+    case NodeType::Step: expression = scalarCall("step(" + scalar(0) + ", " + scalar(1) + ")"); break;
+    case NodeType::SmoothStep:
+        expression = scalarCall("smoothstep(" + scalar(0) + ", " + scalar(1, "1.0") + ", " + scalar(2) + ")");
+        break;
+    case NodeType::Compare: {
+        const std::string op = node->operation == "<" || node->operation == "==" ? node->operation : ">";
+        expression = op == "=="
+            ? scalarCall("(abs(" + scalar(0) + " - " + scalar(1) + ") <= 0.0001 ? 1.0 : 0.0)")
+            : scalarCall("(" + scalar(0) + " " + op + " " + scalar(1) + " ? 1.0 : 0.0)");
+        break;
+    }
+    case NodeType::Overlay: {
+        const std::string base = vector(0, ValueType::Float3);
+        const std::string blend = vector(1, ValueType::Float3);
+        expression = MakeTemp(ctx, ValueType::Float3, "mix(2.0 * " + base + " * " + blend + ", 1.0 - 2.0 * (1.0 - " + base +
+                                                          ") * (1.0 - " + blend + "), step(vec3(0.5), " + base + "))");
+        break;
+    }
+    case NodeType::Screen:
+        expression = MakeTemp(ctx, ValueType::Float3, "1.0 - (1.0 - " + vector(0, ValueType::Float3) + ") * (1.0 - " +
+                                                          vector(1, ValueType::Float3) + ")");
+        break;
+    case NodeType::HeightBlend:
+        expression = MakeTemp(ctx, ValueType::Float3, "mix(" + vector(0, ValueType::Float3) + ", " + vector(1, ValueType::Float3) +
+                                                          ", clamp((" + scalar(2) + " - 0.5) * max(" + scalar(3, "1.0") +
+                                                          ", 1.0) + 0.5, 0.0, 1.0))");
+        break;
     case NodeType::StaticSwitchParameter: expression = node->boolValue ? input(1) : input(0); break;
     case NodeType::MaterialOutput:
     case NodeType::Unknown:
         ctx.result.ok = false;
-        ctx.result.diagnostics.push_back("Unsupported shader node: " + std::string(NodeTypeName(node->type)));
+        ctx.result.diagnostics.push_back("Unsupported shader node: " +
+                                         (node->serializedType.empty() ? std::string(NodeTypeName(node->type))
+                                                                       : node->serializedType));
         break;
     }
 
@@ -283,21 +390,58 @@ MaterialShaderGenerationResult GenerateMaterialShader(const Graph& graph) {
         return ctx.result;
     }
 
-    static const char* outputNames[] = {
-        "albedo", "metallic", "roughness", "emissive", "normal", "roughnessMap",
-        "ao", "specular", "opacity", "opacityMask", "refraction"
+    enum Pin { BaseColor, Metallic, Roughness, Emissive, NormalMap, RoughnessMap, AoMap, Specular, Opacity, OpacityClip };
+    auto connected = [&](int pin) { return IsInputConnected(ctx, *outputNode, pin); };
+    auto value = [&](int pin, ValueType type) {
+        return CoerceExpression(GenerateInput(ctx, *outputNode, pin, type), type);
     };
-    const int outputCount = std::min<int>(static_cast<int>(outputNode->inputs.size()), static_cast<int>(sizeof(outputNames) / sizeof(outputNames[0])));
-    for (int i = 0; i < outputCount; ++i) {
-        const Pin* pin = graph.FindPin(outputNode->inputs[i]);
-        if (!pin) {
-            continue;
+    std::string& body = ctx.result.body;
+
+    if (connected(BaseColor)) {
+        const Expression color = GenerateInput(ctx, *outputNode, BaseColor, ValueType::Float3);
+        body += "    surface.albedo = " + CoerceExpression(color, ValueType::Float3) + " * fragColor;\n";
+        if (!color.alpha.empty()) {
+            body += "    surface.textureAlpha = " + color.alpha + ";\n";
         }
-        const Expression expression = GenerateInput(ctx, *outputNode, i, pin->valueType);
-        ctx.result.body += "    material." + std::string(outputNames[i]) + " = " + CoerceExpression(expression, pin->valueType) + ";\n";
     }
+    if (connected(Metallic)) body += "    surface.metallic = " + value(Metallic, ValueType::Float1) + ";\n";
+    if (connected(Roughness)) body += "    surface.roughness = " + value(Roughness, ValueType::Float1) + ";\n";
+    if (connected(RoughnessMap)) body += "    surface.roughness *= " + value(RoughnessMap, ValueType::Float1) + ";\n";
+    if (connected(Emissive)) {
+        body += "    surface.emissive = " + value(Emissive, ValueType::Float3) + " * material.emissiveStrength;\n";
+    }
+    if (connected(NormalMap)) {
+        body += "    surface.normal = perturbNormal(N, fragWorldPos, fragTexCoord, " + value(NormalMap, ValueType::Float3) +
+                " * 2.0 - 1.0);\n";
+    }
+    if (connected(AoMap)) body += "    surface.ao = " + value(AoMap, ValueType::Float1) + ";\n";
+    if (connected(Specular)) body += "    surface.specular = " + value(Specular, ValueType::Float1) + ";\n";
+    if (connected(Opacity)) body += "    surface.opacity = " + value(Opacity, ValueType::Float1) + ";\n";
+    if (connected(OpacityClip)) body += "    surface.clipThreshold = " + value(OpacityClip, ValueType::Float1) + ";\n";
 
     return ctx.result;
+}
+
+std::string BuildMaterialGraphSource(const MaterialShaderGenerationResult& generated) {
+    return generated.declarations +
+           "Surface evaluateSurfaceCoverage(vec3 N) {\n"
+           "    Surface surface;\n"
+           "    surface.texCoord = fragTexCoord;\n"
+           "    surface.albedo = material.albedo * fragColor;\n"
+           "    surface.textureAlpha = 1.0;\n"
+           "    surface.opacity = material.opacity;\n"
+           "    surface.clipThreshold = material.opacityMask;\n"
+           "    surface.emissive = material.emissive * material.emissiveStrength;\n"
+           "    surface.normal = N;\n"
+           "    surface.roughness = material.roughness;\n"
+           "    surface.metallic = material.metallic;\n"
+           "    surface.ao = material.ao;\n"
+           "    surface.specular = material.specular;\n" +
+           generated.body +
+           "    return surface;\n"
+           "}\n"
+           "\n"
+           "void evaluateSurfaceShading(inout Surface surface) {}\n";
 }
 
 } // namespace MaterialEditor

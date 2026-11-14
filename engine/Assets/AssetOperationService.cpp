@@ -3,6 +3,7 @@
 #include "AssetManager.h"
 #include "AssetPathPolicy.h"
 #include "CharacterAsset.h"
+#include "CompiledMaterialShader.h"
 #include "MeshSettings.h"
 
 #include <chrono>
@@ -506,6 +507,17 @@ AssetOperationResult AssetOperationService::executeRename(const AssetOperationPr
         }
     }
 
+    // A material's compiled shader (<material>.hemshader) travels with it.
+    if (std::filesystem::path(preflight.absoluteOldPath).extension() == ".hematerial") {
+        const std::filesystem::path oldShader = CompiledMaterialShaderPath(preflight.absoluteOldPath);
+        if (std::filesystem::is_regular_file(oldShader, ec)) {
+            std::filesystem::rename(oldShader, CompiledMaterialShaderPath(preflight.absoluteNewPath), ec);
+            if (ec) {
+                result.warnings.push_back("Could not move " + oldShader.filename().string() + ": " + ec.message());
+            }
+        }
+    }
+
     // A model's settings file (<model>.hpmesh) travels with it.
     {
         const std::filesystem::path oldSettings = MeshSettings::SidecarPath(preflight.absoluteOldPath);
@@ -812,6 +824,22 @@ AssetOperationResult AssetOperationService::MoveToTrash(const std::string& path)
                 }
             }
             info.originalPortablePaths.push_back(ownedDir);
+        }
+    }
+
+    if (absolute.extension() == ".hematerial") {
+        const std::filesystem::path shader = CompiledMaterialShaderPath(absolute);
+        std::error_code shaderEc;
+        if (std::filesystem::is_regular_file(shader, shaderEc)) {
+            const std::string shaderPortable =
+                AssetPathPolicy::NormalizeSeparators(CompiledMaterialShaderPath(normPortable).generic_string());
+            std::filesystem::rename(shader, payloadDir / std::filesystem::path(shaderPortable), shaderEc);
+            if (shaderEc) {
+                result.warnings.push_back("Could not move " + shader.filename().string() + " to the trash: " +
+                                          shaderEc.message());
+            } else {
+                info.originalPortablePaths.push_back(shaderPortable);
+            }
         }
     }
 

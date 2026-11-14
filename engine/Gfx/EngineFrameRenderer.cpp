@@ -40,6 +40,8 @@ struct alignas(16) UniformBufferObject {
     Mat4 proj;
     Vec3 viewPos;
     float shadingMode; // 0 = Lit, 1 = Unlit
+    float time;        // seconds since the renderer started (material graph Time)
+    float timePadding[3];
 };
 
 struct alignas(16) MaterialUBO {
@@ -73,7 +75,10 @@ struct alignas(16) MaterialUBO {
     float refraction;
     uint32_t blendMode;
     uint32_t textureChannels; // roughness, metallic, AO map channel, 2 bits each
+    uint32_t graphPadding[2];
+    uint32_t graphTextureSlots[16]; // shaders/triangle.frag graphTextureSlots, read by compiled material graphs
 };
+static_assert(offsetof(MaterialUBO, graphTextureSlots) == 144);
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
 constexpr float kLightIconHalfExtent = 0.045f; // fraction of the viewport half-height
@@ -3102,6 +3107,7 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
     m_frameViewFrame = viewFrame;
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
+    ubo.time = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_startTime).count();
     
     void* mapped = nullptr;
     vmaMapMemory(m_device->allocator, m_uniformBuffers[imageIndex].allocation, &mapped);
@@ -3717,10 +3723,16 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         : fs::file_time_type{};
     if (timeError) return nullptr;
 
+    const fs::path shaderPath = CompiledMaterialShaderPath(resolvedPath);
+    std::error_code shaderTimeError;
+    const auto shaderTimestamp = fs::exists(shaderPath, shaderTimeError)
+        ? fs::last_write_time(shaderPath, shaderTimeError)
+        : fs::file_time_type{};
+
     // Check cache
     auto cached = m_materialAssetCache.find(cacheKey);
     if (cached != m_materialAssetCache.end()) {
-        if (cached->second.lastWriteTime == timestamp) {
+        if (cached->second.lastWriteTime == timestamp && cached->second.shaderWriteTime == shaderTimestamp) {
             return &cached->second.material;
         }
     }
@@ -3792,18 +3804,88 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         if (j.contains("worldTextureScale")) loadedMaterial.worldTextureScale = j["worldTextureScale"].get<float>();
     }
 
-    // Update or insert cache entry
-    if (cached != m_materialAssetCache.end()) {
-        cached->second.material = loadedMaterial;
-        cached->second.lastWriteTime = timestamp;
-        return &cached->second.material;
+    std::unique_ptr<MaterialShaderProgram> program;
+    if (shaderTimestamp != fs::file_time_type{}) {
+        program = std::make_unique<MaterialShaderProgram>();
+        std::string shaderError;
+        if (!ReadCompiledMaterialShader(shaderPath, program->compiled, shaderError)) {
+            std::cerr << "[EngineFrameRenderer] " << shaderError << "; drawing " << cacheKey
+                      << " with the standard surface shader\n";
+            program.reset();
+        }
     }
 
-    MaterialCacheEntry entry;
+    // Update or insert cache entry
+    if (cached == m_materialAssetCache.end()) {
+        cached = m_materialAssetCache.emplace(cacheKey, MaterialCacheEntry{}).first;
+    } else if (cached->second.shader && m_pipeline) {
+        if (cached->second.shader->pipelines.opaque != VK_NULL_HANDLE ||
+            cached->second.shader->pipelines.alphaBlend != VK_NULL_HANDLE) {
+            vkDeviceWaitIdle(m_device->device);
+        }
+        m_pipeline->DestroySurfacePipelines(cached->second.shader->pipelines);
+    }
+    MaterialCacheEntry& entry = cached->second;
     entry.material = loadedMaterial;
     entry.lastWriteTime = timestamp;
-    auto insertResult = m_materialAssetCache.emplace(cacheKey, std::move(entry));
-    return &insertResult.first->second.material;
+    entry.shaderWriteTime = shaderTimestamp;
+    entry.shader = std::move(program);
+    if (entry.shader) {
+        m_materialShaderPrograms[&entry.material] = entry.shader.get();
+    } else {
+        m_materialShaderPrograms.erase(&entry.material);
+    }
+    return &entry.material;
+}
+
+const SurfacePipelines* EngineFrameRenderer::materialShaderPipelines(const MaterialComponent* material)
+{
+    if (!material || !m_pipeline) return nullptr;
+    const auto it = m_materialShaderPrograms.find(material);
+    if (it == m_materialShaderPrograms.end()) return nullptr;
+    MaterialShaderProgram& program = *it->second;
+    if (program.pipelines.opaque == VK_NULL_HANDLE && !program.pipelinesFailed) {
+        const bool rayTraced = m_probeGI.HardwareRayTracingAvailable() && !program.compiled.spirvRayTraced.empty();
+        if (!m_pipeline->CreateSurfacePipelines(rayTraced ? program.compiled.spirvRayTraced : program.compiled.spirv,
+                                                program.pipelines)) {
+            std::cerr << "[EngineFrameRenderer] A compiled material shader failed to build; drawing it with the "
+                         "standard surface shader\n";
+            program.pipelinesFailed = true;
+        }
+    }
+    return program.pipelinesFailed ? nullptr : &program.pipelines;
+}
+
+void EngineFrameRenderer::SetMaterialShaderOverride(const MaterialComponent* material,
+                                                    const CompiledMaterialShader* shader)
+{
+    if (!material) return;
+    if (const auto existing = m_materialShaderOverrides.find(material); existing != m_materialShaderOverrides.end()) {
+        if (m_pipeline) {
+            if (existing->second->pipelines.opaque != VK_NULL_HANDLE ||
+                existing->second->pipelines.alphaBlend != VK_NULL_HANDLE) {
+                vkDeviceWaitIdle(m_device->device);
+            }
+            m_pipeline->DestroySurfacePipelines(existing->second->pipelines);
+        }
+        m_materialShaderOverrides.erase(existing);
+        m_materialShaderPrograms.erase(material);
+    }
+    if (shader) {
+        auto program = std::make_unique<MaterialShaderProgram>();
+        program->compiled = *shader;
+        m_materialShaderPrograms[material] = program.get();
+        m_materialShaderOverrides[material] = std::move(program);
+    }
+}
+
+void EngineFrameRenderer::destroyMaterialShaderPipelines()
+{
+    if (!m_pipeline) return;
+    for (auto& [material, program] : m_materialShaderPrograms) {
+        m_pipeline->DestroySurfacePipelines(program->pipelines);
+        program->pipelinesFailed = false;
+    }
 }
 
 uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPath, bool linear)
@@ -4564,6 +4646,12 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.opacityMask = mat.opacityMask;
                 matUBO.refraction = mat.refraction;
                 matUBO.blendMode = static_cast<uint32_t>(mat.blendMode);
+                if (const auto program = m_materialShaderPrograms.find(material); program != m_materialShaderPrograms.end()) {
+                    const auto& textures = program->second->compiled.textures;
+                    for (size_t i = 0; i < textures.size() && i < std::size(matUBO.graphTextureSlots); ++i) {
+                        matUBO.graphTextureSlots[i] = ensureMaterialTextureSlot(textures[i].path, textures[i].linear);
+                    }
+                }
                 matUBO.textureChannels = (mat.roughnessChannel & 3u) | ((mat.metallicChannel & 3u) << 2) |
                                          ((mat.aoChannel & 3u) << 4);
             } else {
@@ -4820,6 +4908,16 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                         translucentDraws.push_back(draw);
                         return;
                     }
+                    VkPipeline surfacePipeline = desiredPipeline;
+                    if (!skinned && !wantWireframe) {
+                        if (const SurfacePipelines* own = materialShaderPipelines(mat)) {
+                            surfacePipeline = renderer.backfaceCulling ? own->opaqueBackface : own->opaque;
+                        }
+                    }
+                    if (surfacePipeline != currentPipeline) {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, surfacePipeline);
+                        currentPipeline = surfacePipeline;
+                    }
                     drawWithMaterial(mat, offset, count, entityName, si, slot);
                 };
                 if (mesh.submeshes.empty()) {
@@ -4937,8 +5035,12 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                              return a.distance > b.distance;
                          });
         for (const TranslucentDraw& draw : translucentDraws) {
-            const VkPipeline translucentPipeline =
+            VkPipeline translucentPipeline =
                 m_pipeline->GetTranslucentPipeline(static_cast<uint32_t>(draw.material->blendMode));
+            if (const SurfacePipelines* own = materialShaderPipelines(draw.material)) {
+                translucentPipeline = draw.material->blendMode == MaterialBlendMode::Additive ? own->additive
+                                                                                              : own->alphaBlend;
+            }
             if (translucentPipeline != currentPipeline) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, translucentPipeline);
                 currentPipeline = translucentPipeline;
@@ -5351,6 +5453,7 @@ void EngineFrameRenderer::cleanupSwapchainResources()
 
     cleanupSkinnedGraphicsPipelines();
     destroyMaskedShadowPipeline();
+    destroyMaterialShaderPipelines();
     cleanupToneMapResources();
     m_probeGI.DestroySwapchainResources();
 
@@ -5516,6 +5619,9 @@ void EngineFrameRenderer::destroyAllResources()
     m_materialTextureSlots.clear();
     m_materialTextureLookup.clear();
     m_pendingTextureSlotUpdates.clear();
+    destroyMaterialShaderPipelines();
+    m_materialShaderPrograms.clear();
+    m_materialShaderOverrides.clear();
     m_materialAssetCache.clear();
     m_materialAssetCacheFailed.clear();
     m_materialPathChecks.clear();
@@ -5603,6 +5709,7 @@ void EngineFrameRenderer::destroyAllResources()
     }
 
     // Cleanup pipeline
+    destroyMaterialShaderPipelines();
     if (m_pipeline) {
         m_pipeline->Cleanup();
         m_pipeline.reset();

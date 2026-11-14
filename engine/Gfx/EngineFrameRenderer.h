@@ -25,6 +25,7 @@
 #include <chrono>
 #include <filesystem>
 
+#include "VulkanPipeline.h"
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
 #include "../Scene/EditorIcons.h"
@@ -34,6 +35,7 @@
 #include "SkyIrradiance.h"
 #include "ProbeBake.h"
 #include "ProbeGI.h"
+#include "../Assets/CompiledMaterialShader.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -219,6 +221,10 @@ public:
      * already loaded are reloaded at the new size, so this waits for the GPU to go idle when anything changes.
      */
     void SetMaxMaterialTextureSize(uint32_t pixels);
+
+    /// Draws a material that is not a file (the Material Editor preview's) with a compiled graph; null removes it.
+    /// The component must stay at the same address while the override is set.
+    void SetMaterialShaderOverride(const MaterialComponent* material, const CompiledMaterialShader* shader);
     uint32_t GetMaxMaterialTextureSize() const { return m_maxMaterialTextureSize; }
 
     /**
@@ -585,10 +591,23 @@ private:
     static constexpr uint32_t kMaxMaterialsPerFrame = 1024;
 
     // Material asset cache (hot-reloads from .hematerial files)
+    // A material's compiled graph (`.hemshader`); its pipelines are built on first draw and dropped with the swapchain.
+    struct MaterialShaderProgram {
+        CompiledMaterialShader compiled;
+        SurfacePipelines pipelines;
+        bool pipelinesFailed = false;
+    };
     struct MaterialCacheEntry {
         MaterialComponent material;
         std::filesystem::file_time_type lastWriteTime{};
+        std::filesystem::file_time_type shaderWriteTime{};
+        std::unique_ptr<MaterialShaderProgram> shader;
     };
+    std::unordered_map<const MaterialComponent*, MaterialShaderProgram*> m_materialShaderPrograms;
+    std::unordered_map<const MaterialComponent*, std::unique_ptr<MaterialShaderProgram>> m_materialShaderOverrides;
+    /// The compiled graph's pipelines for a material, or null to draw it with the standard surface shader.
+    const SurfacePipelines* materialShaderPipelines(const MaterialComponent* material);
+    void destroyMaterialShaderPipelines();
     std::unordered_map<std::string, MaterialCacheEntry> m_materialAssetCache;
     std::unordered_map<std::string, std::filesystem::file_time_type> m_materialAssetCacheFailed;
     // What each material path resolved to and when its file was last checked, so draws don't touch the disk.
@@ -671,6 +690,7 @@ private:
     bool createMaskedShadowPipeline();
     void destroyMaskedShadowPipeline();
 
+    std::chrono::steady_clock::time_point m_startTime = std::chrono::steady_clock::now();  // material graph Time
     ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 

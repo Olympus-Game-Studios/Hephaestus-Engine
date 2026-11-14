@@ -39,7 +39,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/$<CONFIG>")
 
-find_package(Vulkan REQUIRED)
+find_package(Vulkan REQUIRED OPTIONAL_COMPONENTS glslang SPIRV-Tools)
 
 if(APPLE)
     # On macOS, we might need to link against MoltenVK explicitly if not handled by the loader
@@ -363,6 +363,7 @@ add_library(HephaestusRuntime STATIC
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
     engine/Assets/CharacterAsset.cpp
+    engine/Assets/CompiledMaterialShader.cpp
     engine/Assets/CharacterRuntime.cpp
     engine/Assets/CharacterRuntimeGpu.cpp
     engine/Assets/CharacterImport.cpp
@@ -499,11 +500,35 @@ add_library(HephaestusEditorCore STATIC
     engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
     engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
+    engine/UI/MaterialEditor/MaterialShaderCompiler.cpp
     engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 target_link_libraries(HephaestusEditorCore PUBLIC HephaestusRuntime)
 target_link_libraries(HephaestusEditorCore PRIVATE lightusd_static)
+# Material graphs compile to SPIR-V in the editor only; packaged games load the result (CompiledMaterialShader).
+set(HEPHAESTUS_GLSLANG_EXTRA_FOUND TRUE)
+set(HEPHAESTUS_GLSLANG_EXTRA_LIBS)
+# glslang-default-resource-limits and the SPIR-V optimizer glslang calls are not part of Vulkan::glslang.
+foreach(_lib glslang-default-resource-limits SPIRV-Tools-opt)
+    string(MAKE_C_IDENTIFIER "${_lib}" _id)
+    find_library(HEPHAESTUS_${_id}_LIB NAMES ${_lib} HINTS "$ENV{VULKAN_SDK}/Lib" "$ENV{VULKAN_SDK}/lib")
+    find_library(HEPHAESTUS_${_id}_DEBUG_LIB NAMES ${_lib}d HINTS "$ENV{VULKAN_SDK}/Lib" "$ENV{VULKAN_SDK}/lib")
+    if(NOT HEPHAESTUS_${_id}_LIB)
+        set(HEPHAESTUS_GLSLANG_EXTRA_FOUND FALSE)
+    elseif(HEPHAESTUS_${_id}_DEBUG_LIB)
+        list(APPEND HEPHAESTUS_GLSLANG_EXTRA_LIBS optimized "${HEPHAESTUS_${_id}_LIB}" debug "${HEPHAESTUS_${_id}_DEBUG_LIB}")
+    else()
+        list(APPEND HEPHAESTUS_GLSLANG_EXTRA_LIBS "${HEPHAESTUS_${_id}_LIB}")
+    endif()
+endforeach()
+if(TARGET Vulkan::glslang AND TARGET Vulkan::SPIRV-Tools AND HEPHAESTUS_GLSLANG_EXTRA_FOUND)
+    target_link_libraries(HephaestusEditorCore PRIVATE Vulkan::glslang ${HEPHAESTUS_GLSLANG_EXTRA_LIBS} Vulkan::SPIRV-Tools)
+    target_compile_definitions(HephaestusEditorCore PRIVATE HEPHAESTUS_MATERIAL_SHADER_COMPILER=1)
+    message(STATUS "Material graph shader compiler: glslang from the Vulkan SDK")
+else()
+    message(WARNING "glslang not found in the Vulkan SDK; material graphs with per-pixel nodes cannot be compiled")
+endif()
 target_include_directories(HephaestusEditorCore PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/extern/tinyusdz/src")
 
 # Shared non-Qt project validation and packaging pipeline used by the editor
@@ -1234,6 +1259,7 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/lighting_common.glsl
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_common.glsl
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/material_common.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/material_surface.glsl
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -1271,6 +1297,20 @@ if (GLSLC_EXECUTABLE)
         VERBATIM
     )
     list(APPEND SHADER_OUTPUTS ${RT_FRAG_OUT})
+
+    # The editor compiles material graphs against the surface shader's source (MaterialShaderCompiler.cpp).
+    foreach(SRC ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag ${SHADER_INCLUDES})
+        get_filename_component(FN ${SRC} NAME)
+        set(OUT ${SHADER_OUTPUT_DIR}/source/${FN})
+        add_custom_command(
+            OUTPUT ${OUT}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}/source
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SRC} ${OUT}
+            DEPENDS ${SRC}
+            VERBATIM
+        )
+        list(APPEND SHADER_OUTPUTS ${OUT})
+    endforeach()
 
     add_custom_target(Shaders ALL DEPENDS ${SHADER_OUTPUTS})
     
@@ -1459,6 +1499,10 @@ install(DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/shaders/"
     DESTINATION shaders
     OPTIONAL
     FILES_MATCHING PATTERN "*.spv"
+)
+install(DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/shaders/source/"
+    DESTINATION shaders/source
+    OPTIONAL
 )
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes/
     DESTINATION .engine/meshes

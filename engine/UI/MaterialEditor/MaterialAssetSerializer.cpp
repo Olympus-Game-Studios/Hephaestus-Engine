@@ -1,5 +1,7 @@
 #include "MaterialAssetSerializer.h"
+#include "MaterialGraphEvaluator.h"
 #include "MaterialNodeDefinitions.h"
+#include "MaterialShaderCompiler.h"
 #include "../../Assets/AssetPathPolicy.h"
 
 #include <algorithm>
@@ -309,7 +311,8 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
                              const std::string& displayName,
                              const Graph& graph,
                              const NodePositionProvider& nodePositionProvider,
-                             std::string& outError) {
+                             std::string& outError,
+                             std::vector<std::string>* shaderDiagnostics) {
     json root = graph.HasOriginalRootJson() ? graph.GetOriginalRootJson() : json::object();
     if (!root.is_object()) {
         root = json::object();
@@ -440,6 +443,28 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     if (!out.good()) {
         outError = "Failed to write material data.";
         return false;
+    }
+    out.close();
+
+    std::vector<std::string> diagnostics;
+    const std::filesystem::path shaderPath = Hephaestus::CompiledMaterialShaderPath(path);
+    bool keepShader = false;
+    if (graph.HasSourceGraph() && !graph.IsLegacyMode() && GraphNeedsCompiledShader(graph)) {
+        MaterialShaderCompileResult compiled = CompileMaterialGraph(graph, FindMaterialShaderSourceDirectory());
+        diagnostics = std::move(compiled.diagnostics);
+        std::string writeError;
+        if (compiled.ok && Hephaestus::WriteCompiledMaterialShader(shaderPath, compiled.shader, writeError)) {
+            keepShader = true;
+        } else if (!writeError.empty()) {
+            diagnostics.push_back(writeError);
+        }
+    }
+    if (!keepShader) {
+        std::error_code ec;
+        std::filesystem::remove(shaderPath, ec);
+    }
+    if (shaderDiagnostics) {
+        *shaderDiagnostics = std::move(diagnostics);
     }
 
     outError.clear();

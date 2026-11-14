@@ -681,6 +681,192 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
     return true;
 }
 
+namespace {
+
+struct FixedFunctionInfo {
+    bool exact = true;
+    bool textured = false;
+    bool scaled = false;       ///< a texture multiplied by a factor
+    bool worldAligned = false;
+    ValueType type = ValueType::Float1;
+};
+
+class FixedFunctionCheck {
+public:
+    explicit FixedFunctionCheck(const Graph& graph) : m_graph(graph) {}
+
+    FixedFunctionInfo Input(const Node& node, size_t index) {
+        if (index >= node.inputs.size()) {
+            return {};
+        }
+        const PinID source = m_graph.FindInputSource(node.inputs[index]);
+        return source == 0 ? FixedFunctionInfo{} : Output(source);
+    }
+
+    bool Connected(const Node& node, size_t index) const {
+        return index < node.inputs.size() && m_graph.FindInputSource(node.inputs[index]) != 0;
+    }
+
+    std::vector<bool> worldAlignedTextures;
+
+private:
+    FixedFunctionInfo Output(PinID pinId) {
+        if (const auto it = m_cache.find(pinId); it != m_cache.end()) {
+            return it->second;
+        }
+        if (!m_active.insert(pinId).second) {
+            return {false};
+        }
+        const Pin* pin = m_graph.FindPin(pinId);
+        const Node* node = pin ? m_graph.FindNode(pin->node) : nullptr;
+        FixedFunctionInfo info;
+        if (!pin || !node) {
+            info.exact = false;
+        } else {
+            info = Evaluate(*node, *pin);
+        }
+        m_active.erase(pinId);
+        m_cache[pinId] = info;
+        return info;
+    }
+
+    FixedFunctionInfo Texture(bool worldAligned, ValueType type) {
+        worldAlignedTextures.push_back(worldAligned);
+        FixedFunctionInfo info;
+        info.textured = true;
+        info.worldAligned = worldAligned;
+        info.type = type;
+        return info;
+    }
+
+    FixedFunctionInfo Evaluate(const Node& node, const Pin& pin) {
+        FixedFunctionInfo info;
+        info.type = pin.valueType;
+        switch (node.type) {
+        case NodeType::ConstantFloat:
+        case NodeType::ConstantVec3:
+        case NodeType::ColorParameter:
+        case NodeType::FloatParameter:
+        case NodeType::BoolParameter:
+        case NodeType::Vector2Parameter:
+            return info;
+        case NodeType::AlbedoTextureSample:
+        case NodeType::NormalTextureSample:
+        case NodeType::RoughnessTextureSample:
+        case NodeType::MetallicTextureSample:
+        case NodeType::AoTextureSample:
+            return Texture(false, pin.valueType);
+        case NodeType::WorldAlignedTexture:
+            return Texture(true, pin.valueType);
+        case NodeType::TextureSample:
+            if (Connected(node, 0)) {
+                return {false};
+            }
+            return Texture(false, pin.valueType);
+        case NodeType::BreakVector:
+        case NodeType::ComponentMask: {
+            const FixedFunctionInfo source = Input(node, 0);
+            const int masked = node.type == NodeType::BreakVector ? 1
+                : (node.maskR ? 1 : 0) + (node.maskG ? 1 : 0) + (node.maskB ? 1 : 0) + (node.maskA ? 1 : 0);
+            if (!source.exact || source.scaled || (source.textured && masked != 1)) {
+                return {false};
+            }
+            info.textured = source.textured;
+            info.worldAligned = source.worldAligned;
+            info.type = masked == 1 ? ValueType::Float1 : source.type;
+            return info;
+        }
+        case NodeType::Multiply:
+        case NodeType::Add:
+        case NodeType::Subtract:
+        case NodeType::Divide: {
+            const FixedFunctionInfo a = Input(node, 0);
+            const FixedFunctionInfo b = Input(node, 1);
+            const bool multiply = node.type == NodeType::Multiply;
+            if (!a.exact || !b.exact || (a.textured && b.textured) || (!multiply && (a.textured || b.textured))) {
+                return {false};
+            }
+            info.textured = a.textured || b.textured;
+            info.scaled = info.textured;
+            info.worldAligned = a.worldAligned || b.worldAligned;
+            info.type = ValueTypeComponentCount(a.type) >= ValueTypeComponentCount(b.type) ? a.type : b.type;
+            return info;
+        }
+        case NodeType::Clamp:
+        case NodeType::Saturate:
+        case NodeType::Power:
+        case NodeType::Abs:
+        case NodeType::Min:
+        case NodeType::Max:
+        case NodeType::OneMinus:
+        case NodeType::Step:
+        case NodeType::SmoothStep:
+        case NodeType::If:
+        case NodeType::Compare:
+            for (size_t i = 0; i < node.inputs.size(); ++i) {
+                const FixedFunctionInfo input = Input(node, i);
+                if (!input.exact || input.textured || input.type != ValueType::Float1) {
+                    return {false};
+                }
+            }
+            return info;
+        default:
+            return {false};
+        }
+    }
+
+    const Graph& m_graph;
+    std::unordered_map<PinID, FixedFunctionInfo> m_cache;
+    std::unordered_set<PinID> m_active;
+};
+
+} // namespace
+
+bool GraphNeedsCompiledShader(const Graph& graph) {
+    const Node* output = nullptr;
+    for (const Node& node : graph.GetNodes()) {
+        if (node.type == NodeType::MaterialOutput) {
+            output = &node;
+            break;
+        }
+    }
+    if (!output) {
+        return false;
+    }
+    enum Pin { BaseColor, Metallic, Roughness, Emissive, NormalMap, RoughnessMap, AoMap };
+    FixedFunctionCheck check(graph);
+    for (size_t pin = 0; pin < output->inputs.size(); ++pin) {
+        if (!check.Connected(*output, pin)) {
+            continue;
+        }
+        const FixedFunctionInfo info = check.Input(*output, pin);
+        if (!info.exact) {
+            return true;
+        }
+        if (!info.textured) {
+            if (pin == NormalMap) {
+                return true;
+            }
+            continue;
+        }
+        const bool scalarMap = pin == Metallic || pin == Roughness || pin == RoughnessMap || pin == AoMap;
+        if (pin == BaseColor) {
+            if (info.type == ValueType::Float1) {
+                return true;
+            }
+        } else if (pin == NormalMap) {
+            if (info.scaled) {
+                return true;
+            }
+        } else if (!scalarMap) {
+            return true;
+        }
+    }
+    const auto& aligned = check.worldAlignedTextures;
+    return std::find(aligned.begin(), aligned.end(), true) != aligned.end() &&
+           std::find(aligned.begin(), aligned.end(), false) != aligned.end();
+}
+
 std::string DescribeRenderedDifferences(const MaterialComponent& a, const MaterialComponent& b) {
     std::string out;
     auto num = [&](const char* name, float x, float y) {

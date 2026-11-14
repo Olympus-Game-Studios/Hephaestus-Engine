@@ -48,6 +48,7 @@ layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragColor;
 layout(location = 3) out vec2 fragTexCoord;
 layout(location = 4) out vec4 fragLightSpacePos;
+layout(location = 5) flat out vec3 fragObjectPos;
 
 mat4 skinMatrix() {
     return inWeights.x * bones.boneMats[inJoints.x] +
@@ -64,6 +65,7 @@ void main() {
 
     fragWorldPos = worldPos.xyz;
     fragLightSpacePos = lighting.dirLightViewProj * worldPos;
+    fragObjectPos = pc.model[3].xyz;
 
     mat3 skinnedNormal = mat3(pc.model) * mat3(skin);
     fragNormal = normalize(skinnedNormal * inNormal);

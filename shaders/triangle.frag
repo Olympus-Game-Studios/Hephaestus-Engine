@@ -10,6 +10,7 @@ layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragColor;
 layout(location = 3) in vec2 fragTexCoord;
 layout(location = 4) in vec4 fragLightSpacePos;
+layout(location = 5) flat in vec3 fragObjectPos;
 
 layout(location = 0) out vec4 outColor;
 
@@ -18,6 +19,7 @@ layout(std140, set = 0, binding = 0) uniform UBO {
     mat4 proj;
     vec3 viewPos;
     float shadingMode; // 0 = Lit, 1 = Unlit (Wireframe uses polygon mode)
+    float time;        // seconds since the renderer started, for material graphs
 } ubo;
 
 // Material properties (set via push constants or additional descriptor sets)
@@ -52,6 +54,9 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float refraction;         // offset 124 (reserved)
     uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive, 3 masked
     uint textureChannels;     // offset 132: roughness, metallic, AO map channel, 2 bits each (0 R .. 3 A)
+    uint graphPadding0;       // offset 136
+    uint graphPadding1;       // offset 140
+    uvec4 graphTextureSlots[4]; // offset 144: texture slots a compiled material graph samples
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -360,91 +365,52 @@ vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv, vec3 tangentNormal) {
     return normalize(tbn * tangentNormal);
 }
 
+#ifdef MATERIAL_GRAPH
+#include "material_graph.glsl"
+#else
+#include "material_surface.glsl"
+#endif
+
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(ubo.viewPos - fragWorldPos);
-    
-    // Calculate texture coordinates - either from UV or world position
-    vec2 texCoord = fragTexCoord;
-    if (material.useWorldAlignedTexture != 0u) {
-        texCoord = getWorldAlignedUV(fragWorldPos, N, material.worldTextureScale);
-    }
-    
-    // ── Material property sampling ─────────────────────────────────
-    // Albedo (diffuse) texture
-    vec3 albedo = material.albedo * fragColor;
-    float textureAlpha = 1.0;
-    if (material.useAlbedoTexture != 0u) {
-        uint index = material.albedoTextureIndex % MAX_TEXTURE_SLOTS;
-        vec4 texColor = texture(materialTextures[index], texCoord);
-        albedo = texColor.rgb * material.albedo * fragColor;
-        textureAlpha = texColor.a;
-    }
 
-    float opacity = clamp(material.opacity, 0.0, 1.0);
+    Surface surface = evaluateSurfaceCoverage(N);
+    vec3 albedo = surface.albedo;
+    float opacity = clamp(surface.opacity, 0.0, 1.0);
     if (material.blendMode == 3u) {
-        if (opacity * textureAlpha < clamp(material.opacityMask, 0.0, 1.0)) {
+        if (opacity * surface.textureAlpha < clamp(surface.clipThreshold, 0.0, 1.0)) {
             discard;
         }
         opacity = 1.0;
     } else if (material.blendMode != 0u) {
-        opacity *= textureAlpha;
+        opacity *= surface.textureAlpha;
         if (opacity <= 0.002) {
             discard;
         }
-    } else if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
+    } else if (opacity < clamp(surface.clipThreshold, 0.0, 1.0)) {
         discard;
     }
     if (material.blendMode == 2u) {
-        outColor = vec4((albedo + material.emissive * material.emissiveStrength) * opacity, opacity);
+        outColor = vec4((albedo + surface.emissive) * opacity, opacity);
         return;
     }
 
     // Unlit viewport mode: albedo (+ emissive), skip lighting
     if (ubo.shadingMode > 0.5) {
-        vec3 unlit = albedo + material.emissive * material.emissiveStrength;
-        outColor = vec4(unlit, opacity);
+        outColor = vec4(albedo + surface.emissive, opacity);
         return;
     }
-    
-    if (material.useNormalTexture != 0u) {
-        uint index = material.normalTextureIndex % MAX_TEXTURE_SLOTS;
-        vec3 tangentNormal = texture(materialTextures[index], texCoord).rgb * 2.0 - 1.0;
-        N = perturbNormal(N, fragWorldPos, texCoord, tangentNormal);
-    }
-    
-    // Roughness texture
-    float roughness = material.roughness;
-    if (material.useRoughnessTexture != 0u) {
-        uint index = material.roughnessTextureIndex % MAX_TEXTURE_SLOTS;
-        // Roughness is typically in the R or G channel
-        float texRoughness = texture(materialTextures[index], texCoord)[material.textureChannels & 3u];
-        roughness = texRoughness * material.roughness; // Blend with base value
-    }
-    roughness = clamp(roughness, 0.04, 1.0); // a multiplier above 1 can roughen a map; 0.04 avoids division by zero
-    
-    // Ambient occlusion texture
-    float ao = material.ao;
-    if (material.useAoTexture != 0u) {
-        uint index = material.aoTextureIndex % MAX_TEXTURE_SLOTS;
-        // AO is typically stored in R or G channel
-        float texAo = texture(materialTextures[index], texCoord)[(material.textureChannels >> 4) & 3u];
-        ao = texAo * material.ao; // Blend with base value
-    }
-    
-    // Metallic texture
-    float metallic = material.metallic;
-    if (material.useMetallicTexture != 0u) {
-        uint index = material.metallicTextureIndex % MAX_TEXTURE_SLOTS;
-        // Metallic is typically in the B channel of ORM maps or R channel of standalone
-        float texMetallic = texture(materialTextures[index], texCoord)[(material.textureChannels >> 2) & 3u];
-        metallic = texMetallic * material.metallic; // Blend with base value
-    }
-    metallic = clamp(metallic, 0.0, 1.0);
-    
+
+    evaluateSurfaceShading(surface);
+    N = surface.normal;
+    float roughness = clamp(surface.roughness, 0.04, 1.0); // a multiplier above 1 can roughen a map; 0.04 avoids division by zero
+    float ao = surface.ao;
+    float metallic = clamp(surface.metallic, 0.0, 1.0);
+
     // Calculate F0 (base reflectivity)
     // Dielectrics have F0 around 0.04, metals use albedo as F0
-    vec3 F0 = vec3(0.08 * clamp(material.specular, 0.0, 1.0));
+    vec3 F0 = vec3(0.08 * clamp(surface.specular, 0.0, 1.0));
     F0 = mix(F0, albedo, metallic);
     
     // Reflectance equation
@@ -593,7 +559,7 @@ void main() {
     }
     
     // Add emissive
-    color += material.emissive * material.emissiveStrength;
+    color += surface.emissive;
 
     outColor = vec4(color, opacity);
 }

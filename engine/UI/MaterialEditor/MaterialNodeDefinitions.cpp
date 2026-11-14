@@ -132,6 +132,20 @@ bool NodeAffectsRenderedMaterial(NodeType type) {
     }
 }
 
+bool TextureNodeIsLinear(const Node& node) {
+    switch (node.type) {
+    case NodeType::NormalTextureSample:
+    case NodeType::RoughnessTextureSample:
+    case NodeType::MetallicTextureSample:
+    case NodeType::AoTextureSample:
+        return true;
+    case NodeType::AlbedoTextureSample:
+        return false;
+    default:
+        return node.boolValue;
+    }
+}
+
 std::string_view NodeTypeName(NodeType type) {
     return GetNodeDefinition(type).typeName;
 }

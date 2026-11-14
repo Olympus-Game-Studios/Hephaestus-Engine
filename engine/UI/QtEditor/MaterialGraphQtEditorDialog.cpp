@@ -7,6 +7,7 @@
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "../MaterialEditor/MaterialGraphEvaluator.h"
 #include "../MaterialEditor/MaterialNodeDefinitions.h"
+#include "../MaterialEditor/MaterialShaderCompiler.h"
 #include "../MaterialEditor/MaterialShaderGenerator.h"
 #include "../MaterialEditor/TextureDiscovery.h"
 #include "QtEditorEngine.h"
@@ -2433,11 +2434,33 @@ private:
             auto& registry = m_previewScene->GetRegistry();
             if (registry.valid(m_previewEntity) && registry.all_of<MaterialComponent>(m_previewEntity)) {
                 registry.replace<MaterialComponent>(m_previewEntity, m_previewMaterial);
+                updatePreviewShader(registry.get<MaterialComponent>(m_previewEntity));
             }
         }
         if (m_previewPlaceholderLabel && m_previewPlaceholderLabel->isVisible()) {
             m_previewPlaceholderLabel->setText(QObject::tr("Preview initializing..."));
         }
+    }
+
+    void updatePreviewShader(const MaterialComponent& previewComponent) {
+        EngineFrameRenderer* renderer = m_previewEngine ? m_previewEngine->GetFrameRenderer() : nullptr;
+        if (!renderer) {
+            return;
+        }
+        const bool ownShader = m_graph.HasSourceGraph() && !m_graph.IsLegacyMode() && GraphNeedsCompiledShader(m_graph);
+        const std::uint64_t hash = ownShader
+            ? Hephaestus::HashMaterialShaderSource(BuildMaterialGraphSource(GenerateMaterialShader(m_graph)))
+            : 0;
+        if (hash == m_previewShaderHash) {
+            return;
+        }
+        m_previewShaderHash = hash;
+        if (!ownShader) {
+            renderer->SetMaterialShaderOverride(&previewComponent, nullptr);
+            return;
+        }
+        const MaterialShaderCompileResult compiled = CompileMaterialGraph(m_graph, FindMaterialShaderSourceDirectory());
+        renderer->SetMaterialShaderOverride(&previewComponent, compiled.ok ? &compiled.shader : nullptr);
     }
 
     std::string previewMeshKey() const {
@@ -3050,9 +3073,15 @@ private:
         }
 
         if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
-            MaterialShaderGenerationResult shaderResult = GenerateMaterialShader(m_graph);
-            for (const std::string& diagnostic : shaderResult.diagnostics) {
-                addIssueItem(QObject::tr("Shader: %1").arg(QString::fromStdString(diagnostic)), 0, GraphIssue::Severity::Error);
+            if (GraphNeedsCompiledShader(m_graph)) {
+                const MaterialShaderCompileResult compiled = CompileMaterialGraph(m_graph, FindMaterialShaderSourceDirectory());
+                for (const std::string& diagnostic : compiled.diagnostics) {
+                    addIssueItem(QObject::tr("Shader: %1").arg(QString::fromStdString(diagnostic)), 0, GraphIssue::Severity::Error);
+                }
+                if (!compiled.ok) {
+                    refreshStatus(QObject::tr("Shader compile error"), false);
+                    return;
+                }
             }
             MaterialComponent evaluated = m_material;
             std::string evalError;
@@ -3064,7 +3093,8 @@ private:
             m_material = evaluated;
         }
 
-        refreshStatus(QObject::tr("Compiled"), true);
+        const bool ownShader = m_graph.HasSourceGraph() && !m_graph.IsLegacyMode() && GraphNeedsCompiledShader(m_graph);
+        refreshStatus(ownShader ? QObject::tr("Compiled to its own shader") : QObject::tr("Compiled"), true);
         schedulePreviewUpdate();
     }
 
@@ -3090,7 +3120,9 @@ private:
 
         std::string error;
         namespace fs = std::filesystem;
-        if (!SaveMaterialAssetCompat(fs::path(m_absolutePath.toStdString()), toSave, saveName, m_graph, {}, error)) {
+        std::vector<std::string> shaderDiagnostics;
+        if (!SaveMaterialAssetCompat(fs::path(m_absolutePath.toStdString()), toSave, saveName, m_graph, {}, error,
+                                     &shaderDiagnostics)) {
             QMessageBox::warning(this, QObject::tr("Save Failed"),
                                  QObject::tr("Failed to save material:\n%1").arg(QString::fromStdString(error)));
             refreshStatus(QObject::tr("Save failed"), false);
@@ -3099,7 +3131,12 @@ private:
 
         m_undo->setClean();
         setDirty(false);
-        refreshStatus(QObject::tr("Saved"), true);
+        for (const std::string& diagnostic : shaderDiagnostics) {
+            addIssueItem(QObject::tr("Shader: %1").arg(QString::fromStdString(diagnostic)), 0, GraphIssue::Severity::Error);
+        }
+        refreshStatus(shaderDiagnostics.empty() ? QObject::tr("Saved")
+                                                : QObject::tr("Saved; the shader did not compile, so it draws without the graph's per-pixel nodes"),
+                      shaderDiagnostics.empty());
     }
 
     void refreshStatus(const QString& text, bool ok) {
@@ -3174,6 +3211,7 @@ private:
     QLabel* m_previewStatusLabel = nullptr;
     QTimer* m_previewUpdateTimer = nullptr;
     MaterialComponent m_previewMaterial;
+    std::uint64_t m_previewShaderHash = 0;
     std::unique_ptr<Scene> m_previewScene;
     entt::entity m_previewEntity = entt::null;
     entt::entity m_previewEnvironmentEntity = entt::null;

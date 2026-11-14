@@ -1,5 +1,6 @@
 #include "../UI/MaterialEditor/MaterialAssetSerializer.h"
 #include "../UI/MaterialEditor/MaterialGraphEvaluator.h"
+#include "../UI/MaterialEditor/MaterialShaderCompiler.h"
 #include "../UI/MaterialEditor/MaterialShaderGenerator.h"
 
 #include <cmath>
@@ -298,7 +299,7 @@ bool TestExpandedNodesAndShaderGeneration() {
 
     MaterialShaderGenerationResult generated = GenerateMaterialShader(graph);
     ok &= Check(generated.ok, "expanded graph shader generation succeeds");
-    ok &= Check(generated.body.find("material.albedo") != std::string::npos, "shader body writes albedo");
+    ok &= Check(generated.body.find("surface.albedo") != std::string::npos, "shader body writes albedo");
     ok &= Check(generated.body.find("clamp") != std::string::npos, "shader body contains Saturate clamp");
     return ok;
 }
@@ -435,6 +436,85 @@ bool TestProjectMaterialsMigrate(const fs::path& folder) {
     return ok;
 }
 
+bool TestCompiledMaterialShaders(const fs::path& root, const fs::path& outDir) {
+    bool ok = true;
+    MaterialComponent tinted;
+    tinted.albedo = Vec3(0.5f, 0.6f, 0.7f);
+    tinted.useAlbedoTexture = true;
+    tinted.albedoTexturePath = "assets/textures/bark.png";
+    tinted.useRoughnessTexture = true;
+    tinted.roughnessTexturePath = "assets/textures/orm.png";
+    tinted.roughnessChannel = 1;
+    Graph fixedGraph;
+    BuildMinimalGraphFromLegacyPbr(tinted, fixedGraph);
+    ok &= Check(!GraphNeedsCompiledShader(fixedGraph), "a default graph draws with the standard shader");
+
+    Graph graph;
+    Node& output = graph.CreateNode(NodeType::MaterialOutput);
+    const std::vector<PinID> outputs = output.inputs;
+    Node& uv = graph.CreateNode(NodeType::TexCoord);
+    const PinID uvOut = uv.outputs[0];
+    Node& tiling = graph.CreateNode(NodeType::TextureTilingOffset);
+    const std::vector<PinID> tilingIn = tiling.inputs;
+    const PinID tilingOut = tiling.outputs[0];
+    Node& scale = graph.CreateNode(NodeType::Vector2Parameter);
+    scale.color = Float3{4.0f, 2.0f, 0.0f};
+    const PinID scaleOut = scale.outputs[0];
+    Node& sample = graph.CreateNode(NodeType::TextureSample);
+    sample.resourcePath = "assets/textures/bark.png";
+    const std::vector<PinID> sampleIn = sample.inputs;
+    const PinID sampleRgb = sample.outputs[1];
+    Node& time = graph.CreateNode(NodeType::Time);
+    const PinID timeOut = time.outputs[0];
+    Node& noise = graph.CreateNode(NodeType::Noise);
+    const std::vector<PinID> noiseIn = noise.inputs;
+    const PinID noiseOut = noise.outputs[0];
+    Node& tint = graph.CreateNode(NodeType::ConstantVec3);
+    tint.color = Float3{1.0f, 0.5f, 0.25f};
+    const PinID tintOut = tint.outputs[0];
+    Node& multiply = graph.CreateNode(NodeType::Multiply);
+    const std::vector<PinID> multiplyIn = multiply.inputs;
+    const PinID multiplyOut = multiply.outputs[0];
+    ok &= Check(graph.CreateLink(uvOut, tilingIn[0]) && graph.CreateLink(scaleOut, tilingIn[1]) &&
+                    graph.CreateLink(tilingOut, sampleIn[0]) && graph.CreateLink(sampleRgb, multiplyIn[0]) &&
+                    graph.CreateLink(tintOut, multiplyIn[1]) && graph.CreateLink(multiplyOut, outputs[0]) &&
+                    graph.CreateLink(timeOut, noiseIn[1]) && graph.CreateLink(noiseOut, outputs[3]),
+                "per-pixel test graph links");
+    ok &= Check(GraphNeedsCompiledShader(graph), "tiled UVs and animated noise need a compiled shader");
+
+    const MaterialShaderGenerationResult generated = GenerateMaterialShader(graph);
+    const std::string source = BuildMaterialGraphSource(generated);
+    ok &= Check(source.find("ubo.time") != std::string::npos && source.find("graphTextureSlots[0][0]") != std::string::npos,
+                "generated surface reads time and the graph's texture slot");
+
+    const MaterialShaderCompileResult compiled = CompileMaterialGraph(graph, root / "shaders");
+    std::string diagnostics;
+    for (const std::string& line : compiled.diagnostics) diagnostics += line + "\n";
+    ok &= Check(compiled.ok && compiled.shader.spirv.size() > 5 && compiled.shader.spirv[0] == 0x07230203u &&
+                    compiled.shader.spirvRayTraced.size() > 5,
+                "graph compiles to raster and ray-traced SPIR-V:\n" + diagnostics + source);
+    ok &= Check(compiled.shader.textures.size() == 1 && compiled.shader.textures[0].path == "assets/textures/bark.png" && !compiled.shader.textures[0].linear,
+                "compiled shader lists its texture");
+
+    const fs::path shaderPath = Hephaestus::CompiledMaterialShaderPath(outDir / "animated.hematerial");
+    std::string error;
+    ok &= Check(Hephaestus::WriteCompiledMaterialShader(shaderPath, compiled.shader, error), "write .hemshader: " + error);
+    Hephaestus::CompiledMaterialShader loaded;
+    ok &= Check(Hephaestus::ReadCompiledMaterialShader(shaderPath, loaded, error) && loaded.spirv == compiled.shader.spirv &&
+                    loaded.spirvRayTraced == compiled.shader.spirvRayTraced && loaded.textures == compiled.shader.textures &&
+                    loaded.sourceHash == compiled.shader.sourceHash,
+                ".hemshader round trips: " + error);
+
+    Graph broken;
+    Node& brokenOutput = broken.CreateNode(NodeType::MaterialOutput);
+    const std::vector<PinID> brokenOutputs = brokenOutput.inputs;
+    Node& noise2 = broken.CreateNode(NodeType::Noise);
+    broken.CreateLink(noise2.outputs[0], brokenOutputs[0]);
+    ok &= Check(CompileMaterialGraph(broken, root / "missing-folder").diagnostics.size() > 0,
+                "a missing shader source folder is reported, not ignored");
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -456,6 +536,7 @@ int main(int argc, char** argv) {
     ok &= TestExpandedNodesAndShaderGeneration();
     ok &= TestDefaultGraphIsLossless();
     ok &= TestMaskedBlendModeRoundtrip(outDir);
+    ok &= TestCompiledMaterialShaders(root, outDir);
     if (argc > 2) {
         ok &= TestProjectMaterialsMigrate(fs::path(argv[2]));
     }

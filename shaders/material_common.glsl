@@ -1,5 +1,20 @@
 // Material sampling helpers shared by triangle.frag and shadowmap_masked.frag.
 
+// What a material gives the lighting in triangle.frag; emissive is already scaled by its strength.
+struct Surface {
+    vec2 texCoord;
+    vec3 albedo;
+    float opacity;
+    float textureAlpha;
+    float clipThreshold;
+    vec3 normal;
+    float roughness;
+    float metallic;
+    float ao;
+    vec3 emissive;
+    float specular;
+};
+
 // Calculate world-aligned UV coordinates using triplanar projection
 vec2 getWorldAlignedUV(vec3 worldPos, vec3 normal, float scale) {
     // Use triplanar mapping - blend between XY, XZ, and YZ planes based on normal

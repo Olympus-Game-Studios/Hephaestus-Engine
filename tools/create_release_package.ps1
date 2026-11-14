@@ -81,6 +81,8 @@ foreach ($notice in @("LICENSE.md", "THIRD_PARTY_NOTICES.md")) {
 
 New-Item -ItemType Directory -Path (Join-Path $OutputPath "shaders") | Out-Null
 Copy-Item (Join-Path $BuildOutput "shaders\*.spv") (Join-Path $OutputPath "shaders")
+# The editor compiles material graphs against the surface shader source.
+Copy-Item -Recurse (Join-Path $BuildOutput "shaders\source") (Join-Path $OutputPath "shaders\source")
 Copy-Item -Recurse (Join-Path $ProjectRoot "assets") (Join-Path $OutputPath "assets")
 Remove-Item -Recurse -Force (Join-Path $OutputPath "assets\tests")
 Copy-Item -Recurse (Join-Path $ProjectRoot "editor") (Join-Path $OutputPath "editor")
@@ -118,7 +120,7 @@ foreach ($required in @("HephaestusLauncher.exe", "HephaestusEngine.exe", "Hepha
                         "tools\HephaestusBuild.exe", "Qt6Core.dll", "Qt6Widgets.dll", "Qt6Svg.dll",
                         "Qt6Network.dll", "tls\qschannelbackend.dll", "Qt6Sql.dll", "sqldrivers\qsqlite.dll",
                         "platforms\qwindows.dll", "LICENSE.md", "THIRD_PARTY_NOTICES.md",
-                        "editor", "assets", "shaders", ".engine\meshes", ".engine\hdris", "Plugins")) {
+                        "editor", "assets", "shaders", "shaders\source\triangle.frag", ".engine\meshes", ".engine\hdris", "Plugins")) {
     if (-not (Test-Path (Join-Path $OutputPath $required))) { $problems += "missing $required" }
 }
 $problems += @(Get-ChildItem $OutputPath -Recurse -File -Include *.pdb, vc_redist*, msvcp*.dll, vcruntime*.dll, icu*.dll, dxcompiler.dll, qopensslbackend.dll |

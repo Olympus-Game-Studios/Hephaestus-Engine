@@ -30,6 +30,10 @@ const std::vector<NodeDefinition>& GetAllNodeDefinitions();
 // False for nodes EvaluateGraph ignores: they do not change the rendered material yet.
 bool NodeAffectsRenderedMaterial(NodeType type);
 
+/// Normal, roughness, metallic and AO samples, and texture nodes ticked Linear (Node::boolValue), hold data rather
+/// than colour, so they are read without sRGB decoding.
+bool TextureNodeIsLinear(const Node& node);
+
 std::string_view NodeTypeName(NodeType type);
 bool TryNodeTypeName(std::string_view typeName, NodeType& outType);
 
