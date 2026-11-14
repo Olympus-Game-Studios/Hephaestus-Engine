@@ -337,6 +337,11 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
 
 bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage,
               std::vector<int>* outSlotMaterials) {
+    return LoadGLTF(path, outMesh, errorMessage, outSlotMaterials, {});
+}
+
+bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage,
+              std::vector<int>* outSlotMaterials, const std::function<bool(const std::string&)>& includeNode) {
     using namespace Hephaestus::Gltf;
     outMesh.Clear();
     errorMessage.clear();
@@ -478,8 +483,17 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
         }
         const json& node = nodes[static_cast<size_t>(nodeIndex)];
         const Mat4 world = Mat4::Multiply(parent, GLTFNodeLocalMatrix(node));
-        if (node.contains("mesh") && node["mesh"].is_number_integer() &&
-            !appendMesh(node["mesh"].get<int>(), world)) {
+        const bool hasMesh = node.contains("mesh") && node["mesh"].is_number_integer();
+        bool included = true;
+        if (hasMesh && includeNode) {
+            std::string name = node.value("name", "");
+            const int meshIndex = node["mesh"].get<int>();
+            if (name.empty() && meshIndex >= 0 && meshIndex < static_cast<int>(meshes.size())) {
+                name = meshes[static_cast<size_t>(meshIndex)].value("name", "");
+            }
+            included = includeNode(name);
+        }
+        if (hasMesh && included && !appendMesh(node["mesh"].get<int>(), world)) {
             return false;
         }
         for (const json& child : node.value("children", json::array())) {

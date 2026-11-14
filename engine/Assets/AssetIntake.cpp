@@ -29,6 +29,7 @@
 #include <map>
 #include <set>
 #include <system_error>
+#include <tuple>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -1018,6 +1019,54 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
             usedFiles.push_back(model);
             writePrefab(modelStem, parts);
             continue;
+        }
+
+        // Collision nodes in a glTF file become their own hidden collider; the visible mesh is rewritten without them.
+        if (gltf) {
+            MeshData visible;
+            MeshData collision;
+            std::vector<int> visibleSlots;
+            std::string collisionError;
+            const bool hasCollision =
+                ModelImporter::LoadGLTF(model, collision, collisionError, nullptr, IsCollisionMesh) &&
+                ModelImporter::LoadGLTF(model, visible, error, &visibleSlots,
+                                        [](const std::string& name) { return !IsCollisionMesh(name); });
+            if (hasCollision) {
+                const fs::path base = folder / "Models" / SanitizeAssetName(modelStem);
+                std::vector<PrefabPart> parts;
+                for (const auto& [mesh, suffix, slots] :
+                     {std::tuple<const MeshData&, const char*, const std::vector<int>*>{visible, "", &visibleSlots},
+                      std::tuple<const MeshData&, const char*, const std::vector<int>*>{collision, "_Collision",
+                                                                                         nullptr}}) {
+                    const fs::path file = fs::path(base.string() + suffix + ".glb");
+                    fs::create_directories(file.parent_path(), ec);
+                    std::vector<std::string> names;
+                    for (const MeshData::Submesh& submesh : mesh.submeshes) {
+                        names.push_back(submesh.name);
+                    }
+                    if (!Gltf::WriteGlb(file, mesh, names, error)) {
+                        outResult.warnings.push_back(error);
+                        continue;
+                    }
+                    PrefabPart part;
+                    part.name = modelStem + suffix;
+                    part.collision = slots == nullptr;
+                    part.meshPath = AssetPathPolicy::ToPortableKey(projectRoot, file.generic_string());
+                    part.bounds = mesh.bounds;
+                    part.submeshCount = static_cast<int>(mesh.submeshes.size());
+                    if (!part.collision) {
+                        part.materials = materialsFor(mesh, model, modelStem, *slots, gltfMaterials, fbxMaterials);
+                        if (!MeshSettings::SaveDefaultMaterials(file, part.materials, error)) {
+                            outResult.warnings.push_back(error);
+                        }
+                    }
+                    outResult.models.push_back(part.meshPath);
+                    parts.push_back(std::move(part));
+                }
+                usedFiles.push_back(model);
+                writePrefab(modelStem, parts);
+                continue;
+            }
         }
 
         fs::path copied;

@@ -79,7 +79,7 @@ void Append(std::vector<uint8_t>& bin, const void* data, size_t size) {
 }
 
 // Two meshes under a translated parent, three primitives over two materials, one embedded texture.
-void WriteTestGlb(const fs::path& path) {
+void WriteTestGlb(const fs::path& path, const std::string& childName = {}) {
     std::vector<uint8_t> bin;
     json views = json::array();
     json accessors = json::array();
@@ -114,7 +114,8 @@ void WriteTestGlb(const fs::path& path) {
         {"asset", {{"version", "2.0"}}},
         {"scene", 0},
         {"scenes", {{{"nodes", {0}}}}},
-        {"nodes", {{{"translation", {0, 5, 0}}, {"mesh", 0}, {"children", {1}}}, {{"mesh", 1}}}},
+        {"nodes", {{{"translation", {0, 5, 0}}, {"mesh", 0}, {"children", {1}}},
+                   childName.empty() ? json{{"mesh", 1}} : json{{"mesh", 1}, {"name", childName}}}},
         {"meshes", {{{"primitives", {primitive(0)}}}, {{"primitives", {primitive(1), primitive(0)}}}}},
         {"materials",
          {{{"name", "Painted Metal"},
@@ -672,6 +673,40 @@ bool TestImportUsdKit(const fs::path& scratch) {
     return ok;
 }
 
+bool TestGltfCollisionNode(const fs::path& scratch) {
+    bool ok = true;
+    const fs::path project = scratch / "GltfCollisionProject";
+    fs::create_directories(project / "assets");
+    const fs::path pack = scratch / "GltfCollision";
+    fs::create_directories(pack);
+    WriteTestGlb(pack / "Crate.glb", "UCX_Crate");
+    AssetIntakeRequest request;
+    request.source = pack / "Crate.glb";
+    request.projectRoot = project;
+    request.targetFolder = "assets/Imported/Sketchfab/Crate";
+    AssetIntakeResult result;
+    std::string error;
+    ok &= Check(AssetIntake::Import(request, result, error), "glTF with a collision node imports: " + error);
+    ok &= Check(result.models == std::vector<std::string>({"assets/Imported/Sketchfab/Crate/Models/Crate.glb",
+                                                          "assets/Imported/Sketchfab/Crate/Models/Crate_Collision.glb"}),
+                "the collision node is split into its own model");
+    if (!ok) {
+        return false;
+    }
+    MeshData visible;
+    ok &= Check(ModelImporter::LoadGLTF(project / result.models[0], visible, error) && visible.indices.size() == 3,
+                "the visible model no longer holds the collision node's triangles");
+    const json prefab = json::parse(ReadText(project / result.prefabs[0]));
+    int colliders = 0;
+    for (const json& node : prefab["nodes"]) {
+        for (const json& component : node.value("components", json::array())) {
+            colliders += component["type"] == "MeshCollider" ? 1 : 0;
+        }
+    }
+    ok &= Check(colliders == 1, "the collision node becomes the prefab's one mesh collider");
+    return ok;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: AssetIntakeTests <repo_root>\n";
@@ -688,6 +723,7 @@ int main(int argc, char** argv) {
     ok &= TestUntexturedPackWarns(scratch);
     ok &= TestRejections(scratch);
     ok &= TestImportUsdKit(scratch);
+    ok &= TestGltfCollisionNode(scratch);
     std::cout << (ok ? "AssetIntakeTests passed\n" : "AssetIntakeTests FAILED\n");
     return ok ? 0 : 1;
 }
