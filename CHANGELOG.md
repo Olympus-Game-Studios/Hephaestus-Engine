@@ -211,6 +211,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
 
 ### Fixed
+- 2026-11-14: glTF meshes whose primitives share one vertex buffer (one primitive per material, as most exporters write) no longer load those vertices once per material.
 - 2026-11-13: A material file's metallic map was ignored when rendering (the renderer never read `metallicTexturePath`), in the editor and in packaged games.
 - 2026-11-13: glTF static meshes import every mesh in the scene with its node transforms and keep their UVs (only the first mesh came in, with every UV at 0,0, so textures showed as one flat colour), read strided, normalized and embedded data, and get one material slot per glTF material. The built-in meshes now show textures properly too.
 - 2026-11-13: A material's Roughness did nothing once a Roughness Map was connected: the map's pin also set the Roughness value (to 1), so the surface always showed the map as it was. Roughness now multiplies the map, and values above 1 make a shiny map rougher.
