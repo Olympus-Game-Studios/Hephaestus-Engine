@@ -23,6 +23,10 @@
 #include <QSettings>
 #include <QToolBar>
 #include <QToolButton>
+#include <QImage>
+#include <QPainter>
+#include <QSvgRenderer>
+#include "EditorTheme.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstring>
@@ -39,6 +43,50 @@ struct EditorPluginHost::Setting { std::string owner,id,name,description,default
 struct EditorPluginHost::HeaderButton { std::string owner, command; QString toolTip; QPointer<QToolButton> button; };
 
 namespace {
+/// A plugin logo drawn like the editor's own icons: cropped to its visible shape and filled with the secondary icon
+/// colour (logos are expected to be one-colour shapes on transparency).
+QPixmap HeaderLogo(const QString& path, int height) {
+    QImage image;
+    if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+        QSvgRenderer svg(path);
+        if (!svg.isValid()) {
+            return {};
+        }
+        QSize size = svg.defaultSize();
+        size.scale(512, 512, Qt::KeepAspectRatio);
+        image = QImage(size, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        svg.render(&painter);
+    } else {
+        image = QImage(path).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    }
+    if (image.isNull()) {
+        return {};
+    }
+    QRect shape;
+    for (int y = 0; y < image.height(); ++y) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            if (qAlpha(line[x]) > 8) {
+                shape |= QRect(x, y, 1, 1);
+            }
+        }
+    }
+    if (shape.isEmpty()) {
+        return {};
+    }
+    image = image.copy(shape);
+    {
+        QPainter painter(&image);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(image.rect(), Theme::Color(Theme::Token::TextSecondary));
+    }
+    // Wide logos (a word mark) keep their height and get up to twice the width of a square icon.
+    const QSize box(height * 2, height);
+    return QPixmap::fromImage(image.scaled(box, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
 QString HeaderButtonHiddenKey(const std::string& owner, const std::string& command) {
     return QString("plugins/%1/headerButtonHidden/%2").arg(QString::fromStdString(owner), QString::fromStdString(command));
 }
@@ -123,7 +171,16 @@ bool EditorPluginHost::RegisterHeaderButton(const Plugins::PluginManifest& manif
     entry->toolTip = QString::fromUtf8(d.toolTip ? d.toolTip : d.commandId);
     auto* button = new QToolButton(strip);
     button->setObjectName(QStringLiteral("PluginHeaderButton"));
-    button->setIcon(QIcon(QString::fromStdU16String(icon.u16string())));
+    const qreal ratio = button->devicePixelRatioF();
+    const int height = button->iconSize().height();
+    QPixmap logo = HeaderLogo(QString::fromStdU16String(icon.u16string()), qRound(height * ratio));
+    if (logo.isNull()) {
+        delete button;
+        return false;
+    }
+    logo.setDevicePixelRatio(ratio);
+    button->setIcon(QIcon(logo));
+    button->setIconSize(logo.deviceIndependentSize().toSize());
     button->setToolTip(entry->toolTip);
     button->setFocusPolicy(Qt::NoFocus);
     button->setAutoRaise(true);
