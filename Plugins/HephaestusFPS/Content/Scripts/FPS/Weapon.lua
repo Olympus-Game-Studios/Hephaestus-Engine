@@ -859,7 +859,9 @@ function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
         input.tacticalSprint and (row.tacticalSprintToFireSeconds or row.sprintToFireSeconds)
             or row.sprintToFireSeconds, dt)
     local wantAds = input.aimHeld and not input.sprinting and (row.reloadRemaining or 0) <= 0 and row.raise >= 1
-    row.adsLinear = Gunplay.approach(row.adsLinear, wantAds and 1 or 0, dt / math.max(row.adsSeconds or 0.22, 0.01))
+    -- Tear gas (the player's input.gasExposure) makes aiming up to half as slow again.
+    local adsSeconds = (row.adsSeconds or 0.22) * (1 + 0.5 * (input.gasExposure or 0))
+    row.adsLinear = Gunplay.approach(row.adsLinear, wantAds and 1 or 0, dt / math.max(adsSeconds, 0.01))
     local curves = Gunplay.adsCurves(row.adsLinear)
     row.adsBlend = curves.weapon
     row.adsFovBlend = curves.fov

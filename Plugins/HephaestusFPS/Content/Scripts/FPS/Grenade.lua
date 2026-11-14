@@ -1,7 +1,9 @@
--- A thrown grenade: launched with vx, vy, vz once its body exists, then a frag explodes or a smoke grenade
--- spawns its cloud when the fuse runs out.
+-- A thrown grenade: launched with vx, vy, vz once its body exists, then a frag explodes, a smoke grenade spawns its
+-- cloud, or a tear gas grenade ("gas") spawns a cloud that hurts and blinds those inside it (FPS.Gas) when the fuse
+-- runs out.
 local Registry = require("FPS.Registry")
 local Explosives = require("FPS.Explosives")
+local Gas = require("FPS.Gas")
 
 Expose.string("kind", "frag")
 Expose.number("fuseSeconds", 3.0)
@@ -21,11 +23,16 @@ Expose.string("sound", "")
 Expose.number("soundVolume", 1.0)
 Expose.number("soundMaxDistance", 120)
 Expose.number("smokeSeconds", 20)
+Expose.number("gasSeconds", 10)
+Expose.number("gasRadius", 4)
+Expose.number("gasDamagePerSecond", 4)
 
 local launched = false
 local selfKey = nil
 local fuse = 0
 local linger = nil
+local gasTick = 0
+local GAS_TICK = 0.5 -- seconds between tear gas damage
 
 local function spawnEffect(p)
     if effectPrefab ~= "" then
@@ -58,6 +65,17 @@ end
 local function detonate()
     local p = Transform.getPosition()
     spawnEffect(p)
+    if kind == "gas" then
+        linger = gasSeconds
+        local thrower = thrownByPlayer and Registry.player and Registry.player.key or thrownBy
+        Registry.gasClouds[selfKey] = { x = p.x, y = p.y, z = p.z, radius = gasRadius, height = 3, age = 0,
+                                        life = gasSeconds, damagePerSecond = gasDamagePerSecond,
+                                        thrower = thrower ~= "" and thrower or nil }
+        -- Soldiers treat the cloud as somewhere to get out of and stay out of while it lasts.
+        Registry.setDanger(this, p.x, p.y, p.z, gasRadius)
+        Registry.dangers[selfKey].gas = true
+        return
+    end
     if kind == "smoke" then
         linger = smokeSeconds
         -- Centred a little above the ground, where the cloud is thickest.
@@ -114,8 +132,19 @@ function onUpdate(dt)
         if cloud then
             cloud.age = smokeSeconds - linger
         end
+        local gas = Registry.gasClouds[selfKey]
+        if gas then
+            gas.age = gasSeconds - linger
+            gasTick = gasTick + dt
+            if gasTick >= GAS_TICK then
+                Gas.applyDamage(gas, gasTick)
+                gasTick = 0
+            end
+        end
         if linger <= 0 then
             Registry.smokeClouds[selfKey] = nil
+            Registry.gasClouds[selfKey] = nil
+            Registry.clearDanger(this)
             Scene.destroy(this)
             linger = nil
         end
@@ -133,5 +162,6 @@ function onDestroy()
         Registry.dangers[selfKey] = nil
         Registry.liveGrenades[selfKey] = nil
         Registry.smokeClouds[selfKey] = nil
+        Registry.gasClouds[selfKey] = nil
     end
 end

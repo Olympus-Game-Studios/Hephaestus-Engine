@@ -1,8 +1,10 @@
--- The player's loadout: one primary and one secondary weapon, chosen on a LOADOUT page and kept in the settings file
--- ([Loadout]). The game lists what can be chosen in a module named Loadout.listModule (default "LoadoutWeapons",
--- under its assets/scripts) that returns entries { id, definition, slot }: id is the weapon's entity name under the
--- player, definition its weapon data module (as in Weapon.lua) and slot "primary" or "secondary". The page shows each
--- weapon's displayName and description from its definition, with stat bars worked out from the same values.
+-- The player's loadout: a primary and a secondary weapon and a tactical grenade, chosen on a LOADOUT page and kept
+-- in the settings file ([Loadout]). The game lists what can be chosen in a module named Loadout.listModule (default
+-- "LoadoutWeapons", under its assets/scripts) that returns entries { id, definition, slot }: id is the weapon's entity
+-- name under the player, definition its weapon data module (as in Weapon.lua) and slot "primary" or "secondary". The
+-- page shows each weapon's displayName and description from its definition, with stat bars worked out from the same
+-- values. Tactical entries are { id, slot = "tactical", name, description, grenade }: grenade "gas" makes the player's
+-- tactical throw its gasGrenadePrefab (tear gas) instead of its smokeGrenadePrefab.
 -- A level whose mode uses loadouts sets Registry.loadoutActive (FPS.TeamDeathmatch and FPS.WaveDirector do); the
 -- player then carries only the chosen two, picking up a changed loadout when it next respawns or the level restarts.
 -- Elsewhere (a firing range) the player keeps every weapon.
@@ -11,8 +13,9 @@ local Settings = require("FPS.Settings")
 
 local Loadout = { listModule = "LoadoutWeapons" }
 
-local SLOTS = { "primary", "secondary" }
-local FIELD = { primary = "loadoutPrimary", secondary = "loadoutSecondary" }
+local SLOTS = { "primary", "secondary", "tactical" }
+local FIELD = { primary = "loadoutPrimary", secondary = "loadoutSecondary", tactical = "loadoutTactical" }
+local SLOT_LABEL = { primary = "PRIMARY", secondary = "SECONDARY", tactical = "TACTICAL" }
 
 -- Weapon.lua's defaults, for definitions that leave a value out.
 local DEFAULTS = {
@@ -67,9 +70,11 @@ function Loadout.list()
     local entries = load(Loadout.listModule) or {}
     local out = {}
     for _, entry in ipairs(entries) do
-        local d = load(entry.definition or "") or {}
-        out[#out + 1] = { id = entry.id, slot = entry.slot, definition = d,
-                          name = string.upper(d.displayName or entry.id), description = d.description or "" }
+        local d = entry.definition and load(entry.definition) or {}
+        out[#out + 1] = { id = entry.id, slot = entry.slot, definition = d, hasStats = entry.definition ~= nil,
+                          grenade = entry.grenade,
+                          name = string.upper(d.displayName or entry.name or entry.id),
+                          description = d.description or entry.description or "" }
     end
     return out
 end
@@ -100,6 +105,18 @@ function Loadout.current(list)
         chosen[slot] = chosen[slot] or (options[1] and options[1].id)
     end
     return chosen
+end
+
+-- The chosen entry for a slot, or nil when the game offers none for it.
+function Loadout.entry(slot, list)
+    list = list or Loadout.list()
+    local id = Loadout.current(list)[slot]
+    for _, item in ipairs(list) do
+        if item.slot == slot and item.id == id then
+            return item
+        end
+    end
+    return nil
 end
 
 -- Stat panel beside the list -------------------------------------------------------------------------------------
@@ -178,7 +195,7 @@ local function draw(menu, ui, weapon, slot)
     local y = menu.y
     local inner = PANEL_WIDTH - 48
     UI.setPosition(ui.back, x - 24, y - 16)
-    UI.setText(ui.slot, slot == "primary" and "PRIMARY" or "SECONDARY")
+    UI.setText(ui.slot, SLOT_LABEL[slot] or "")
     UI.setPosition(ui.slot, x, y)
     UI.setSize(ui.slot, inner, 22)
     UI.setText(ui.name, weapon.name)
@@ -193,7 +210,13 @@ local function draw(menu, ui, weapon, slot)
         UI.setVisible(widget, lines[i] ~= nil)
     end
     local rowY = lineY + math.max(1, #lines) * 26 + 24
-    for i, stat in ipairs(Loadout.stats(weapon.definition)) do
+    local stats = weapon.hasStats and Loadout.stats(weapon.definition) or {}
+    for i, row in ipairs(ui.rows) do
+        UI.setVisible(row.label, stats[i] ~= nil)
+        UI.setVisible(row.track, stats[i] ~= nil)
+        UI.setVisible(row.fill, stats[i] ~= nil)
+    end
+    for i, stat in ipairs(stats) do
         local row = ui.rows[i]
         UI.setText(row.label, stat.label)
         UI.setPosition(row.label, x, rowY)
@@ -204,7 +227,7 @@ local function draw(menu, ui, weapon, slot)
         UI.setSize(row.fill, math.max(2, BAR_WIDTH * stat.value), 4)
         rowY = rowY + 36
     end
-    UI.setSize(ui.back, PANEL_WIDTH, rowY - y + 16)
+    UI.setSize(ui.back, PANEL_WIDTH, (#stats > 0 and rowY or rowY - 24) - y + 16)
 end
 
 -- The LOADOUT page. options: confirmLabel and onConfirm (an item after the choices, such as START MATCH; without it
@@ -218,7 +241,7 @@ function Loadout.page(options)
             entries[#entries + 1] = { weapon.id, weapon.name }
         end
         return {
-            label = slot == "primary" and "PRIMARY" or "SECONDARY",
+            label = SLOT_LABEL[slot],
             kind = "choice",
             options = entries,
             loadoutSlot = slot,
@@ -230,6 +253,9 @@ function Loadout.page(options)
         }
     end
     local items = { choiceFor("primary"), choiceFor("secondary") }
+    if #inSlot(list, "tactical") > 0 then
+        items[#items + 1] = choiceFor("tactical")
+    end
     if options.onConfirm then
         items[#items + 1] = { label = options.confirmLabel or "START", action = function(menu)
             Settings.save()

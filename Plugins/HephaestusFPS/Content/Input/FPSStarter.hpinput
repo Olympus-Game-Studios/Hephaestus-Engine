@@ -68,6 +68,7 @@
     { "name": "Weapon2", "bindings": [ { "type": "keyboard", "control": "2" } ] },
     { "name": "Weapon3", "bindings": [ { "type": "keyboard", "control": "3" } ] },
     { "name": "Weapon4", "bindings": [ { "type": "keyboard", "control": "4" } ] },
+    { "name": "Weapon5", "bindings": [ { "type": "keyboard", "control": "5" } ] },
     {
       "name": "Pause",
       "bindings": [

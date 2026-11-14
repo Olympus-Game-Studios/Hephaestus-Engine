@@ -20,6 +20,7 @@ local Registry = {
     lastBlast = nil,
     liveGrenades = {},
     smokeClouds = {},
+    gasClouds = {}, -- tear gas clouds (FPS.Gas)
     muzzles = {},
     playerHits = {},
     corpses = {},
@@ -67,6 +68,7 @@ function Registry.ensureSession()
     Registry.lastBlast = nil
     Registry.liveGrenades = {}
     Registry.smokeClouds = {}
+    Registry.gasClouds = {}
     Registry.muzzles = {}
     Registry.playerHits = {}
     Registry.corpses = {}

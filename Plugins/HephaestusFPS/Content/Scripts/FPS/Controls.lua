@@ -28,6 +28,7 @@ Controls.rows = {
     { label = "WEAPON 2", name = "Weapon2" },
     { label = "WEAPON 3", name = "Weapon3" },
     { label = "WEAPON 4", name = "Weapon4" },
+    { label = "WEAPON 5", name = "Weapon5" },
     { label = "FRAG GRENADE", name = "ThrowFrag" },
     { label = "SMOKE GRENADE", name = "ThrowSmoke" },
     { label = "SCOPE ZOOM IN", name = "ZoomIn" },

@@ -16,6 +16,7 @@ local Cover = require("FPS.AI.Cover")
 local Brain = require("FPS.AI.Brain")
 local Tactics = require("FPS.AI.Tactics")
 local Smoke = require("FPS.AI.Smoke")
+local Gas = require("FPS.Gas")
 local Mantle = require("FPS.Mantle")
 local Tracers = require("FPS.Tracers")
 
@@ -506,13 +507,12 @@ local function perceive(interval)
     elseif noise and awareness < 1 then
         heardNoise = { x = noise.x, y = noise.y, z = noise.z }
     end
+    -- Every soldier gets out of tear gas; only those with grenadeAwareness run from frags.
     danger = nil
-    if skill.grenadeAwareness then
-        for _, d in pairs(Registry.dangers or {}) do
-            if (d.x - p.x) ^ 2 + (d.z - p.z) ^ 2 <= (d.radius + 1.5) ^ 2 then
-                danger = d
-                break
-            end
+    for _, d in pairs(Registry.dangers or {}) do
+        if (skill.grenadeAwareness or d.gas) and (d.x - p.x) ^ 2 + (d.z - p.z) ^ 2 <= (d.radius + 1.5) ^ 2 then
+            danger = d
+            break
         end
     end
 end
@@ -1481,6 +1481,12 @@ function onUpdate(dt)
     grenadeCooldown = grenadeCooldown - dt
     if Registry.suppression then
         suppression = math.max(0, (Registry.suppression[selfKey] or 0) - Roles.suppression.decayPerSecond * dt)
+        -- Tear gas: coughing and streaming eyes, as bad as being shot at.
+        local feet = position()
+        local gassed = Gas.at(feet.x, feet.y + eyeHeight, feet.z)
+        if gassed > 0 then
+            suppression = math.max(suppression, Roles.suppression.max * (0.6 + 0.4 * gassed))
+        end
         Registry.suppression[selfKey] = suppression
     end
     if cycleAt then

@@ -41,6 +41,8 @@ function Hud.mount(path, enabled)
     Hud.widgets.DeathFade = UI.getWidget(handle, "DeathFade")
     Hud.widgets.PickupText = UI.getWidget(handle, "PickupText")
     Hud.widgets.DevText = UI.getWidget(handle, "DevText")
+    Hud.widgets.GasOverlay = UI.getWidget(handle, "GasOverlay")
+    Hud.gas, Hud.gasImage = 0, nil
     Hud.dev = false
     Hud.pickup = nil
     Hud.banner = nil
@@ -301,6 +303,21 @@ function Hud.showMarker(kind)
     Hud.markerRemaining = kind == "kill" and 0.45 or 0.18
 end
 
+-- Tear gas on screen: `amount` 0 to 1 fades in `image` (a full-screen tint) over everything but the menus.
+function Hud.setGas(amount, image)
+    Hud.gas = amount or 0
+    local widget = Hud.widgets.GasOverlay
+    if not widget then
+        return
+    end
+    if image and image ~= "" and image ~= Hud.gasImage then
+        UI.setImage(widget, image)
+        Hud.gasImage = image
+    end
+    UI.setVisible(widget, Hud.gas > 0.01 and Hud.gasImage ~= nil)
+    UI.setOpacity(widget, math.min(1, Hud.gas))
+end
+
 function Hud.setSuppressed(suppressed)
     Hud.suppressed = suppressed == true
 end
@@ -366,8 +383,8 @@ function Hud.refresh(info)
         local grenades = info.grenades
         vis(Hud.widgets.GrenadeText, enabled and info.showAmmo and grenades ~= nil)
         if grenades and enabled and info.showAmmo then
-            UI.setText(Hud.widgets.GrenadeText, string.format("Frag %d   Smoke %d", grenades.frag or 0,
-                                                              grenades.smoke or 0))
+            UI.setText(Hud.widgets.GrenadeText, string.format("Frag %d   %s %d", grenades.frag or 0,
+                                                              info.tacticalLabel or "Smoke", grenades.smoke or 0))
         end
     end
     if Hud.widgets.Prompt then

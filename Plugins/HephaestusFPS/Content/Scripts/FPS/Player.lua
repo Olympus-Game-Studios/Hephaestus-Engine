@@ -10,6 +10,7 @@ local DamageDirection = require("FPS.DamageDirection")
 local Tracers = require("FPS.Tracers")
 local Settings = require("FPS.Settings")
 local Loadout = require("FPS.Loadout")
+local Gas = require("FPS.Gas")
 local PauseMenu = require("FPS.PauseMenu")
 -- Only Editor Play and Development builds load the developer menu.
 local DevMenu = Application and Application.isDevelopment and Application.isDevelopment() and require("FPS.DevMenu") or nil
@@ -143,6 +144,10 @@ Expose.string("impactDustPrefab", "")
 Expose.string("impactSparksPrefab", "")
 Expose.string("fragGrenadePrefab", "")
 Expose.string("smokeGrenadePrefab", "")
+Expose.string("gasGrenadePrefab", "") -- tear gas, thrown instead of smoke when the loadout's tactical is gas
+Expose.string("gasOverlayImage", "") -- the HUD's full-screen tint while in tear gas
+Expose.number("gasSwayDegrees", 1.6) -- aim sway at full exposure
+Expose.number("gasMoveScale", 0.8) -- movement speed at full exposure
 Expose.number("fragGrenades", 2)
 Expose.number("smokeGrenades", 2)
 Expose.number("maxFragGrenades", 4) -- grenade pickups fill up to these
@@ -178,6 +183,11 @@ local lastDt = 1 / 60
 local commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
 local discoverTries = 0
 local loadoutApplied = false
+local tacticalGas = false -- the tactical grenade is tear gas (FPS.Loadout), not smoke
+local tacticalLabel = "Smoke"
+local gasExposure = 0 -- eased tear gas exposure, 0 to 1
+local gasClock = 0
+local gasSwayYaw, gasSwayPitch = 0, 0
 local lookPitchDelta = 0
 local lookYawRate = 0
 local lookPitchRate = 0
@@ -290,7 +300,14 @@ local function applyLoadout()
     if not Registry.loadoutActive then
         return
     end
-    local chosen = Loadout.current()
+    local list = Loadout.list()
+    local tacticalEntry = Loadout.entry("tactical", list)
+    tacticalGas = tacticalEntry ~= nil and tacticalEntry.grenade == "gas" and gasGrenadePrefab ~= ""
+    tacticalLabel = tacticalGas and "Gas" or "Smoke"
+    if Registry.player then
+        Registry.player.tacticalLabel = tacticalLabel
+    end
+    local chosen = Loadout.current(list)
     local order = {}
     for _, id in ipairs({ chosen.primary, chosen.secondary }) do
         for key, row in pairs(Registry.weapons) do
@@ -469,9 +486,40 @@ local function throwLaunch(origin, direction)
     return position, velocity
 end
 
+-- The prefab a throw of `kind` spawns: "smoke" is the tactical slot, tear gas when the loadout carries it.
+local function grenadePath(kind)
+    if kind ~= "smoke" then
+        return fragGrenadePrefab
+    end
+    return tacticalGas and gasGrenadePrefab or smokeGrenadePrefab
+end
+
+-- Tear gas around the head (FPS.Gas): exposure eases in quickly and out slowly, tints the screen, sways the aim
+-- (gasSwayDegrees, applied as the change in a slow Lissajous offset so leaving the cloud returns the aim) and slows
+-- moving (gasMoveScale) and aiming (Weapon.lua reads it from the frame's input). The damage comes from the cloud.
+local function updateGas(dt)
+    local feet = Transform.getPosition()
+    local target = 0
+    if feet and not Health.isDead(this) then
+        target = Gas.at(feet.x, feet.y + viewHeight, feet.z)
+    end
+    gasExposure = Gunplay.approach(gasExposure, target, dt / (target > gasExposure and 0.6 or 2.5))
+    gasClock = gasClock + dt
+    local amount = math.rad(gasSwayDegrees) * gasExposure
+    local yawSway = amount * (0.7 * math.sin(gasClock * 1.3) + 0.3 * math.sin(gasClock * 3.1 + 0.4))
+    local pitchSway = amount * (0.6 * math.sin(gasClock * 1.9 + 1.2) + 0.4 * math.sin(gasClock * 2.7))
+    local player = Registry.player
+    if player then
+        player.pendingYaw = (player.pendingYaw or 0) + (yawSway - gasSwayYaw)
+        player.pendingPitch = (player.pendingPitch or 0) + (pitchSway - gasSwayPitch)
+    end
+    gasSwayYaw, gasSwayPitch = yawSway, pitchSway
+    Hud.setGas(gasExposure, gasOverlayImage)
+end
+
 local function releaseGrenade(kind, origin, direction)
     local position, velocity = throwLaunch(origin, direction)
-    Scene.instantiate(kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab, {
+    Scene.instantiate(grenadePath(kind), {
         position = position,
         vars = { vx = velocity.x, vy = velocity.y, vz = velocity.z, thrownByPlayer = true },
     })
@@ -488,7 +536,7 @@ local function updateThrow(dt, origin, direction, row)
     commands.cancelThrow = false
     if not throw and commands.throwKind and not swap then
         local kind = commands.throwKind
-        local path = kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab
+        local path = grenadePath(kind)
         if path ~= "" and grenades[kind] > 0 then
             throw = { kind = kind, windup = 0, recover = nil }
             playThrowSound(grenadeArmSound)
@@ -654,6 +702,7 @@ function onUpdate(dt)
     end
     Registry.clock = (Registry.clock or 0) + dt
     Tracers.update(dt)
+    updateGas(dt)
     updateGameEnd(dt)
     -- Escape is both Back and Pause: closing the developer menu with it must not open the in-game menu too.
     local devWasOpen = DevMenu ~= nil and DevMenu.open
@@ -826,6 +875,7 @@ function onUpdate(dt)
                 sinceHardLanding = sinceHardLanding + dt
                 scale = scale * Logic.landingSpeedScale(sinceHardLanding, landingSlowSeconds, landingSlowScale)
             end
+            scale = scale * Gunplay.lerp(1, gasMoveScale, gasExposure)
             Character.setSpeedMultiplier(scale)
         end
         if slide or mantle then
@@ -847,7 +897,7 @@ function onUpdate(dt)
         if Input.isActionPressed("PreviousWeapon") then
             commands.prev = true
         end
-        for slot = 1, 4 do
+        for slot = 1, 5 do
             if Input.isActionPressed("Weapon" .. tostring(slot)) then
                 commands.slot = slot
             end
@@ -998,6 +1048,7 @@ function onLateUpdate(dt)
             -- Footfalls land on whole multiples of pi.
             bobPhase = math.pi * (stepCount + stepDistance / math.max(footstepStride, 0.1)),
             lowering = swap ~= nil or throw ~= nil or mantle ~= nil,
+            gasExposure = gasExposure,
             lowerProgress = swap and row and
                 Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1)
                 or (mantle and math.sin(math.pi * math.min(1, mantle.elapsed / mantle.seconds)) * 0.7)
@@ -1038,6 +1089,7 @@ function onLateUpdate(dt)
             breathSpent = row.breathSpent,
         } or nil,
         grenades = (fragGrenadePrefab ~= "" or smokeGrenadePrefab ~= "") and grenades or nil,
+        tacticalLabel = tacticalLabel,
         dt = lastDt,
     })
     warningClock = warningClock + lastDt

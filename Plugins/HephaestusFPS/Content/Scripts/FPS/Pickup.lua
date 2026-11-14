@@ -85,7 +85,8 @@ local function take(player)
         end
     end
     local color = Pickups.colors[kind] or { 1, 1, 1 }
-    Hud.showPickup(Pickups.describe(plan, now.activeWeapon), color[1], color[2], color[3])
+    Hud.showPickup(Pickups.describe(plan, now.activeWeapon, Registry.player and Registry.player.tacticalLabel),
+                   color[1], color[2], color[3])
     if sound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
         Audio.play(sound, { volume = soundVolume, bus = "sfx", priority = 3, pitchJitter = 0.04 })
     end

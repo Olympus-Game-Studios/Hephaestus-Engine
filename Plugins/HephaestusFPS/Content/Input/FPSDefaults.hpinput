@@ -60,6 +60,10 @@
       "bindings": [ { "type": "keyboard", "control": "4" } ]
     },
     {
+      "name": "Weapon5",
+      "bindings": [ { "type": "keyboard", "control": "5" } ]
+    },
+    {
       "name": "LeanLeft",
       "bindings": [ { "type": "keyboard", "control": "C" } ]
     },

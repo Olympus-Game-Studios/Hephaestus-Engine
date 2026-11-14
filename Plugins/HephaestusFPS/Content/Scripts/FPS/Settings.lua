@@ -36,6 +36,7 @@ Settings.defaults = {
     -- The player's loadout (FPS.Loadout): weapon ids from the game's loadout list.
     loadoutPrimary = "Rifle",
     loadoutSecondary = "DesertEagle",
+    loadoutTactical = "Smoke",
 }
 
 Settings.values = {}
@@ -95,6 +96,7 @@ Settings.file = {
     { name = "Loadout", keys = {
         { key = "Primary", field = "loadoutPrimary", comment = "Weapons taken into a match, by id (such as Rifle, Sniper, Shotgun)" },
         { key = "Secondary", field = "loadoutSecondary" },
+        { key = "Tactical", field = "loadoutTactical", comment = "Tactical grenade, by id (such as Smoke, TearGas)" },
     } },
 }
 

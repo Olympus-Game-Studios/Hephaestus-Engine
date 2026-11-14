@@ -49,8 +49,8 @@ function Pickups.plan(kind, amount, state)
 end
 
 -- The HUD message for a plan, such as "+50 Health" or "+60 Ammo" (the rounds the weapon in hand got, or the most
--- any weapon got).
-function Pickups.describe(plan, activeWeapon)
+-- any weapon got). tacticalLabel names the tactical grenade ("Smoke" when nil).
+function Pickups.describe(plan, activeWeapon, tacticalLabel)
     if plan.health then
         return string.format("+%d Health", math.floor(plan.health + 0.5))
     end
@@ -68,7 +68,7 @@ function Pickups.describe(plan, activeWeapon)
         parts[#parts + 1] = string.format("+%d Frag", plan.frag)
     end
     if plan.smoke then
-        parts[#parts + 1] = string.format("+%d Smoke", plan.smoke)
+        parts[#parts + 1] = string.format("+%d %s", plan.smoke, tacticalLabel or "Smoke")
     end
     return table.concat(parts, "   ")
 end

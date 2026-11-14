@@ -12,6 +12,17 @@
     },
     "children": [
       {
+        "type": "Image",
+        "id": "GasOverlay",
+        "properties": {
+          "anchor": "Stretch",
+          "imageScaleMode": "Stretch",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 0
+        }
+      },
+      {
         "type": "Panel",
         "id": "DamageFlash",
         "properties": {
