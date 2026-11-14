@@ -1,5 +1,6 @@
 #include "PluginAPI/PluginAPI.h"
 #include "../../Common/AssetImportText.h"
+#include "../../Common/ToolWindow.h"
 
 #include <QApplication>
 #include <QDesktopServices>
@@ -551,7 +552,6 @@ public:
         m_client = new SketchfabClient(context);
         bool ok = context.Commands().Register({"sketchfab.open", "Sketchfab",
                                                "Search Sketchfab and import downloadable models", "", &Open, this});
-        ok &= context.UI().RegisterPanel({"sketchfab.browser", "Sketchfab", "", 2, &MakePanel, this});
         ok &= context.UI().RegisterMenuAction({"Window/Asset Stores", "sketchfab.open", "open"});
         if (IAutomationToolService* tools = context.AutomationTools()) {
             ok &= tools->RegisterTool(
@@ -584,6 +584,7 @@ public:
     }
 
     void OnUnload() override {
+        delete m_window.data();
         delete m_client;
         m_context = nullptr;
     }
@@ -597,9 +598,12 @@ private:
         QString error;
     };
 
-    static void Open(void* self) { static_cast<SketchfabPlugin*>(self)->m_context->UI().ShowPanel("sketchfab.browser"); }
-    static QWidget* MakePanel(QWidget* parent, void* self) {
-        return new SketchfabPanel(*static_cast<SketchfabPlugin*>(self)->m_client, parent);
+    static void Open(void* self) {
+        auto* plugin = static_cast<SketchfabPlugin*>(self);
+        ShowToolWindow(plugin->m_window, [plugin] { return new SketchfabPanel(*plugin->m_client, nullptr); },
+                       QObject::tr("Sketchfab"),
+                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/sketchfab.svg"),
+                       900, 760);
     }
 
     void Answer(std::uint64_t call, bool ok, const QString& text) {
@@ -712,6 +716,7 @@ private:
 
     IPluginContext* m_context = nullptr;
     SketchfabClient* m_client = nullptr;
+    QPointer<QWidget> m_window;
     std::map<int, Job> m_jobs;
     int m_nextJob = 1;
 };

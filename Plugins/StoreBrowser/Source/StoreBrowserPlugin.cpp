@@ -13,6 +13,10 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPointer>
+#include <QPainter>
+#include <QPalette>
+#include <QSvgRenderer>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
@@ -59,6 +63,23 @@ constexpr Store kStores[] = {
 };
 
 constexpr const char* kProfileName = "HephaestusStoreBrowser";
+
+// Design-system icons draw in currentColor; give them the palette's text colour so they show on dark themes.
+QIcon ThemedIcon(const QString& svgPath, const QColor& color) {
+    QFile file(svgPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    QByteArray svg = file.readAll();
+    svg.replace("currentColor", color.name().toUtf8());
+    QSvgRenderer renderer(svg);
+    QPixmap pixmap(32, 32);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    renderer.render(&painter);
+    painter.end();
+    return QIcon(pixmap);
+}
 
 QString GeometryKey(const Store& store) {
     return QStringLiteral("plugins/com.hephaestus.storebrowser/%1/geometry").arg(QString::fromUtf8(store.id));
@@ -114,8 +135,8 @@ private:
 
 class StorePanel final : public QWidget {
 public:
-    StorePanel(const Store& store, ICommandService& commands, QWidget* parent)
-        : QWidget(parent), m_store(store) {
+    StorePanel(const Store& store, ICommandService& commands, const QDir& iconFolder, QWidget* parent)
+        : QWidget(parent), m_store(store), m_iconFolder(iconFolder) {
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         auto* bar = new QHBoxLayout();
@@ -136,8 +157,10 @@ public:
         bar->addWidget(m_address, 1);
         QToolButton* external = button(tr("Open in browser"), tr("Open this page in your web browser"));
         if (store.settingsCommand) {
-            QToolButton* more = button(QStringLiteral("..."), tr("More"));
+            QToolButton* more = button(QString(), tr("More"));
+            more->setIcon(ThemedIcon(m_iconFolder.filePath("more.svg"), palette().color(QPalette::ButtonText)));
             more->setPopupMode(QToolButton::InstantPopup);
+            more->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }"));
             auto* menu = new QMenu(more);
             QAction* settings = menu->addAction(tr("Import settings..."));
             connect(settings, &QAction::triggered, this, [this, &commands] {
@@ -190,6 +213,7 @@ protected:
 
 private:
     const Store& m_store;
+    QDir m_iconFolder;
     QWebEngineView* m_view = nullptr;
     QLineEdit* m_address = nullptr;
     QLabel* m_status = nullptr;
@@ -261,7 +285,9 @@ private:
                 return;
             }
         }
-        auto* panel = new StorePanel(*entry->store, self->m_context->Commands(), nullptr);
+        auto* panel = new StorePanel(*entry->store, self->m_context->Commands(),
+                                     QDir(QString::fromUtf8(self->m_context->Project().PluginRoot())).filePath("Resources"),
+                                     nullptr);
         panel->setWindowFlag(Qt::Window);
         panel->setAttribute(Qt::WA_DeleteOnClose);
         // A store window must not keep the editor running once the editor's own window is closed.

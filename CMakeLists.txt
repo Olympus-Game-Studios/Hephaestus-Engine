@@ -823,7 +823,7 @@ if(HEPHAESTUS_USE_QT)
         if(TARGET Qt6::WebEngineWidgets)
             add_library(HephaestusStoreBrowser SHARED Plugins/StoreBrowser/Source/StoreBrowserPlugin.cpp)
             target_include_directories(HephaestusStoreBrowser PRIVATE engine)
-            target_link_libraries(HephaestusStoreBrowser PRIVATE Qt6::Widgets Qt6::WebEngineWidgets)
+            target_link_libraries(HephaestusStoreBrowser PRIVATE Qt6::Widgets Qt6::Svg Qt6::WebEngineWidgets)
             set_target_properties(HephaestusStoreBrowser PROPERTIES
                 OUTPUT_NAME "HephaestusStoreBrowser"
                 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/StoreBrowser/bin"

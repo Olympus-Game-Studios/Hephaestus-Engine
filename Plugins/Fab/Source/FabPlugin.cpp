@@ -1,5 +1,6 @@
 #include "PluginAPI/PluginAPI.h"
 #include "../../Common/AssetImportText.h"
+#include "../../Common/ToolWindow.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -8,7 +9,6 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QDragEnterEvent>
-#include <QDockWidget>
 #include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
@@ -503,11 +503,9 @@ public:
         ok &= context.Settings().Register({kLicenseSetting, "Fab Launcher credit licence",
                                            "Licence recorded for assets exported from the launcher.",
                                            kLicenses[0].label, SettingScope::Editor});
-        // Created before the panel, whose factory runs inside RegisterPanel.
         m_bridge = new LauncherBridge(context);
         m_bridge->Apply();
         ok &= context.Commands().Register({"fab.open", "Fab", "Import packs downloaded from Fab", "", &Open, this});
-        ok &= context.UI().RegisterPanel({"fab.importer", "Fab", "", 2, &MakePanel, this});
         // No Window menu entry: the Fab Store window's ... menu opens these settings (command "fab.open").
         ok &= context.Assets().RegisterImporter(
             {"Asset pack with materials (Fab, Megascans, Sketchfab download)", kPackExtensions, "fab.pack",
@@ -515,26 +513,20 @@ public:
         return ok;
     }
     void OnUnload() override {
+        delete m_panel.data();
         delete m_bridge;
         m_bridge = nullptr;
         m_context = nullptr;
     }
 
 private:
-    // Opened from the Fab Store window, so it floats in front of that window instead of docking in the editor.
+    // Opened from the Fab Store window's ... menu as its own window.
     static void Open(void* self) {
         auto* plugin = static_cast<FabPlugin*>(self);
-        plugin->m_context->UI().ShowPanel("fab.importer");
-        if (auto* dock = plugin->m_panel ? qobject_cast<QDockWidget*>(plugin->m_panel->parentWidget()) : nullptr) {
-            dock->setFloating(true);
-            dock->raise();
-            dock->activateWindow();
-        }
-    }
-    static QWidget* MakePanel(QWidget* parent, void* self) {
-        auto* plugin = static_cast<FabPlugin*>(self);
-        plugin->m_panel = new FabPanel(*plugin->m_context, *plugin->m_bridge, parent);
-        return plugin->m_panel;
+        ShowToolWindow(plugin->m_panel, [plugin] { return new FabPanel(*plugin->m_context, *plugin->m_bridge, nullptr); },
+                       QObject::tr("Fab Import Settings"),
+                       QDir(QString::fromUtf8(plugin->m_context->Project().PluginRoot())).filePath("Resources/fab.svg"),
+                       560, 640);
     }
     // Content Browser > Import: the pack lands in the folder being browsed, without a credit.
     static bool ImportFromBrowser(const char* source, const char* directory, void* self) {
