@@ -552,7 +552,7 @@ public:
         m_client = new SketchfabClient(context);
         bool ok = context.Commands().Register({"sketchfab.open", "Sketchfab",
                                                "Search Sketchfab and import downloadable models", "", &Open, this});
-        ok &= context.UI().RegisterMenuAction({"Window/Asset Stores", "sketchfab.open", "open"});
+        // No Window menu entry: the Sketchfab Store window's ... menu opens this window (command "sketchfab.open").
         if (IAutomationToolService* tools = context.AutomationTools()) {
             ok &= tools->RegisterTool(
                 {"sketchfab.search",

@@ -10,7 +10,12 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLineEdit>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QRegularExpression>
 #include <QMenu>
 #include <QPointer>
 #include <QPainter>
@@ -28,6 +33,7 @@
 #include <QWebEngineView>
 #include <QWidget>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -51,15 +57,30 @@ struct Store {
     const char* title;       // panel title
     const char* home;        // start page
     const char* source;      // credit source name
-    const char* titleSuffix; // removed from page titles to get the asset's name
+    const char* titleSuffix; // page titles are cut here to get the asset's name
     const char* license;     // licence recorded when the page does not say
     const char* licenseUrl;
     const char* settingsCommand; // another plugin's command for the store's import settings, or nullptr
+    const char* settingsLabel;   // its item in the window's ... menu
+    bool sketchfabCredits;       // read the model's author and licence from Sketchfab's public Data API
 };
 
 constexpr Store kStores[] = {
     {"fab", "Fab Store", "https://www.fab.com/", "Fab", " | Fab", "Fab Standard License", "https://www.fab.com/eula",
-     "fab.open"},
+     "fab.open", "Import settings...", false},
+    {"sketchfab", "Sketchfab Store", "https://sketchfab.com/", "Sketchfab", " - Download", "",
+     "https://sketchfab.com/licenses", "sketchfab.open",
+     "Sketchfab search and API token...", true},
+};
+
+/// Who made an asset and the terms it is used under, recorded with the import.
+struct Credit {
+    QString title;
+    QString sourceUrl;
+    QString author;
+    QString authorUrl;
+    QString license;
+    QString licenseUrl;
 };
 
 constexpr const char* kProfileName = "HephaestusStoreBrowser";
@@ -162,10 +183,10 @@ public:
             more->setPopupMode(QToolButton::InstantPopup);
             more->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }"));
             auto* menu = new QMenu(more);
-            QAction* settings = menu->addAction(tr("Import settings..."));
+            QAction* settings = menu->addAction(tr(store.settingsLabel));
             connect(settings, &QAction::triggered, this, [this, &commands] {
                 if (!commands.Execute(m_store.settingsCommand)) {
-                    SetStatus(tr("The import settings belong to the Fab plugin, which is turned off."));
+                    SetStatus(tr("The plugin these settings belong to is turned off."));
                 }
             });
             more->setMenu(menu);
@@ -197,9 +218,9 @@ public:
     /// The asset's name from the page it was downloaded from ("Grenades pack | Fab" → "Grenades pack").
     QString AssetTitle() const {
         QString title = m_view->title();
-        const QString suffix = QString::fromUtf8(m_store.titleSuffix);
-        if (title.endsWith(suffix)) {
-            title.chop(suffix.size());
+        const int cut = title.indexOf(QString::fromUtf8(m_store.titleSuffix));
+        if (cut > 0) {
+            title.truncate(cut);
         }
         return title.trimmed();
     }
@@ -237,6 +258,7 @@ public:
         qputenv("QTWEBENGINE_LOCALES_PATH", bin.filePath("translations/qtwebengine_locales").toLocal8Bit());
 
         m_profile = SharedProfile();
+        m_network = new QNetworkAccessManager();
         m_downloads = QObject::connect(m_profile, &QWebEngineProfile::downloadRequested, m_profile,
                                        [this](QWebEngineDownloadRequest* download) { OnDownload(download); });
         bool ok = true;
@@ -255,6 +277,8 @@ public:
     void OnUnload() override {
         // The profile outlives the plugin; its download signal must not call into unloaded code.
         QObject::disconnect(m_downloads);
+        delete m_network;
+        m_network = nullptr;
         // Store windows are top-level, so the editor does not own them; close them with the plugin.
         for (const QPointer<StorePanel>& panel : m_panels) {
             if (panel) {
@@ -353,32 +377,85 @@ private:
                 return;
             }
             const QString path = QDir(download->downloadDirectory()).filePath(download->downloadFileName());
-            target->SetStatus(Import(target->StoreInfo(), path, title, pageUrl));
-            QFile::remove(path);
+            const Store& store = target->StoreInfo();
+            Credit credit{title, pageUrl, {}, {}, QString::fromUtf8(store.license), QString::fromUtf8(store.licenseUrl)};
+            if (!store.sketchfabCredits) {
+                target->SetStatus(Import(store, path, credit));
+                QFile::remove(path);
+                return;
+            }
+            LookUpSketchfabCredit(credit, [this, target, path](const Credit& found) {
+                if (target) {
+                    target->SetStatus(Import(target->StoreInfo(), path, found));
+                }
+                QFile::remove(path);
+            });
         });
     }
 
-    QString Import(const Store& store, const QString& path, const QString& title, const QString& pageUrl) {
+    /// Sketchfab model pages end in the model's uid (/3d-models/crate-box-<32 hex digits>); its public Data API
+    /// gives the name, author and licence the credit needs. Without a uid or on a failed request, the page's
+    /// title and URL are kept.
+    void LookUpSketchfabCredit(Credit credit, std::function<void(const Credit&)> done) {
+        static const QRegularExpression uidPattern(QStringLiteral("/3d-models/[^/?#]*?-?([0-9a-f]{32})"));
+        const QRegularExpressionMatch match = uidPattern.match(credit.sourceUrl);
+        if (!match.hasMatch() || !m_network) {
+            done(credit);
+            return;
+        }
+        QNetworkReply* reply = m_network->get(
+            QNetworkRequest(QUrl("https://api.sketchfab.com/v3/models/" + match.captured(1))));
+        QObject::connect(reply, &QNetworkReply::finished, reply, [reply, credit, done]() mutable {
+            reply->deleteLater();
+            if (reply->error() == QNetworkReply::NoError) {
+                const QJsonObject model = QJsonDocument::fromJson(reply->readAll()).object();
+                const QJsonObject user = model["user"].toObject();
+                const QJsonObject license = model["license"].toObject();
+                credit.title = model["name"].toString(credit.title);
+                credit.sourceUrl = model["viewerUrl"].toString(credit.sourceUrl);
+                credit.author = user["displayName"].toString();
+                credit.authorUrl = user["profileUrl"].toString();
+                credit.license = license["label"].toString(credit.license);
+                credit.licenseUrl = license["url"].toString(credit.licenseUrl);
+            }
+            done(credit);
+        });
+    }
+
+    QString Import(const Store& store, const QString& path, const Credit& credit) {
         const QByteArray source = path.toUtf8();
         const QByteArray target =
             ("assets/Imported/" + QString::fromUtf8(store.source) + "/" +
-             QString::fromStdString(SafeFileName(title.toStdString())))
+             QString::fromStdString(SafeFileName(credit.title.toStdString())))
                 .toUtf8();
-        const QByteArray titleText = title.toUtf8();
-        const QByteArray url = pageUrl.toUtf8();
+        const QByteArray titleText = credit.title.toUtf8();
+        const QByteArray url = credit.sourceUrl.toUtf8();
+        const QByteArray author = credit.author.toUtf8();
+        const QByteArray authorUrl = credit.authorUrl.toUtf8();
+        const QByteArray license = credit.license.toUtf8();
+        const QByteArray licenseUrl = credit.licenseUrl.toUtf8();
         AssetPackImportRequest request;
         request.sourcePath = source.constData();
         request.targetFolder = target.constData();
         request.title = titleText.constData();
         request.source = store.source;
         request.sourceUrl = url.constData();
-        request.license = store.license;
-        request.licenseUrl = store.licenseUrl;
+        request.author = author.constData();
+        request.authorUrl = authorUrl.constData();
+        request.license = license.constData();
+        request.licenseUrl = licenseUrl.constData();
         AssetPackImportResult result;
         QApplication::setOverrideCursor(Qt::WaitCursor);
         const bool ok = m_context->Assets().ImportAssetPack(request, result);
         QApplication::restoreOverrideCursor();
-        return ok ? ImportSummary(result) : tr("Import failed: %1").arg(QString::fromUtf8(result.message));
+        if (!ok) {
+            return tr("Import failed: %1").arg(QString::fromUtf8(result.message));
+        }
+        QString summary = ImportSummary(result);
+        if (credit.license.contains("NonCommercial", Qt::CaseInsensitive)) {
+            summary += tr("\nLicensed %1: this asset cannot be used in a game you sell.").arg(credit.license);
+        }
+        return summary;
     }
 
     static QString tr(const char* text) { return QObject::tr(text); }
@@ -386,6 +463,7 @@ private:
     IPluginContext* m_context = nullptr;
     QWebEngineProfile* m_profile = nullptr;
     QMetaObject::Connection m_downloads;
+    QNetworkAccessManager* m_network = nullptr;
     std::vector<Entry> m_entries;
     std::vector<QPointer<StorePanel>> m_panels;
 };
