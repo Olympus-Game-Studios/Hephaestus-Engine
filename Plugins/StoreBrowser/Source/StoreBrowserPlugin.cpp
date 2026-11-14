@@ -2,6 +2,7 @@
 #include "../../Common/AssetImportText.h"
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
@@ -12,6 +13,7 @@
 #include <QLineEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -54,6 +56,10 @@ constexpr Store kStores[] = {
 };
 
 constexpr const char* kProfileName = "HephaestusStoreBrowser";
+
+QString GeometryKey(const Store& store) {
+    return QStringLiteral("plugins/com.hephaestus.storebrowser/%1/geometry").arg(QString::fromUtf8(store.id));
+}
 
 bool IsAssetPack(const QString& fileName) {
     const QString suffix = QFileInfo(fileName).suffix().toLower();
@@ -160,6 +166,12 @@ public:
     }
     QString PageUrl() const { return m_view->url().toString(); }
 
+protected:
+    void closeEvent(QCloseEvent* event) override {
+        QSettings("Hephaestus", "Editor").setValue(GeometryKey(m_store), saveGeometry());
+        QWidget::closeEvent(event);
+    }
+
 private:
     const Store& m_store;
     QWebEngineView* m_view = nullptr;
@@ -189,14 +201,12 @@ public:
                                        [this](QWebEngineDownloadRequest* download) { OnDownload(download); });
         bool ok = true;
         for (const Store& store : kStores) {
-            m_entries.push_back({std::string("storebrowser.open.") + store.id, std::string("storebrowser.") + store.id,
-                                 &store, this});
+            m_entries.push_back({std::string("storebrowser.open.") + store.id, &store, this});
         }
         for (Entry& entry : m_entries) {
             ok &= context.Commands().Register({entry.command.c_str(), entry.store->title,
                                                "Browse the store and import downloads into the project", "",
                                                &Open, &entry});
-            ok &= context.UI().RegisterPanel({entry.panel.c_str(), entry.store->title, "", 2, &MakePanel, &entry});
             ok &= context.UI().RegisterMenuAction({"Window/Asset Stores", entry.command.c_str(), "open"});
         }
         return ok;
@@ -205,6 +215,13 @@ public:
     void OnUnload() override {
         // The profile outlives the plugin; its download signal must not call into unloaded code.
         QObject::disconnect(m_downloads);
+        // Store windows are top-level, so the editor does not own them; close them with the plugin.
+        for (const QPointer<StorePanel>& panel : m_panels) {
+            if (panel) {
+                QSettings("Hephaestus", "Editor").setValue(GeometryKey(panel->StoreInfo()), panel->saveGeometry());
+                delete panel.data();
+            }
+        }
         m_panels.clear();
         m_context = nullptr;
     }
@@ -212,21 +229,33 @@ public:
 private:
     struct Entry {
         std::string command;
-        std::string panel;
         const Store* store = nullptr;
         StoreBrowserPlugin* plugin = nullptr;
     };
 
+    // Each store is its own window with the system's title bar, remembering where it was left.
     static void Open(void* data) {
         auto* entry = static_cast<Entry*>(data);
-        entry->plugin->m_context->UI().ShowPanel(entry->panel.c_str());
-    }
-
-    static QWidget* MakePanel(QWidget* parent, void* data) {
-        auto* entry = static_cast<Entry*>(data);
-        auto* panel = new StorePanel(*entry->store, parent);
-        entry->plugin->m_panels.push_back(panel);
-        return panel;
+        StoreBrowserPlugin* self = entry->plugin;
+        for (const QPointer<StorePanel>& panel : self->m_panels) {
+            if (panel && &panel->StoreInfo() == entry->store) {
+                panel->showNormal();
+                panel->raise();
+                panel->activateWindow();
+                return;
+            }
+        }
+        auto* panel = new StorePanel(*entry->store, nullptr);
+        panel->setWindowFlag(Qt::Window);
+        panel->setAttribute(Qt::WA_DeleteOnClose);
+        panel->setWindowTitle(QString::fromUtf8(entry->store->title));
+        panel->setWindowIcon(QIcon(QDir(QString::fromUtf8(self->m_context->Project().PluginRoot()))
+                                       .filePath("Resources/store-browser.svg")));
+        if (!panel->restoreGeometry(QSettings("Hephaestus", "Editor").value(GeometryKey(*entry->store)).toByteArray())) {
+            panel->resize(1280, 860);
+        }
+        self->m_panels.push_back(panel);
+        panel->show();
     }
 
     StorePanel* PanelFor(QWebEnginePage* page) const {
