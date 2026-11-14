@@ -227,6 +227,7 @@ if(HEPHAESTUS_USE_QT)
             find_package(Qt6 COMPONENTS Svg QUIET)
             find_package(Qt6 COMPONENTS Concurrent QUIET)
             find_package(Qt6 COMPONENTS Network QUIET)
+            find_package(Qt6 COMPONENTS WebEngineWidgets QUIET)
         endif()
     endif()
 
@@ -817,6 +818,43 @@ if(HEPHAESTUS_USE_QT)
         if(TARGET HephaestusSketchfab AND WIN32)
             target_link_libraries(HephaestusSketchfab PRIVATE Advapi32)
         endif()
+        # Store browser: Qt WebEngine lives in this plugin's bin folder (deployed by windeployqt), never beside
+        # the editor, so only installs that include the plugin carry it.
+        if(TARGET Qt6::WebEngineWidgets)
+            add_library(HephaestusStoreBrowser SHARED Plugins/StoreBrowser/Source/StoreBrowserPlugin.cpp)
+            target_include_directories(HephaestusStoreBrowser PRIVATE engine)
+            target_link_libraries(HephaestusStoreBrowser PRIVATE Qt6::Widgets Qt6::WebEngineWidgets)
+            set_target_properties(HephaestusStoreBrowser PROPERTIES
+                OUTPUT_NAME "HephaestusStoreBrowser"
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/StoreBrowser/bin"
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/StoreBrowser/bin"
+            )
+            get_target_property(_store_qt_widgets Qt6::Widgets LOCATION)
+            get_filename_component(_store_qt_bin "${_store_qt_widgets}" DIRECTORY)
+            add_custom_command(TARGET HephaestusStoreBrowser POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/StoreBrowser/StoreBrowser.hpplugin"
+                    "$<TARGET_FILE_DIR:HephaestusStoreBrowser>/../StoreBrowser.hpplugin"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/StoreBrowser/Resources"
+                    "$<TARGET_FILE_DIR:HephaestusStoreBrowser>/../Resources"
+                COMMAND "${_store_qt_bin}/windeployqt.exe" $<IF:$<CONFIG:Debug>,--debug,--release>
+                    --dir "$<TARGET_FILE_DIR:HephaestusStoreBrowser>" --no-compiler-runtime --no-opengl-sw
+                    --no-system-d3d-compiler --no-system-dxc-compiler --no-quick-import --no-translations
+                    --skip-plugin-types generic,networkinformation,platforminputcontexts,qmltooling,position,tls
+                    "$<TARGET_FILE:HephaestusStoreBrowser>"
+                # Chromium falls back to English; the other 50 MB of locales are left out.
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_store_qt_bin}/../translations/qtwebengine_locales/en-US.pak"
+                    "$<TARGET_FILE_DIR:HephaestusStoreBrowser>/translations/qtwebengine_locales/en-US.pak"
+                COMMENT "Deploying Qt WebEngine into the store browser plugin"
+                VERBATIM
+            )
+            add_dependencies(HephaestusEngine HephaestusStoreBrowser)
+        else()
+            message(STATUS "Qt6 WebEngineWidgets not found; the store browser plugin is not built.")
+        endif()
+
         if(TARGET HephaestusFab AND HEPHAESTUS_BUILD_COMPAT_TESTS)
             add_executable(FabLauncherBridgeTests engine/Tests/FabLauncherBridgeTests.cpp)
             target_include_directories(FabLauncherBridgeTests PRIVATE engine extern)

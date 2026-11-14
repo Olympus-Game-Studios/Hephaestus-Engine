@@ -98,7 +98,9 @@ Get-ChildItem $OutputPath -Recurse -File -Include *.pdb, *.lib, *.exp, *.ilk | R
 
 Write-Host "Deploying Qt"
 $qtTargets = @((Join-Path $OutputPath "HephaestusEngine.exe"), (Join-Path $OutputPath "HephaestusLauncher.exe")) +
-    @(Get-ChildItem (Join-Path $OutputPath "Plugins") -Recurse -Filter "*.dll" | ForEach-Object FullName)
+    @(Get-ChildItem (Join-Path $OutputPath "Plugins") -Recurse -Filter "*.dll" |
+      # The store browser deploys its own Qt (WebEngine) into its bin folder at build time.
+      Where-Object { $_.FullName -notlike "*\Plugins\StoreBrowser\*" } | ForEach-Object FullName)
 & $WinDeployQt --release --dir $OutputPath --no-translations --no-compiler-runtime `
     --no-system-d3d-compiler --no-system-dxc-compiler --no-opengl-sw `
     --skip-plugin-types generic,networkinformation $qtTargets
