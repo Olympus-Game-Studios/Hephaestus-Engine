@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QDragEnterEvent>
+#include <QDockWidget>
 #include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
@@ -507,7 +508,7 @@ public:
         m_bridge->Apply();
         ok &= context.Commands().Register({"fab.open", "Fab", "Import packs downloaded from Fab", "", &Open, this});
         ok &= context.UI().RegisterPanel({"fab.importer", "Fab", "", 2, &MakePanel, this});
-        ok &= context.UI().RegisterMenuAction({"Window/Asset Stores", "fab.open", "open"});
+        // No Window menu entry: the Fab Store window's ... menu opens these settings (command "fab.open").
         ok &= context.Assets().RegisterImporter(
             {"Asset pack with materials (Fab, Megascans, Sketchfab download)", kPackExtensions, "fab.pack",
              &ImportFromBrowser, this});
@@ -520,10 +521,20 @@ public:
     }
 
 private:
-    static void Open(void* self) { static_cast<FabPlugin*>(self)->m_context->UI().ShowPanel("fab.importer"); }
+    // Opened from the Fab Store window, so it floats in front of that window instead of docking in the editor.
+    static void Open(void* self) {
+        auto* plugin = static_cast<FabPlugin*>(self);
+        plugin->m_context->UI().ShowPanel("fab.importer");
+        if (auto* dock = plugin->m_panel ? qobject_cast<QDockWidget*>(plugin->m_panel->parentWidget()) : nullptr) {
+            dock->setFloating(true);
+            dock->raise();
+            dock->activateWindow();
+        }
+    }
     static QWidget* MakePanel(QWidget* parent, void* self) {
         auto* plugin = static_cast<FabPlugin*>(self);
-        return new FabPanel(*plugin->m_context, *plugin->m_bridge, parent);
+        plugin->m_panel = new FabPanel(*plugin->m_context, *plugin->m_bridge, parent);
+        return plugin->m_panel;
     }
     // Content Browser > Import: the pack lands in the folder being browsed, without a credit.
     static bool ImportFromBrowser(const char* source, const char* directory, void* self) {
@@ -542,6 +553,7 @@ private:
     }
     IPluginContext* m_context = nullptr;
     LauncherBridge* m_bridge = nullptr;
+    QPointer<QWidget> m_panel;
 };
 
 } // namespace

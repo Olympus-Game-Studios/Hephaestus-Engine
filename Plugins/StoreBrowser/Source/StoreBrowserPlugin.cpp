@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPointer>
 #include <QPushButton>
 #include <QSettings>
@@ -49,10 +50,12 @@ struct Store {
     const char* titleSuffix; // removed from page titles to get the asset's name
     const char* license;     // licence recorded when the page does not say
     const char* licenseUrl;
+    const char* settingsCommand; // another plugin's command for the store's import settings, or nullptr
 };
 
 constexpr Store kStores[] = {
-    {"fab", "Fab Store", "https://www.fab.com/", "Fab", " | Fab", "Fab Standard License", "https://www.fab.com/eula"},
+    {"fab", "Fab Store", "https://www.fab.com/", "Fab", " | Fab", "Fab Standard License", "https://www.fab.com/eula",
+     "fab.open"},
 };
 
 constexpr const char* kProfileName = "HephaestusStoreBrowser";
@@ -111,7 +114,8 @@ private:
 
 class StorePanel final : public QWidget {
 public:
-    StorePanel(const Store& store, QWidget* parent) : QWidget(parent), m_store(store) {
+    StorePanel(const Store& store, ICommandService& commands, QWidget* parent)
+        : QWidget(parent), m_store(store) {
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         auto* bar = new QHBoxLayout();
@@ -131,6 +135,18 @@ public:
         m_address->setReadOnly(true);
         bar->addWidget(m_address, 1);
         QToolButton* external = button(tr("Open in browser"), tr("Open this page in your web browser"));
+        if (store.settingsCommand) {
+            QToolButton* more = button(QStringLiteral("..."), tr("More"));
+            more->setPopupMode(QToolButton::InstantPopup);
+            auto* menu = new QMenu(more);
+            QAction* settings = menu->addAction(tr("Import settings..."));
+            connect(settings, &QAction::triggered, this, [this, &commands] {
+                if (!commands.Execute(m_store.settingsCommand)) {
+                    SetStatus(tr("The import settings belong to the Fab plugin, which is turned off."));
+                }
+            });
+            more->setMenu(menu);
+        }
         layout->addLayout(bar);
 
         m_view = new QWebEngineView(this);
@@ -245,7 +261,7 @@ private:
                 return;
             }
         }
-        auto* panel = new StorePanel(*entry->store, nullptr);
+        auto* panel = new StorePanel(*entry->store, self->m_context->Commands(), nullptr);
         panel->setWindowFlag(Qt::Window);
         panel->setAttribute(Qt::WA_DeleteOnClose);
         // A store window must not keep the editor running once the editor's own window is closed.
