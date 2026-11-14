@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <type_traits>
 #include <array>
+#include <map>
 #include <functional>
 #include <cstdint>
 #include <iostream>
@@ -381,12 +382,22 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
             return false;
         }
         const bool flipWinding = Determinant3(world) < 0.0f;
+        // Primitives of one mesh often share their vertex accessors (one per material); load those vertices once.
+        std::map<std::array<int, 3>, std::pair<uint32_t, int>> loadedVertices;
         for (const json& primitive : meshes[static_cast<size_t>(meshIndex)].value("primitives", json::array())) {
             if (primitive.value("mode", 4) != 4 || !primitive.contains("attributes") ||
                 !primitive["attributes"].contains("POSITION")) {
                 continue;
             }
             const json& attributes = primitive["attributes"];
+            const std::array<int, 3> vertexKey = {attributes["POSITION"].get<int>(), attributes.value("NORMAL", -1),
+                                                  attributes.value("TEXCOORD_0", -1)};
+            uint32_t base = static_cast<uint32_t>(outMesh.vertices.size());
+            int vertexCount = 0;
+            if (const auto shared = loadedVertices.find(vertexKey); shared != loadedVertices.end()) {
+                base = shared->second.first;
+                vertexCount = shared->second.second;
+            } else {
             AccessorView positions;
             if (!OpenAccessor(root, buffers, attributes["POSITION"].get<int>(), positions, errorMessage)) {
                 return false;
@@ -404,7 +415,6 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                 return false;
             }
 
-            const uint32_t base = static_cast<uint32_t>(outMesh.vertices.size());
             for (int i = 0; i < positions.count; ++i) {
                 Vertex vert{};
                 const Vec3 pos = Mat4::TransformPoint(world, Vec3(ReadNormalized(positions, i, 0),
@@ -428,6 +438,9 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                 }
                 outMesh.vertices.push_back(vert);
             }
+            vertexCount = positions.count;
+            loadedVertices.emplace(vertexKey, std::make_pair(base, vertexCount));
+            }
 
             std::vector<uint32_t> local;
             if (primitive.contains("indices")) {
@@ -438,14 +451,14 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                 local.reserve(static_cast<size_t>(indexView.count));
                 for (int i = 0; i < indexView.count; ++i) {
                     const auto index = static_cast<uint32_t>(ReadNormalized(indexView, i, 0));
-                    if (index >= static_cast<uint32_t>(positions.count)) {
+                    if (index >= static_cast<uint32_t>(vertexCount)) {
                         errorMessage = "Index out of range";
                         return false;
                     }
                     local.push_back(index);
                 }
             } else {
-                for (int i = 0; i < positions.count; ++i) {
+                for (int i = 0; i < vertexCount; ++i) {
                     local.push_back(static_cast<uint32_t>(i));
                 }
             }

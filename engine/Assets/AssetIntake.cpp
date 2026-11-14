@@ -7,6 +7,8 @@
 
 #include "AssetPathPolicy.h"
 #include "FbxDocument.h"
+#include "FbxStaticImporter.h"
+#include "GltfDocument.h"
 #include "MeshSettings.h"
 #include "ModelImporter.h"
 #include "ModelMaterialImport.h"
@@ -692,60 +694,37 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         return path;
     };
 
-    for (const fs::path& model : models) {
-        fs::path copied;
-        std::string error;
-        if (!CopyModel(model, folder / "Models", copied, usedFiles, error)) {
-            outResult.warnings.push_back(error);
-            continue;
-        }
-        usedFiles.push_back(model);
-        const std::string modelStem = model.stem().string();
-        MeshData mesh;
-        std::vector<int> slotMaterials;
+    // Materials for one mesh's slots, written once per model and material name.
+    std::map<std::string, std::string> writtenMaterials;
+    auto materialsFor = [&](const MeshData& mesh, const fs::path& model, const std::string& modelStem,
+                            const std::vector<int>& slotMaterials, const std::vector<SourceMaterial>& gltfMaterials,
+                            const std::vector<FbxMaterialInfo>& fbxMaterials) {
         const bool gltf = Ext(model) == ".gltf" || Ext(model) == ".glb";
-        const bool loaded = gltf ? ModelImporter::LoadGLTF(copied, mesh, error, &slotMaterials)
-                                 : ModelImporter::LoadModel(copied, mesh, error);
-        if (!loaded) {
-            outResult.warnings.push_back(model.filename().string() + ": " + error);
-            continue;
-        }
-        const std::string modelPortable = AssetPathPolicy::ToPortableKey(projectRoot, copied.generic_string());
-        outResult.models.push_back(modelPortable);
-
         const size_t slots = std::max<size_t>(mesh.submeshes.size(), 1);
-        std::vector<SourceMaterial> slotSources(slots);
-        if (gltf) {
-            std::vector<SourceMaterial> materials;
-            if (!ReadGltfMaterials(model, materials, error)) {
-                outResult.warnings.push_back(model.filename().string() + ": " + error);
-            }
-            for (size_t s = 0; s < slots; ++s) {
-                const int index = s < slotMaterials.size() ? slotMaterials[s] : -1;
-                if (index >= 0 && index < static_cast<int>(materials.size())) {
-                    slotSources[s] = materials[static_cast<size_t>(index)];
-                }
-            }
-        } else if (Ext(model) == ".fbx") {
-            std::vector<FbxMaterialInfo> materials;
-            if (!ReadFbxMaterials(model, materials, error)) {
-                outResult.warnings.push_back(model.filename().string() + ": " + error);
-            }
-            for (size_t s = 0; s < mesh.submeshes.size(); ++s) {
-                const auto found = std::find_if(materials.begin(), materials.end(), [&](const FbxMaterialInfo& m) {
-                    return m.name == mesh.submeshes[s].name;
-                });
-                if (found != materials.end()) {
-                    slotSources[s] = SourceMaterialFromFbx(*found);
-                }
-            }
-        }
         std::vector<std::string> applied;
         for (size_t s = 0; s < slots; ++s) {
-            SourceMaterial& material = slotSources[s];
+            SourceMaterial material;
+            if (gltf) {
+                const int index = s < slotMaterials.size() ? slotMaterials[s] : -1;
+                if (index >= 0 && index < static_cast<int>(gltfMaterials.size())) {
+                    material = gltfMaterials[static_cast<size_t>(index)];
+                }
+            } else if (s < mesh.submeshes.size()) {
+                const auto found = std::find_if(fbxMaterials.begin(), fbxMaterials.end(), [&](const FbxMaterialInfo& m) {
+                    return m.name == mesh.submeshes[s].name;
+                });
+                if (found != fbxMaterials.end()) {
+                    material = SourceMaterialFromFbx(*found);
+                }
+            }
             if (material.name.empty()) {
                 material.name = s < mesh.submeshes.size() && !mesh.submeshes[s].name.empty()
                     ? mesh.submeshes[s].name : modelStem;
+            }
+            const std::string cacheKey = modelStem + "/" + material.name;
+            if (const auto done = writtenMaterials.find(cacheKey); done != writtenMaterials.end()) {
+                applied.push_back(done->second);
+                continue;
             }
             TextureSet* set = FindSet(sets, material.name);
             if (!set) {
@@ -758,18 +737,23 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
                 FillFromSet(material, *set);
             }
             const std::string stem = models.size() == 1 ? material.name : modelStem + "_" + material.name;
-            applied.push_back(writeMaterial(material, stem));
+            const std::string path = writeMaterial(material, stem);
+            writtenMaterials.emplace(cacheKey, path);
+            applied.push_back(path);
         }
+        return applied;
+    };
 
-        MeshRendererComponent renderer(mesh.bounds);
-        renderer.meshAssetPath = modelPortable;
-        renderer.meshImported = true;
-        renderer.submeshCount = static_cast<int>(mesh.submeshes.size());
-        renderer.appliedMaterialPaths = applied;
-        // The model keeps the materials too, so dropping the mesh itself into a scene is textured.
-        if (!MeshSettings::SaveDefaultMaterials(copied, applied, error)) {
-            outResult.warnings.push_back(error);
-        }
+    struct PrefabPart {
+        std::string name;
+        std::string meshPath;
+        AABB bounds;
+        int submeshCount = 0;
+        std::vector<std::string> materials;
+        Vec3 position{0.0f, 0.0f, 0.0f};
+    };
+    // One prefab per model: a root node with a child per mesh (one child unless an FBX was split into its meshes).
+    auto writePrefab = [&](const std::string& modelStem, const std::vector<PrefabPart>& parts) {
         PrefabAsset prefab;
         prefab.guid = PrefabOverrideSystem::GenerateId();
         prefab.name = SanitizeAssetName(modelStem);
@@ -777,22 +761,113 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         PrefabNode root;
         root.id = "node_0";
         root.name = prefab.name;
-        PrefabNode meshNode;
-        meshNode.id = "node_1";
-        meshNode.name = prefab.name + "_Mesh";
-        meshNode.parentId = root.id;
-        meshNode.components.push_back({"MeshRenderer", true, PrefabComponentIO::MeshRendererToJson(renderer)});
-        prefab.nodes = {root, meshNode};
+        prefab.nodes.push_back(root);
+        for (size_t i = 0; i < parts.size(); ++i) {
+            const PrefabPart& part = parts[i];
+            MeshRendererComponent renderer(part.bounds);
+            renderer.meshAssetPath = part.meshPath;
+            renderer.meshImported = true;
+            renderer.submeshCount = part.submeshCount;
+            renderer.appliedMaterialPaths = part.materials;
+            PrefabNode meshNode;
+            meshNode.id = "node_" + std::to_string(i + 1);
+            meshNode.name = parts.size() == 1 ? prefab.name + "_Mesh" : SanitizeAssetName(part.name);
+            meshNode.parentId = root.id;
+            meshNode.localTransform.position = part.position;
+            meshNode.components.push_back({"MeshRenderer", true, PrefabComponentIO::MeshRendererToJson(renderer)});
+            prefab.nodes.push_back(std::move(meshNode));
+        }
         fs::path prefabPath = folder / "Prefabs" / (prefab.name + ".hpprefab");
         for (int n = 2; fs::exists(prefabPath, ec); ++n) {
             prefabPath = folder / "Prefabs" / (prefab.name + "_" + std::to_string(n) + ".hpprefab");
         }
         fs::create_directories(prefabPath.parent_path(), ec);
+        std::string error;
         if (!PrefabSerializer::Serialize(prefab, prefabPath, error)) {
+            outResult.warnings.push_back(error);
+            return;
+        }
+        outResult.prefabs.push_back(AssetPathPolicy::ToPortableKey(projectRoot, prefabPath.generic_string()));
+    };
+
+    for (const fs::path& model : models) {
+        std::string error;
+        const std::string modelStem = model.stem().string();
+        const bool gltf = Ext(model) == ".gltf" || Ext(model) == ".glb";
+        std::vector<SourceMaterial> gltfMaterials;
+        std::vector<FbxMaterialInfo> fbxMaterials;
+        if (gltf && !ReadGltfMaterials(model, gltfMaterials, error)) {
+            outResult.warnings.push_back(model.filename().string() + ": " + error);
+        } else if (Ext(model) == ".fbx" && !ReadFbxMaterials(model, fbxMaterials, error)) {
+            outResult.warnings.push_back(model.filename().string() + ": " + error);
+        }
+
+        // An FBX holding several meshes (a kit of pieces) becomes one model per mesh, each placed where it was.
+        if (Ext(model) == ".fbx") {
+            std::vector<FbxMeshPart> fbxParts;
+            FbxStaticImportResult meta;
+            if (FbxStaticImporter::LoadParts(model, FbxSpaceConversion::Auto, fbxParts, meta, error) &&
+                fbxParts.size() > 1) {
+                std::vector<PrefabPart> parts;
+                const fs::path partFolder = folder / "Models" / SanitizeAssetName(modelStem);
+                fs::create_directories(partFolder, ec);
+                for (const FbxMeshPart& fbxPart : fbxParts) {
+                    std::vector<std::string> names;
+                    for (const MeshData::Submesh& submesh : fbxPart.mesh.submeshes) {
+                        names.push_back(submesh.name);
+                    }
+                    const fs::path partFile = partFolder / (SanitizeAssetName(fbxPart.name) + ".glb");
+                    if (!Gltf::WriteGlb(partFile, fbxPart.mesh, names, error)) {
+                        outResult.warnings.push_back(error);
+                        continue;
+                    }
+                    PrefabPart part;
+                    part.name = fbxPart.name;
+                    part.meshPath = AssetPathPolicy::ToPortableKey(projectRoot, partFile.generic_string());
+                    part.bounds = fbxPart.mesh.bounds;
+                    part.submeshCount = static_cast<int>(fbxPart.mesh.submeshes.size());
+                    part.materials = materialsFor(fbxPart.mesh, model, modelStem, {}, gltfMaterials, fbxMaterials);
+                    part.position = fbxPart.origin;
+                    if (!MeshSettings::SaveDefaultMaterials(partFile, part.materials, error)) {
+                        outResult.warnings.push_back(error);
+                    }
+                    outResult.models.push_back(part.meshPath);
+                    parts.push_back(std::move(part));
+                }
+                usedFiles.push_back(model);
+                outResult.warnings.push_back(model.filename().string() + " held " + std::to_string(fbxParts.size()) +
+                                             " meshes; each was imported as its own model.");
+                writePrefab(modelStem, parts);
+                continue;
+            }
+        }
+
+        fs::path copied;
+        if (!CopyModel(model, folder / "Models", copied, usedFiles, error)) {
             outResult.warnings.push_back(error);
             continue;
         }
-        outResult.prefabs.push_back(AssetPathPolicy::ToPortableKey(projectRoot, prefabPath.generic_string()));
+        usedFiles.push_back(model);
+        MeshData mesh;
+        std::vector<int> slotMaterials;
+        const bool loaded = gltf ? ModelImporter::LoadGLTF(copied, mesh, error, &slotMaterials)
+                                 : ModelImporter::LoadModel(copied, mesh, error);
+        if (!loaded) {
+            outResult.warnings.push_back(model.filename().string() + ": " + error);
+            continue;
+        }
+        PrefabPart part;
+        part.name = modelStem;
+        part.meshPath = AssetPathPolicy::ToPortableKey(projectRoot, copied.generic_string());
+        part.bounds = mesh.bounds;
+        part.submeshCount = static_cast<int>(mesh.submeshes.size());
+        part.materials = materialsFor(mesh, model, modelStem, slotMaterials, gltfMaterials, fbxMaterials);
+        outResult.models.push_back(part.meshPath);
+        // The model keeps the materials too, so dropping the mesh itself into a scene is textured.
+        if (!MeshSettings::SaveDefaultMaterials(copied, part.materials, error)) {
+            outResult.warnings.push_back(error);
+        }
+        writePrefab(modelStem, {part});
     }
 
     // Texture sets no model used are surface materials (Megascans surfaces, trim sheets).

@@ -1,4 +1,5 @@
 #include "Assets/AssetIntake.h"
+#include "Assets/GltfDocument.h"
 #include "Assets/ModelImporter.h"
 #include "UI/MaterialEditor/MaterialAssetSerializer.h"
 #include "UI/MaterialEditor/MaterialGraphEvaluator.h"
@@ -209,7 +210,7 @@ bool TestStaticGltfLoad(const fs::path& scratch) {
     std::vector<int> slots;
     std::string error;
     ok &= Check(ModelImporter::LoadGLTF(glb, mesh, error, &slots), "glTF loads: " + error);
-    ok &= Check(mesh.vertices.size() == 9, "every mesh in the scene is imported, not only meshes[0]");
+    ok &= Check(mesh.vertices.size() == 6, "every mesh in the scene is imported, not only meshes[0], and primitives sharing vertices load them once");
     ok &= Check(mesh.submeshes.size() == 2 && slots == std::vector<int>({0, 1}),
                 "one submesh per glTF material, slot order by first use");
     ok &= Check(mesh.submeshes.size() == 2 && mesh.submeshes[0].indexCount == 6 &&
@@ -219,6 +220,17 @@ bool TestStaticGltfLoad(const fs::path& scratch) {
                     std::abs(mesh.vertices[0].texCoord[0] - 0.25f) < 1e-6f &&
                     std::abs(mesh.vertices[0].texCoord[1] - 0.5f) < 1e-6f,
                 "node transforms are baked and UVs are kept");
+
+    // Split FBX meshes are written as GLB; reading one back must give the same geometry and slots.
+    const fs::path written = scratch / "Written.glb";
+    ok &= Check(Hephaestus::Gltf::WriteGlb(written, mesh, {"Painted Metal", "Glass"}, error), "GLB writes: " + error);
+    MeshData reread;
+    std::vector<int> rereadSlots;
+    ok &= Check(ModelImporter::LoadGLTF(written, reread, error, &rereadSlots) &&
+                    reread.vertices.size() == mesh.vertices.size() && reread.indices == mesh.indices &&
+                    reread.submeshes.size() == 2 && reread.submeshes[1].name == "Glass" &&
+                    std::abs(reread.vertices[0].texCoord[0] - 0.25f) < 1e-6f,
+                "a written GLB reads back with the same geometry, UVs and material slots");
     return ok;
 }
 

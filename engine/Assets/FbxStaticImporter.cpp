@@ -178,6 +178,77 @@ bool AppendMeshInstance(ufbx_node* node,
 
 } // namespace
 
+bool FbxStaticImporter::LoadParts(const std::filesystem::path& path,
+                                  FbxSpaceConversion spaceConversion,
+                                  std::vector<FbxMeshPart>& outParts,
+                                  FbxStaticImportResult& outMeta,
+                                  std::string& outError) {
+    outParts.clear();
+    outMeta = {};
+    outError.clear();
+    FbxDocument document;
+    FbxLoadSettings settings;
+    settings.spaceConversion = spaceConversion;
+    if (!document.Load(path, settings, outError)) {
+        return false;
+    }
+    ufbx_scene* scene = document.Scene();
+    outMeta.containsSkin = document.ContainsSkin();
+    bool warnedExtraUv = false;
+    std::vector<std::string> names;
+    for (size_t i = 0; i < scene->nodes.count; ++i) {
+        ufbx_node* node = scene->nodes.data[i];
+        if (!node || !node->mesh) {
+            continue;
+        }
+        FbxMeshPart part;
+        Vec3 minB(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                  std::numeric_limits<float>::max());
+        Vec3 maxB(-minB.x, -minB.y, -minB.z);
+        AppendMeshInstance(node, part.mesh, minB, maxB, outMeta.warnings, warnedExtraUv);
+        if (part.mesh.indices.empty()) {
+            continue;
+        }
+        const Mat4 nodeWorld = FbxDocument::ToMat4(node->node_to_world);
+        part.origin = Vec3(nodeWorld.m[12], nodeWorld.m[13], nodeWorld.m[14]);
+        const float big = std::numeric_limits<float>::max();
+        Vec3 lo(big, big, big);
+        Vec3 hi(-big, -big, -big);
+        for (Vertex& vertex : part.mesh.vertices) {
+            vertex.pos[0] -= part.origin.x;
+            vertex.pos[1] -= part.origin.y;
+            vertex.pos[2] -= part.origin.z;
+            ExpandBounds(lo, hi, Vec3(vertex.pos[0], vertex.pos[1], vertex.pos[2]));
+        }
+        part.mesh.bounds = AABB(lo, hi);
+        for (MeshData::Submesh& submesh : part.mesh.submeshes) {
+            Vec3 subLo(big, big, big);
+            Vec3 subHi(-big, -big, -big);
+            for (uint32_t k = 0; k < submesh.indexCount; ++k) {
+                const Vertex& v = part.mesh.vertices[part.mesh.indices[submesh.indexOffset + k]];
+                ExpandBounds(subLo, subHi, Vec3(v.pos[0], v.pos[1], v.pos[2]));
+            }
+            submesh.bounds = AABB(subLo, subHi);
+        }
+        std::string name = FbxDocument::ToString(node->name);
+        if (name.empty()) {
+            name = "Mesh";
+        }
+        std::string unique = name;
+        for (int n = 2; std::find(names.begin(), names.end(), unique) != names.end(); ++n) {
+            unique = name + "_" + std::to_string(n);
+        }
+        names.push_back(unique);
+        part.name = unique;
+        outParts.push_back(std::move(part));
+    }
+    if (outParts.empty()) {
+        outError = "FBX file contains no mesh.";
+        return false;
+    }
+    return true;
+}
+
 bool FbxStaticImporter::Load(const std::filesystem::path& path,
                              FbxSpaceConversion spaceConversion,
                              MeshData& outMesh,

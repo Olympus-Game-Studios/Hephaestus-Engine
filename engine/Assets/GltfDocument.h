@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../Core/Math.h"
+#include "MeshAsset.h"
 
 #include <nlohmann/json.hpp>
 
@@ -69,6 +70,11 @@ struct ImageSource {
     std::filesystem::path file;
     bool Exists() const { return !embedded.empty() || !file.empty(); }
 };
+
+/// Writes mesh as a single-node GLB with one primitive per submesh; primitive i uses material i, named
+/// materialNames[i] (so the static glTF loader gives the same slots back).
+bool WriteGlb(const std::filesystem::path& path, const MeshData& mesh, const std::vector<std::string>& materialNames,
+              std::string& errorMessage);
 
 /// Resolves textures[textureIndex] to its image. Returns an empty source when it cannot.
 ImageSource ReadTextureImage(const nlohmann::json& root,

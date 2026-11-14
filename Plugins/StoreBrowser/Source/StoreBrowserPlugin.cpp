@@ -22,6 +22,7 @@
 #include <QPalette>
 #include <QSvgRenderer>
 #include <QPixmap>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
@@ -200,6 +201,11 @@ public:
                               this);
         m_status->setWordWrap(true);
         m_status->setContentsMargins(6, 2, 6, 4);
+        m_progress = new QProgressBar(this);
+        m_progress->setTextVisible(true);
+        m_progress->setAlignment(Qt::AlignCenter);
+        m_progress->setVisible(false);
+        layout->addWidget(m_progress);
         layout->addWidget(m_status);
 
         connect(back, &QToolButton::clicked, m_view, &QWebEngineView::back);
@@ -215,6 +221,22 @@ public:
     const Store& StoreInfo() const { return m_store; }
     QWebEnginePage* Page() const { return m_view->page(); }
     void SetStatus(const QString& text) { m_status->setText(text); }
+    /// A labelled bar for a download (0-100) or an import; busy (-1) while the size is not known yet.
+    void ShowProgress(const QString& text, int percent) {
+        m_progress->setRange(0, percent < 0 ? 0 : 100);
+        if (percent >= 0) {
+            m_progress->setValue(percent);
+        }
+        m_progress->setFormat(text);
+        m_progress->setVisible(true);
+    }
+    void HideProgress() { m_progress->setVisible(false); }
+    /// The import runs on the UI thread, so the bar is painted before it starts.
+    void ShowImporting(const QString& title) {
+        ShowProgress(tr("Importing %1...").arg(title), 100);
+        m_progress->repaint();
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    }
     /// The asset's name from the page it was downloaded from ("Grenades pack | Fab" → "Grenades pack").
     QString AssetTitle() const {
         QString title = m_view->title();
@@ -238,6 +260,7 @@ private:
     QWebEngineView* m_view = nullptr;
     QLineEdit* m_address = nullptr;
     QLabel* m_status = nullptr;
+    QProgressBar* m_progress = nullptr;
 };
 
 class StoreBrowserPlugin final : public IHephaestusPlugin {
@@ -361,10 +384,11 @@ private:
         const QString pageUrl = panel->PageUrl();
         QPointer<StorePanel> target = panel;
         panel->SetStatus(tr("Downloading %1...").arg(title));
+        panel->ShowProgress(tr("Downloading %1...").arg(title), -1);
         QObject::connect(download, &QWebEngineDownloadRequest::receivedBytesChanged, download, [download, target, title] {
             if (target && download->totalBytes() > 0) {
-                target->SetStatus(tr("Downloading %1... %2%").arg(title).arg(
-                    download->receivedBytes() * 100 / download->totalBytes()));
+                target->ShowProgress(tr("Downloading %1... %p%").arg(title),
+                                     static_cast<int>(download->receivedBytes() * 100 / download->totalBytes()));
             }
         });
         QObject::connect(download, &QWebEngineDownloadRequest::isFinishedChanged, download,
@@ -373,6 +397,7 @@ private:
                 return;
             }
             if (download->state() != QWebEngineDownloadRequest::DownloadCompleted) {
+                target->HideProgress();
                 target->SetStatus(tr("Download of %1 did not finish: %2").arg(title, download->interruptReasonString()));
                 return;
             }
@@ -380,13 +405,18 @@ private:
             const Store& store = target->StoreInfo();
             Credit credit{title, pageUrl, {}, {}, QString::fromUtf8(store.license), QString::fromUtf8(store.licenseUrl)};
             if (!store.sketchfabCredits) {
+                target->ShowImporting(title);
                 target->SetStatus(Import(store, path, credit));
+                target->HideProgress();
                 QFile::remove(path);
                 return;
             }
+            target->ShowProgress(tr("Reading %1's author and licence...").arg(title), -1);
             LookUpSketchfabCredit(credit, [this, target, path](const Credit& found) {
                 if (target) {
+                    target->ShowImporting(found.title);
                     target->SetStatus(Import(target->StoreInfo(), path, found));
+                    target->HideProgress();
                 }
                 QFile::remove(path);
             });

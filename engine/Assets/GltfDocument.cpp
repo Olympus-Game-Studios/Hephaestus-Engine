@@ -454,6 +454,97 @@ bool ReadOptionalVecAttribute(const json& root,
     return true;
 }
 
+bool WriteGlb(const std::filesystem::path& path, const MeshData& mesh, const std::vector<std::string>& materialNames,
+              std::string& errorMessage) {
+    std::vector<uint8_t> bin;
+    json views = json::array();
+    json accessors = json::array();
+    auto append = [&](const void* data, size_t size, int target) {
+        while (bin.size() % 4) bin.push_back(0);
+        const size_t offset = bin.size();
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        bin.insert(bin.end(), bytes, bytes + size);
+        views.push_back({{"buffer", 0}, {"byteOffset", offset}, {"byteLength", size}, {"target", target}});
+        return static_cast<int>(views.size() - 1);
+    };
+    const size_t count = mesh.vertices.size();
+    std::vector<float> positions(count * 3), normals(count * 3), uvs(count * 2);
+    Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+    for (size_t i = 0; i < count; ++i) {
+        const Vertex& v = mesh.vertices[i];
+        for (int k = 0; k < 3; ++k) {
+            positions[i * 3 + k] = v.pos[k];
+            normals[i * 3 + k] = v.normal[k];
+        }
+        uvs[i * 2] = v.texCoord[0];
+        uvs[i * 2 + 1] = v.texCoord[1];
+        lo = Vec3(std::min(lo.x, v.pos[0]), std::min(lo.y, v.pos[1]), std::min(lo.z, v.pos[2]));
+        hi = Vec3(std::max(hi.x, v.pos[0]), std::max(hi.y, v.pos[1]), std::max(hi.z, v.pos[2]));
+    }
+    if (count == 0 || mesh.indices.empty()) {
+        errorMessage = "Mesh has no geometry to write";
+        return false;
+    }
+    const int positionView = append(positions.data(), positions.size() * sizeof(float), 34962);
+    accessors.push_back({{"bufferView", positionView}, {"componentType", kComponentFloat}, {"count", count},
+                         {"type", "VEC3"}, {"min", {lo.x, lo.y, lo.z}}, {"max", {hi.x, hi.y, hi.z}}});
+    const int normalView = append(normals.data(), normals.size() * sizeof(float), 34962);
+    accessors.push_back({{"bufferView", normalView}, {"componentType", kComponentFloat}, {"count", count},
+                         {"type", "VEC3"}});
+    const int uvView = append(uvs.data(), uvs.size() * sizeof(float), 34962);
+    accessors.push_back({{"bufferView", uvView}, {"componentType", kComponentFloat}, {"count", count},
+                         {"type", "VEC2"}});
+    json primitives = json::array();
+    json materials = json::array();
+    std::vector<MeshData::Submesh> submeshes = mesh.submeshes;
+    if (submeshes.empty()) {
+        MeshData::Submesh whole;
+        whole.indexCount = static_cast<uint32_t>(mesh.indices.size());
+        submeshes.push_back(whole);
+    }
+    for (size_t s = 0; s < submeshes.size(); ++s) {
+        const MeshData::Submesh& submesh = submeshes[s];
+        const int indexView = append(mesh.indices.data() + submesh.indexOffset,
+                                     submesh.indexCount * sizeof(uint32_t), 34963);
+        accessors.push_back({{"bufferView", indexView}, {"componentType", kComponentUInt},
+                             {"count", submesh.indexCount}, {"type", "SCALAR"}});
+        primitives.push_back({{"attributes", {{"POSITION", 0}, {"NORMAL", 1}, {"TEXCOORD_0", 2}}},
+                              {"indices", static_cast<int>(accessors.size() - 1)},
+                              {"material", static_cast<int>(s)}});
+        materials.push_back({{"name", s < materialNames.size() ? materialNames[s] : "Material " + std::to_string(s)}});
+    }
+    while (bin.size() % 4) bin.push_back(0);
+    const json root = {
+        {"asset", {{"version", "2.0"}, {"generator", "Hephaestus Engine"}}},
+        {"scene", 0},
+        {"scenes", {{{"nodes", {0}}}}},
+        {"nodes", {{{"mesh", 0}}}},
+        {"meshes", {{{"primitives", primitives}}}},
+        {"materials", materials},
+        {"buffers", {{{"byteLength", bin.size()}}}},
+        {"bufferViews", views},
+        {"accessors", accessors},
+    };
+    std::string text = root.dump();
+    while (text.size() % 4) text.push_back(' ');
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    auto u32 = [&](uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+    u32(0x46546C67);
+    u32(2);
+    u32(static_cast<uint32_t>(12 + 8 + text.size() + 8 + bin.size()));
+    u32(static_cast<uint32_t>(text.size()));
+    u32(0x4E4F534A);
+    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    u32(static_cast<uint32_t>(bin.size()));
+    u32(0x004E4942);
+    out.write(reinterpret_cast<const char*>(bin.data()), static_cast<std::streamsize>(bin.size()));
+    if (!out) {
+        errorMessage = "Could not write " + path.string();
+        return false;
+    }
+    return true;
+}
+
 ImageSource ReadTextureImage(const json& root,
                              const std::vector<std::vector<uint8_t>>& buffers,
                              const std::filesystem::path& gltfPath,
