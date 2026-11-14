@@ -21,8 +21,53 @@ struct GeneratorContext {
     MaterialShaderGenerationResult result;
     std::unordered_map<PinID, Expression> cache;
     std::unordered_set<PinID> active;
+    std::unordered_set<std::string> customFunctions;
     int tempIndex = 0;
 };
+
+/// Replaces {0}..{9} with the inputs' code and the named builtins (MaterialNodeDefinitions.h:CustomPinDefinition).
+std::string ExpandCustomGlsl(const std::string& text, const std::vector<std::string>& inputs) {
+    static const std::pair<const char*, const char*> builtins[] = {
+        {"uv", "fragTexCoord"},
+        {"worldPos", "fragWorldPos"},
+        {"normal", "N"},
+        {"viewDir", "normalize(ubo.viewPos - fragWorldPos)"},
+        {"cameraPos", "ubo.viewPos"},
+        {"time", "ubo.time"},
+        {"objectPos", "fragObjectPos"},
+        {"screenPos", "gl_FragCoord"},
+    };
+    std::string out;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const size_t close = text[i] == '{' ? text.find('}', i) : std::string::npos;
+        if (close == std::string::npos) {
+            out += text[i];
+            continue;
+        }
+        const std::string name = text.substr(i + 1, close - i - 1);
+        std::string replacement;
+        bool known = false;
+        if (name.size() == 1 && name[0] >= '0' && name[0] <= '9') {
+            const size_t index = static_cast<size_t>(name[0] - '0');
+            known = index < inputs.size();
+            if (known) replacement = "(" + inputs[index] + ")";
+        } else {
+            for (const auto& [key, code] : builtins) {
+                if (name == key) {
+                    replacement = std::string("(") + code + ")";
+                    known = true;
+                }
+            }
+        }
+        if (!known) {
+            out += text[i];
+            continue;
+        }
+        out += replacement;
+        i = close;
+    }
+    return out;
+}
 
 std::string GlslType(ValueType type) {
     switch (type) {
@@ -291,7 +336,6 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
     }
     case NodeType::Transform: expression = input(0, ValueType::Float3); break;
     case NodeType::TexCoord: expression = {ValueType::Float2, "fragTexCoord"}; break;
-    case NodeType::ScreenPosition: expression = {ValueType::Float4, "gl_FragCoord"}; break;
     case NodeType::TextureTilingOffset:
         expression = MakeTemp(ctx, ValueType::Float2, vector(0, ValueType::Float2, "fragTexCoord") + " * " +
                                                           vector(1, ValueType::Float2, "vec2(1.0)") + " + " +
@@ -300,33 +344,6 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
     case NodeType::NormalUnpack:
         expression = MakeTemp(ctx, ValueType::Float3, "normalize(" + vector(0, ValueType::Float3) + " * 2.0 - 1.0)");
         break;
-    case NodeType::Noise:
-        expression = scalarCall("fract(sin(dot(" + vector(0, ValueType::Float2, "fragTexCoord") + " * " + scalar(1, "1.0") +
-                                ", vec2(12.9898, 78.233))) * 43758.5453)");
-        break;
-    case NodeType::Gradient:
-        expression = scalarCall(node->operation == "Radial"
-                                    ? "length(" + vector(0, ValueType::Float2, "fragTexCoord") + " - vec2(0.5)) * 2.0"
-                                    : vector(0, ValueType::Float2, "fragTexCoord") + ".x");
-        break;
-    case NodeType::Fresnel:
-        expression = scalarCall("pow(1.0 - max(dot(normalize(" + vector(0, ValueType::Float3, "N") +
-                                "), normalize(ubo.viewPos - fragWorldPos)), 0.0), max(" + scalar(1, "5.0") + ", 0.001))");
-        break;
-    case NodeType::UVDistortion:
-        expression = MakeTemp(ctx, ValueType::Float2, vector(0, ValueType::Float2, "fragTexCoord") + " + " +
-                                                          vector(1, ValueType::Float2) + " * " + scalar(2, "1.0"));
-        break;
-    case NodeType::Time: expression = {ValueType::Float1, "ubo.time"}; break;
-    case NodeType::CameraVector:
-    case NodeType::ViewDirection: expression = {ValueType::Float3, "normalize(ubo.viewPos - fragWorldPos)"}; break;
-    case NodeType::ReflectionVector:
-        expression = MakeTemp(ctx, ValueType::Float3, "reflect(-normalize(ubo.viewPos - fragWorldPos), normalize(" +
-                                                          vector(0, ValueType::Float3, "N") + "))");
-        break;
-    case NodeType::WorldPosition: expression = {ValueType::Float3, "fragWorldPos"}; break;
-    case NodeType::ObjectPosition: expression = {ValueType::Float3, "fragObjectPos"}; break;
-    case NodeType::DistanceToCamera: expression = scalarCall("length(ubo.viewPos - fragWorldPos)"); break;
     case NodeType::If:
         expression = scalarCall("(" + scalar(0) + " > " + scalar(1) + " ? " + scalar(2) + " : " + scalar(3) + ")");
         break;
@@ -358,6 +375,28 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
                                                           ", 1.0) + 0.5, 0.0, 1.0))");
         break;
     case NodeType::StaticSwitchParameter: expression = node->boolValue ? input(1) : input(0); break;
+    case NodeType::Custom: {
+        const CustomNodeDefinition* custom = FindCustomNode(node->serializedType);
+        const int outputIndex = OutputIndex(*node, outputPin);
+        if (!custom || outputIndex >= static_cast<int>(custom->outputs.size())) {
+            ctx.result.ok = false;
+            ctx.result.diagnostics.push_back("The plugin providing the " + node->serializedType +
+                                             " node is not loaded.");
+            break;
+        }
+        std::vector<std::string> inputs;
+        for (size_t i = 0; i < custom->inputs.size(); ++i) {
+            const CustomPinDefinition& pin = custom->inputs[i];
+            const std::string unconnected = pin.glsl.empty() ? std::string() : ExpandCustomGlsl(pin.glsl, {});
+            inputs.push_back(CoerceExpression(input(static_cast<int>(i), pin.valueType, unconnected), pin.valueType));
+        }
+        if (!custom->functions.empty() && ctx.customFunctions.insert(custom->typeName).second) {
+            ctx.result.declarations += custom->functions + "\n";
+        }
+        const CustomPinDefinition& output = custom->outputs[static_cast<size_t>(outputIndex)];
+        expression = MakeTemp(ctx, output.valueType, ExpandCustomGlsl(output.glsl, inputs));
+        break;
+    }
     case NodeType::MaterialOutput:
     case NodeType::Unknown:
         ctx.result.ok = false;

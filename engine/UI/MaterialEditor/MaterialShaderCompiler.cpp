@@ -1,6 +1,7 @@
 #include "MaterialShaderCompiler.h"
 
 #include "MaterialShaderGenerator.h"
+#include "../../Core/AppPaths.h"
 
 #include <fstream>
 #include <iterator>
@@ -109,10 +110,18 @@ bool MaterialShaderCompilerAvailable() {
 }
 
 std::filesystem::path FindMaterialShaderSourceDirectory() {
-    for (const char* candidate : {"shaders/source", "../shaders/source", "build/Release/shaders/source",
-                                  "../build/Release/shaders/source"}) {
+    const std::filesystem::path executable = Hephaestus::ExecutableDirectory();
+    std::vector<std::filesystem::path> candidates;
+    if (!executable.empty()) {
+        candidates.push_back(executable / "shaders/source");
+        candidates.push_back(executable.parent_path() / "shaders/source");
+    }
+    for (const char* relative : {"shaders/source", "build/Release/shaders/source"}) {
+        candidates.emplace_back(relative);
+    }
+    for (const std::filesystem::path& candidate : candidates) {
         std::error_code ec;
-        if (std::filesystem::exists(std::filesystem::path(candidate) / kSurfaceShader, ec)) {
+        if (std::filesystem::exists(candidate / kSurfaceShader, ec)) {
             return std::filesystem::absolute(candidate, ec);
         }
     }

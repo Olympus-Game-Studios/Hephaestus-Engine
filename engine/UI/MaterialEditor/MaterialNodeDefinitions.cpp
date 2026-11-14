@@ -1,6 +1,7 @@
 #include "MaterialNodeDefinitions.h"
 
 #include <array>
+#include <memory>
 
 namespace MaterialEditor {
 namespace {
@@ -64,20 +65,8 @@ const std::vector<NodeDefinition>& Definitions() {
         {NodeType::BreakVector, "BreakVector", "Break Vector", "Utility", "Splits a vector into scalar components.", {{"Value", ValueType::Float4}}, {{"R", ValueType::Float1}, {"G", ValueType::Float1}, {"B", ValueType::Float1}, {"A", ValueType::Float1}}},
         {NodeType::Transform, "Transform", "Transform", "Utility", "Transforms a vector between spaces.", {{"Value", ValueType::Float3}}, {{"Result", ValueType::Float3}}},
         {NodeType::TexCoord, "TexCoord", "TexCoord", "Utility", "Mesh UV coordinates.", NoPins(), {{"UV", ValueType::Float2}}},
-        {NodeType::ScreenPosition, "ScreenPosition", "Screen Position", "Utility", "Current fragment screen position.", NoPins(), {{"Position", ValueType::Float4}}},
 
-        {NodeType::Noise, "Noise", "Noise", "Procedural", "Procedural value noise.", {{"UV", ValueType::Float2}, {"Scale", ValueType::Float1}}, {{"Value", ValueType::Float1}}},
-        {NodeType::Gradient, "Gradient", "Gradient", "Procedural", "Linear or radial gradient.", {{"UV", ValueType::Float2}}, {{"Value", ValueType::Float1}}},
-        {NodeType::Fresnel, "Fresnel", "Fresnel", "Procedural", "View-dependent edge falloff.", {{"Normal", ValueType::Float3}, {"Power", ValueType::Float1}}, {{"Value", ValueType::Float1}}},
-        {NodeType::UVDistortion, "UVDistortion", "UV Distortion", "Procedural", "Offsets UVs by a distortion vector and strength.", {{"UV", ValueType::Float2}, {"Offset", ValueType::Float2}, {"Strength", ValueType::Float1}}, {{"UV", ValueType::Float2}}},
-        {NodeType::Time, "Time", "Time", "Procedural", "Engine time input.", NoPins(), {{"Seconds", ValueType::Float1}}},
 
-        {NodeType::CameraVector, "CameraVector", "Camera Vector", "Inputs", "Vector from surface to camera.", NoPins(), {{"Vector", ValueType::Float3}}},
-        {NodeType::ViewDirection, "ViewDirection", "View Direction", "Inputs", "Normalized view direction.", NoPins(), {{"Direction", ValueType::Float3}}},
-        {NodeType::ReflectionVector, "ReflectionVector", "Reflection Vector", "Inputs", "Reflection vector from view and normal.", {{"Normal", ValueType::Float3}}, {{"Vector", ValueType::Float3}}},
-        {NodeType::WorldPosition, "WorldPosition", "World Position", "Inputs", "Fragment world position.", NoPins(), {{"Position", ValueType::Float3}}},
-        {NodeType::ObjectPosition, "ObjectPosition", "Object Position", "Inputs", "Object origin position.", NoPins(), {{"Position", ValueType::Float3}}},
-        {NodeType::DistanceToCamera, "DistanceToCamera", "Distance To Camera", "Inputs", "Distance from fragment to camera.", NoPins(), {{"Distance", ValueType::Float1}}},
 
         {NodeType::If, "If", "If", "Logic", "Selects A or B depending on comparison.", {{"A", ValueType::Float1}, {"B", ValueType::Float1}, {"AGreater", ValueType::Float1}, {"ALessEqual", ValueType::Float1}}, {{"Result", ValueType::Float1}}},
         {NodeType::Step, "Step", "Step", "Logic", "Returns 0 below edge and 1 above.", {{"Edge", ValueType::Float1}, {"Value", ValueType::Float1}}, {{"Result", ValueType::Float1}}},
@@ -104,32 +93,128 @@ const NodeDefinition& GetNodeDefinition(NodeType type) {
     return unknown;
 }
 
+namespace {
+
+struct CustomNodeEntry {
+    CustomNodeDefinition custom;
+    NodeDefinition definition;
+};
+
+std::vector<std::unique_ptr<CustomNodeEntry>>& CustomNodes() {
+    static std::vector<std::unique_ptr<CustomNodeEntry>> nodes;
+    return nodes;
+}
+
+bool IsIdentifier(std::string_view name) {
+    if (name.empty() || name.size() > 64) return false;
+    for (char ch : name) {
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+const NodeDefinition& GetNodeDefinition(const Node& node) {
+    if (node.type == NodeType::Custom) {
+        if (const NodeDefinition* definition = FindNodeDefinition(node.serializedType)) {
+            return *definition;
+        }
+        return GetNodeDefinition(NodeType::Unknown);
+    }
+    return GetNodeDefinition(node.type);
+}
+
+const NodeDefinition* FindNodeDefinition(std::string_view typeName) {
+    for (const NodeDefinition& definition : Definitions()) {
+        if (definition.typeName == typeName) {
+            return &definition;
+        }
+    }
+    for (const auto& entry : CustomNodes()) {
+        if (entry->custom.typeName == typeName) {
+            return &entry->definition;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<const NodeDefinition*> GetPlaceableNodeDefinitions() {
+    std::vector<const NodeDefinition*> out;
+    for (const NodeDefinition& definition : Definitions()) {
+        if (definition.type != NodeType::MaterialOutput) {
+            out.push_back(&definition);
+        }
+    }
+    for (const auto& entry : CustomNodes()) {
+        out.push_back(&entry->definition);
+    }
+    return out;
+}
+
+bool RegisterCustomNode(CustomNodeDefinition definition, std::string& outError) {
+    NodeType coreType = NodeType::Unknown;
+    if (!IsIdentifier(definition.typeName)) {
+        outError = "A material node type name needs 1-64 letters, digits, '_' or '.'";
+        return false;
+    }
+    if (TryNodeTypeName(definition.typeName, coreType) || FindCustomNode(definition.typeName)) {
+        outError = "A material node named " + definition.typeName + " already exists";
+        return false;
+    }
+    if (definition.outputs.empty() || definition.inputs.size() > 10 || definition.outputs.size() > 8) {
+        outError = "A material node needs 1-8 outputs and at most 10 inputs";
+        return false;
+    }
+    for (const CustomPinDefinition& output : definition.outputs) {
+        if (output.glsl.empty() || output.valueType == ValueType::Sampler2D) {
+            outError = "Every output of " + definition.typeName + " needs a GLSL expression and a number type";
+            return false;
+        }
+    }
+    for (const CustomPinDefinition& input : definition.inputs) {
+        if (input.valueType == ValueType::Sampler2D) {
+            outError = "Inputs of " + definition.typeName + " must be number types";
+            return false;
+        }
+    }
+    auto entry = std::make_unique<CustomNodeEntry>();
+    entry->custom = std::move(definition);
+    if (entry->custom.displayName.empty()) entry->custom.displayName = entry->custom.typeName;
+    if (entry->custom.category.empty()) entry->custom.category = "Plugins";
+    const CustomNodeDefinition& custom = entry->custom;
+    entry->definition.type = NodeType::Custom;
+    entry->definition.typeName = custom.typeName;
+    entry->definition.displayName = custom.displayName;
+    entry->definition.category = custom.category;
+    entry->definition.tooltip = custom.tooltip;
+    for (const CustomPinDefinition& pin : custom.inputs) entry->definition.inputs.push_back({pin.name, pin.valueType});
+    for (const CustomPinDefinition& pin : custom.outputs) entry->definition.outputs.push_back({pin.name, pin.valueType});
+    CustomNodes().push_back(std::move(entry));
+    return true;
+}
+
+void UnregisterCustomNodes(std::string_view owner) {
+    std::erase_if(CustomNodes(), [owner](const auto& entry) { return entry->custom.owner == owner; });
+}
+
+const CustomNodeDefinition* FindCustomNode(std::string_view typeName) {
+    for (const auto& entry : CustomNodes()) {
+        if (entry->custom.typeName == typeName) {
+            return &entry->custom;
+        }
+    }
+    return nullptr;
+}
+
 const std::vector<NodeDefinition>& GetAllNodeDefinitions() {
     return Definitions();
 }
 
 bool NodeAffectsRenderedMaterial(NodeType type) {
-    switch (type) {
-    case NodeType::TexCoord:
-    case NodeType::ScreenPosition:
-    case NodeType::Transform:
-    case NodeType::TextureTilingOffset:
-    case NodeType::Noise:
-    case NodeType::Gradient:
-    case NodeType::Fresnel:
-    case NodeType::UVDistortion:
-    case NodeType::Time:
-    case NodeType::CameraVector:
-    case NodeType::ViewDirection:
-    case NodeType::ReflectionVector:
-    case NodeType::WorldPosition:
-    case NodeType::ObjectPosition:
-    case NodeType::DistanceToCamera:
-    case NodeType::StaticSwitchParameter:
-        return false;
-    default:
-        return true;
-    }
+    return type != NodeType::Transform;
 }
 
 bool TextureNodeIsLinear(const Node& node) {

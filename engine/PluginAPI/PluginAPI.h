@@ -130,6 +130,34 @@ struct AutomationToolDescriptor {
     void* userData = nullptr;
 };
 
+/// The number types material node pins carry.
+enum class MaterialValueType : std::uint32_t { Float = 1, Float2 = 2, Float3 = 3, Float4 = 4 };
+
+/// One pin of a material node. For an output, `glsl` is the expression that computes it; for an input, the value
+/// used when nothing is connected (null means zero). Both may use {0}..{9} for the node's inputs (converted to
+/// their declared types) and {uv}, {worldPos}, {normal}, {viewDir}, {cameraPos}, {time} (seconds), {objectPos} and
+/// {screenPos} (gl_FragCoord).
+struct MaterialNodePin {
+    const char* name = nullptr;
+    MaterialValueType type = MaterialValueType::Float;
+    const char* glsl = nullptr;
+};
+
+/// A node for the Material Editor's graph. It is compiled into each material's own shader, so packaged games need
+/// nothing from the plugin; materials keep the node by typeName while the plugin is off.
+struct MaterialNodeDescriptor {
+    std::uint32_t structSize = sizeof(MaterialNodeDescriptor);
+    const char* typeName = nullptr;    // saved in materials, [A-Za-z0-9_.], unique across core and plugin nodes
+    const char* displayName = nullptr;
+    const char* category = nullptr;    // the library group; "Plugins" when null
+    const char* tooltip = nullptr;
+    const MaterialNodePin* inputs = nullptr;
+    std::uint32_t inputCount = 0;      // up to 10
+    const MaterialNodePin* outputs = nullptr;
+    std::uint32_t outputCount = 0;     // 1 to 8
+    const char* glslFunctions = nullptr; // optional GLSL functions the expressions call, added once per material
+};
+
 enum class SettingScope : std::uint32_t { Editor, Project };
 struct SettingDescriptor {
     const char* id = nullptr;
@@ -214,6 +242,13 @@ public:
     virtual bool CompleteCall(std::uint64_t callId, bool success, const char* resultJson) = 0;
 };
 
+/// Nodes a plugin adds to material graphs. They disappear from the editor when the plugin unloads.
+class IMaterialNodeService {
+public:
+    virtual ~IMaterialNodeService() = default;
+    virtual bool RegisterNode(const MaterialNodeDescriptor& descriptor) = 0;
+};
+
 class IPluginContext {
 public:
     virtual ~IPluginContext() = default;
@@ -228,6 +263,8 @@ public:
     /// Appended to API 1 after its first release (see IAssetService::ImportAssetPack); null where the host has
     /// no automation.
     virtual IAutomationToolService* AutomationTools() { return nullptr; }
+    /// Appended to API 1 after AutomationTools; null where the host has no Material Editor.
+    virtual IMaterialNodeService* MaterialNodes() { return nullptr; }
 };
 
 class IHephaestusPlugin {

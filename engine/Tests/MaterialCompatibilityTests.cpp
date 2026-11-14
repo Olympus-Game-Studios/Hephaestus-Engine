@@ -1,5 +1,6 @@
 #include "../UI/MaterialEditor/MaterialAssetSerializer.h"
 #include "../UI/MaterialEditor/MaterialGraphEvaluator.h"
+#include "../UI/MaterialEditor/MaterialNodeDefinitions.h"
 #include "../UI/MaterialEditor/MaterialShaderCompiler.h"
 #include "../UI/MaterialEditor/MaterialShaderGenerator.h"
 
@@ -449,6 +450,25 @@ bool TestCompiledMaterialShaders(const fs::path& root, const fs::path& outDir) {
     BuildMinimalGraphFromLegacyPbr(tinted, fixedGraph);
     ok &= Check(!GraphNeedsCompiledShader(fixedGraph), "a default graph draws with the standard shader");
 
+    std::string registerError;
+    CustomNodeDefinition timeNode;
+    timeNode.owner = "test.plugin";
+    timeNode.typeName = "TestTime";
+    timeNode.outputs = {{"Seconds", ValueType::Float1, "{time}"}};
+    CustomNodeDefinition noiseNode;
+    noiseNode.owner = "test.plugin";
+    noiseNode.typeName = "TestNoise";
+    noiseNode.category = "Procedural";
+    noiseNode.functions = "float testHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }";
+    noiseNode.inputs = {{"UV", ValueType::Float2, "{uv}"}, {"Scale", ValueType::Float1, "1.0"}};
+    noiseNode.outputs = {{"Value", ValueType::Float1, "testHash({0} * {1})"}};
+    ok &= Check(RegisterCustomNode(timeNode, registerError) && RegisterCustomNode(noiseNode, registerError),
+                "plugin nodes register: " + registerError);
+    ok &= Check(!RegisterCustomNode(timeNode, registerError), "a plugin node name can only be registered once");
+    CustomNodeDefinition clash = timeNode;
+    clash.typeName = "Multiply";
+    ok &= Check(!RegisterCustomNode(clash, registerError), "a plugin node cannot take a core node's name");
+
     Graph graph;
     Node& output = graph.CreateNode(NodeType::MaterialOutput);
     const std::vector<PinID> outputs = output.inputs;
@@ -464,11 +484,12 @@ bool TestCompiledMaterialShaders(const fs::path& root, const fs::path& outDir) {
     sample.resourcePath = "assets/textures/bark.png";
     const std::vector<PinID> sampleIn = sample.inputs;
     const PinID sampleRgb = sample.outputs[1];
-    Node& time = graph.CreateNode(NodeType::Time);
-    const PinID timeOut = time.outputs[0];
-    Node& noise = graph.CreateNode(NodeType::Noise);
-    const std::vector<PinID> noiseIn = noise.inputs;
-    const PinID noiseOut = noise.outputs[0];
+    Node* time = graph.CreateNodeOfType("TestTime");
+    const PinID timeOut = time ? time->outputs[0] : 0;
+    Node* noise = graph.CreateNodeOfType("TestNoise");
+    const std::vector<PinID> noiseIn = noise ? noise->inputs : std::vector<PinID>{0, 0};
+    const PinID noiseOut = noise ? noise->outputs[0] : 0;
+    ok &= Check(time && noise && noise->type == NodeType::Custom && noiseIn.size() == 2, "plugin nodes get their pins");
     Node& tint = graph.CreateNode(NodeType::ConstantVec3);
     tint.color = Float3{1.0f, 0.5f, 0.25f};
     const PinID tintOut = tint.outputs[0];
@@ -484,8 +505,10 @@ bool TestCompiledMaterialShaders(const fs::path& root, const fs::path& outDir) {
 
     const MaterialShaderGenerationResult generated = GenerateMaterialShader(graph);
     const std::string source = BuildMaterialGraphSource(generated);
-    ok &= Check(source.find("ubo.time") != std::string::npos && source.find("graphTextureSlots[0][0]") != std::string::npos,
-                "generated surface reads time and the graph's texture slot");
+    ok &= Check(source.find("ubo.time") != std::string::npos && source.find("graphTextureSlots[0][0]") != std::string::npos &&
+                    source.find("testHash(((fragTexCoord)) * (matNode_") != std::string::npos &&
+                    source.find("float testHash(vec2 p)") != std::string::npos,
+                "generated surface reads time, the graph's texture slot and the plugin node's GLSL:\n" + source);
 
     const MaterialShaderCompileResult compiled = CompileMaterialGraph(graph, root / "shaders");
     std::string diagnostics;
@@ -505,13 +528,34 @@ bool TestCompiledMaterialShaders(const fs::path& root, const fs::path& outDir) {
                     loaded.sourceHash == compiled.shader.sourceHash,
                 ".hemshader round trips: " + error);
 
-    Graph broken;
-    Node& brokenOutput = broken.CreateNode(NodeType::MaterialOutput);
-    const std::vector<PinID> brokenOutputs = brokenOutput.inputs;
-    Node& noise2 = broken.CreateNode(NodeType::Noise);
-    broken.CreateLink(noise2.outputs[0], brokenOutputs[0]);
-    ok &= Check(CompileMaterialGraph(broken, root / "missing-folder").diagnostics.size() > 0,
+    ok &= Check(CompileMaterialGraph(graph, root / "missing-folder").diagnostics.size() > 0,
                 "a missing shader source folder is reported, not ignored");
+
+    graph.SetHasSourceGraph(true);
+    const fs::path pluginMaterial = outDir / "plugin_nodes.hematerial";
+    MaterialComponent material;
+    ok &= Check(SaveMaterialAssetCompat(pluginMaterial, material, "PluginNodes", graph, {}, error),
+                "save a material using plugin nodes: " + error);
+    UnregisterCustomNodes("test.plugin");
+    MaterialComponent reloaded;
+    std::string displayName;
+    Graph withoutPlugin;
+    ok &= Check(LoadMaterialAssetCompat(pluginMaterial, reloaded, displayName, withoutPlugin, error),
+                "load it with the plugin off: " + error);
+    ok &= Check(fs::exists(Hephaestus::CompiledMaterialShaderPath(pluginMaterial)),
+                "saving with plugin nodes compiles the material's shader");
+    std::vector<std::string> shaderDiagnostics;
+    ok &= Check(SaveMaterialAssetCompat(pluginMaterial, reloaded, displayName, withoutPlugin, {}, error,
+                                        &shaderDiagnostics),
+                "resave: " + error);
+    ok &= Check(fs::exists(Hephaestus::CompiledMaterialShaderPath(pluginMaterial)) && !shaderDiagnostics.empty(),
+                "saving while the plugin is off keeps the last compiled shader and says why");
+    const json resavedJson = LoadJson(pluginMaterial);
+    int customNodes = 0;
+    for (const json& node : resavedJson["graph"]["nodes"]) {
+        if (node.value("type", "") == "TestNoise" || node.value("type", "") == "TestTime") ++customNodes;
+    }
+    ok &= Check(customNodes == 2, "plugin nodes survive a save while their plugin is off");
     return ok;
 }
 

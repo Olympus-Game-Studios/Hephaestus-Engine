@@ -63,6 +63,7 @@ private:
     bool RegisterImporter(const std::string&, const Plugins::ImporterDescriptor&);
     bool ImportAssetPack(const Plugins::AssetPackImportRequest&, Plugins::AssetPackImportResult&);
     bool RegisterSetting(const std::string&, const Plugins::SettingDescriptor&);
+    bool RegisterMaterialNode(const std::string& owner, const Plugins::MaterialNodeDescriptor& descriptor);
     std::uint64_t CreatePrimitive(Plugins::PrimitiveKind, const char*);
 
     QMainWindow* window_ = nullptr;

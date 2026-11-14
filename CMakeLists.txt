@@ -946,6 +946,23 @@ if(HEPHAESTUS_USE_QT)
         )
         add_dependencies(HephaestusEngine HephaestusMCP)
 
+        add_library(HephaestusMaterialNodes SHARED
+            Plugins/MaterialNodes/Source/MaterialNodesPlugin.cpp
+        )
+        target_include_directories(HephaestusMaterialNodes PRIVATE engine)
+        set_target_properties(HephaestusMaterialNodes PROPERTIES
+            OUTPUT_NAME "HephaestusMaterialNodes"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/MaterialNodes/bin"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/MaterialNodes/bin"
+        )
+        add_custom_command(TARGET HephaestusMaterialNodes POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/MaterialNodes/MaterialNodes.hpplugin"
+                "$<TARGET_FILE_DIR:HephaestusMaterialNodes>/../MaterialNodes.hpplugin"
+            VERBATIM
+        )
+        add_dependencies(HephaestusEngine HephaestusMaterialNodes)
+
         # Copy Qt DLLs to output directory (Windows)
         if(WIN32)
             # Get Qt binary directory

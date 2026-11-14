@@ -174,10 +174,15 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
             }
 
             NodeType nodeType = NodeType::MaterialOutput;
-            const bool recognized = TryNodeTypeFromString(typeString, nodeType);
+            bool recognized = TryNodeTypeFromString(typeString, nodeType);
+            if (!recognized && FindCustomNode(typeString)) {
+                nodeType = NodeType::Custom;
+                recognized = true;
+            }
             if (!recognized) {
                 nodeType = NodeType::Unknown;
-                warnings.emplace_back("Encountered unknown node type: " + typeString);
+                warnings.emplace_back("Encountered unknown node type: " + typeString +
+                                      " (a plugin node whose plugin is not loaded is kept as it is)");
             }
 
             std::string displayName = recognized ? "" : typeString;
@@ -185,7 +190,7 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
                 displayName = nodeVal["displayName"].get<std::string>();
             }
 
-            Node& node = outGraph.CreateNodeWithID(nodeId, nodeType, displayName);
+            Node& node = outGraph.CreateNodeWithID(nodeId, nodeType, displayName, typeString);
             node.serializedType = typeString;
 
             if (nodeVal.contains("scalar") && nodeVal["scalar"].is_number()) node.scalar = nodeVal["scalar"].get<float>();
@@ -369,7 +374,9 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
             MergeUnknownInto(nodeJson, node.unknownFields);
 
             const std::string typeString =
-                (node.type == NodeType::Unknown && !node.serializedType.empty()) ? node.serializedType : NodeTypeToString(node.type);
+                ((node.type == NodeType::Unknown || node.type == NodeType::Custom) && !node.serializedType.empty())
+                    ? node.serializedType
+                    : NodeTypeToString(node.type);
 
             nodeJson["id"] = node.id;
             nodeJson["type"] = typeString;
@@ -449,7 +456,13 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     std::vector<std::string> diagnostics;
     const std::filesystem::path shaderPath = Hephaestus::CompiledMaterialShaderPath(path);
     bool keepShader = false;
-    if (graph.HasSourceGraph() && !graph.IsLegacyMode() && GraphNeedsCompiledShader(graph)) {
+    const auto missingNode = std::find_if(graph.GetNodes().begin(), graph.GetNodes().end(),
+                                          [](const Node& node) { return node.type == NodeType::Unknown; });
+    if (missingNode != graph.GetNodes().end()) {
+        keepShader = true;
+        diagnostics.push_back("Kept the last compiled shader: the " + missingNode->serializedType +
+                              " node's plugin is not loaded, so the graph cannot be compiled.");
+    } else if (graph.HasSourceGraph() && !graph.IsLegacyMode() && GraphNeedsCompiledShader(graph)) {
         MaterialShaderCompileResult compiled = CompileMaterialGraph(graph, FindMaterialShaderSourceDirectory());
         diagnostics = std::move(compiled.diagnostics);
         std::string writeError;
@@ -533,6 +546,7 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
                                                    : type);
         node.resourcePath = path;
         node.worldAlignedScale = material.worldTextureScale;
+        node.boolValue = scalar || type == NodeType::NormalTextureSample;
         place(node, split ? kSampleX - 220.0f : kSampleX, y);
         const std::vector<PinID> outputs = node.outputs;
         if (outputs.empty()) {

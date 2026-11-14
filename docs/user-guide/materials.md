@@ -50,7 +50,7 @@ A tip for packed **ORM** textures (one image holding AO, Roughness and Metallic 
 
 ### Node categories
 
-The library groups nodes into **Inputs** (constants, camera and position values), **Parameters** (named values), **Textures** (sampling, tiling and offset, triplanar, normal unpacking), **Math**, **Utility** (masking, splitting and joining vectors, UVs), **Procedural** (noise, gradients, Fresnel, UV distortion, time), **Logic** (if, step, compare) and **Blend** (lerp, overlay, screen, height blend).
+The library groups nodes into **Inputs** (constants), **Parameters** (named values), **Textures** (sampling, tiling and offset, triplanar, normal unpacking), **Math**, **Utility** (masking, splitting and joining vectors, UVs), **Logic** (if, step, compare) and **Blend** (lerp, overlay, screen, height blend). Plugins add more, in these groups or their own (see Plugin nodes below).
 
 ### Blend modes
 
@@ -63,17 +63,26 @@ Pick one in **Blend Mode** under Details:
 
 Translucent and Additive only work on meshes that aren't skinned characters. In files, the mode is `"blendMode"`: `"masked"`, `"alphaBlend"` or `"additive"` (none means Opaque).
 
-## What the graph can't do yet
+## How a graph becomes a shader
 
-This is the important bit, so I'll be straight with you. Right now the graph is **worked out once, into a single set of PBR values and textures**, and that's what gets rendered. It isn't turned into a shader that runs for every pixel.
+When a graph only uses constants, colours and the material's texture maps (possibly tinted), it draws with the engine's standard surface shader, like every material always has. When it does anything per pixel, such as tiling or scrolling UVs, noise, Fresnel, or maths that mixes textures, saving it compiles it into its own shader. That shader is saved beside the material as `<name>.hemshader`, so the packaged game uses it without needing the editor. The status bar says **Compiled to its own shader** when that happens, the preview shows the compiled result live, and any shader errors appear in **Validation**. If a graph fails to compile, the material is still saved and draws without its per-pixel parts until you fix it.
 
-That means:
+The Content Browser hides `.hemshader` files and moves, renames and trashes them with their material.
 
-- **Textures, constants, colours and maths on those work great.** Tinting a texture, mixing two colours, scaling roughness: all fine.
-- **Nodes that need to change per pixel or over time don't affect the rendered result yet.** That's TexCoord, Screen Position, Transform, Texture Tiling Offset, Noise, Gradient, Fresnel, UV Distortion, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Static Switch Parameter. The library and the Add Node search label them **(no effect yet)**, and the Validation panel warns you when a graph uses one. You can still place and wire them, and they'll be ready when per pixel materials land, but today they won't animate or vary across a surface.
+### Plugin nodes
+
+The default library holds the basic nodes. More nodes come from plugins: the **Material Nodes** plugin that ships with Hephaestus adds Noise, Gradient, Fresnel, UV Distortion, Panner, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Screen Position. Turn it off in **Edit > Plugins** and materials that use its nodes keep them and keep their last compiled shader, so they still draw the same in the game; those nodes can't be edited or recompiled until it's back on.
+
+### Texture data
+
+**Texture Sample** and similar nodes have a **Linear data** box. Tick it for normal maps, roughness, metallic, AO and masks so they are read without colour conversion; leave it off for colour textures. The typed nodes (Normal Texture, Roughness Texture and so on) are always right.
+
+### What still isn't there
+
+- **Transform** passes its input through unchanged for now.
+- In a Masked material with its own shader, the cut-out *shadow* follows the base colour texture's alpha, not anything the graph does to it per pixel.
+- Skinned characters and particles draw with the standard surface, not a material's compiled shader.
 - **Scripts can't change materials while the game runs.** There's no material API in Lua yet.
-
-Per pixel materials are on the way. Until then, if a material looks different in the graph than you expected, check whether it relies on one of the nodes above.
 
 ## Older materials
 
