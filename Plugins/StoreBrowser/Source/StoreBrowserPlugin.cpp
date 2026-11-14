@@ -248,6 +248,8 @@ private:
         auto* panel = new StorePanel(*entry->store, nullptr);
         panel->setWindowFlag(Qt::Window);
         panel->setAttribute(Qt::WA_DeleteOnClose);
+        // A store window must not keep the editor running once the editor's own window is closed.
+        panel->setAttribute(Qt::WA_QuitOnClose, false);
         panel->setWindowTitle(QString::fromUtf8(entry->store->title));
         panel->setWindowIcon(QIcon(QDir(QString::fromUtf8(self->m_context->Project().PluginRoot()))
                                        .filePath("Resources/store-browser.svg")));
