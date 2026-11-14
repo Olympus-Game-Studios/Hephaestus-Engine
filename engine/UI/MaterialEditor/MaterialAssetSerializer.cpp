@@ -2,6 +2,7 @@
 #include "MaterialNodeDefinitions.h"
 #include "../../Assets/AssetPathPolicy.h"
 
+#include <algorithm>
 #include <fstream>
 #include <unordered_set>
 
@@ -108,9 +109,7 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("opacityMask") && root["opacityMask"].is_number()) outMaterial.opacityMask = root["opacityMask"].get<float>();
     if (root.contains("refraction") && root["refraction"].is_number()) outMaterial.refraction = root["refraction"].get<float>();
     if (root.contains("blendMode") && root["blendMode"].is_string()) {
-        const std::string mode = root["blendMode"].get<std::string>();
-        outMaterial.blendMode = mode == "additive" ? MaterialBlendMode::Additive
-            : mode == "alphaBlend" ? MaterialBlendMode::AlphaBlend : MaterialBlendMode::Opaque;
+        outMaterial.blendMode = MaterialBlendModeFromName(root["blendMode"].get<std::string>());
     }
 
     if (root.contains("useAlbedoTexture") && root["useAlbedoTexture"].is_boolean()) outMaterial.useAlbedoTexture = root["useAlbedoTexture"].get<bool>();
@@ -328,7 +327,7 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["opacityMask"] = material.opacityMask;
     root["refraction"] = material.refraction;
     if (material.blendMode != MaterialBlendMode::Opaque) {
-        root["blendMode"] = material.blendMode == MaterialBlendMode::Additive ? "additive" : "alphaBlend";
+        root["blendMode"] = MaterialBlendModeName(material.blendMode);
     } else {
         root.erase("blendMode");
     }
@@ -448,118 +447,157 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
 }
 
 void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& graph) {
+    const bool hadOriginalRoot = graph.HasOriginalRootJson();
+    json originalRoot = graph.GetOriginalRootJson();
     graph.Clear();
+    if (hadOriginalRoot) {
+        graph.SetOriginalRootJson(std::move(originalRoot));
+    }
     graph.SetLegacyMode(false);
     graph.SetGraphEditingEnabled(true);
     graph.SetHasSourceGraph(true);
 
-    Node& output = graph.CreateNode(NodeType::MaterialOutput);
-    output.posX = 450.0f;
-    output.posY = 200.0f;
-    // CreateNode may reallocate the node list, so keep copies rather than a reference to the output node.
-    const std::vector<PinID> outputInputs = output.inputs;
-    const float outputY = output.posY;
+    constexpr float kRowHeight = 120.0f;
+    constexpr float kInputX = 160.0f;
+    constexpr float kSampleX = -80.0f;
+    const MaterialComponent defaults;
 
-    auto connectScalar = [&](float value, PinID outputPin) {
-        Node& scalarNode = graph.CreateNode(NodeType::ConstantFloat);
-        scalarNode.scalar = value;
-        scalarNode.posX = 160.0f;
-        scalarNode.posY = outputY;
-        if (!scalarNode.outputs.empty()) {
-            graph.CreateLink(scalarNode.outputs[0], outputPin);
+    // CreateNode may reallocate the node list, so keep copies of pin ids rather than node references.
+    Node& outputNode = graph.CreateNode(NodeType::MaterialOutput);
+    const NodeID outputId = outputNode.id;
+    const std::vector<PinID> outputInputs = outputNode.inputs;
+    float rowY = 0.0f;
+
+    auto place = [](Node& node, float x, float y) {
+        node.posX = x;
+        node.posY = y;
+    };
+    auto link = [&](PinID from, size_t outputSlot) {
+        if (from != 0 && outputSlot < outputInputs.size()) {
+            graph.CreateLink(from, outputInputs[outputSlot]);
         }
     };
-
-    // A map read from G, B or A goes through Texture Sample > Break Vector so evaluating the graph keeps the channel.
-    auto connectMap = [&](NodeType singleChannelType, const std::string& path, uint32_t channel, float y,
-                          PinID outputPin) {
-        if (channel == 0) {
-            Node& tex = graph.CreateNode(singleChannelType);
-            tex.resourcePath = path;
-            tex.posX = 140.0f;
-            tex.posY = y;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], outputPin);
-            }
-            return;
+    auto scalarNode = [&](float value, float x, float y) {
+        Node& node = graph.CreateNode(NodeType::ConstantFloat);
+        node.scalar = value;
+        place(node, x, y);
+        return node.outputs.empty() ? PinID{0} : node.outputs[0];
+    };
+    auto colorNode = [&](const Vec3& value, float x, float y) {
+        Node& node = graph.CreateNode(NodeType::ConstantVec3);
+        node.color = Float3{value.x, value.y, value.z};
+        place(node, x, y);
+        return node.outputs.empty() ? PinID{0} : node.outputs[0];
+    };
+    auto multiply = [&](PinID a, PinID b, float x, float y) {
+        Node& node = graph.CreateNode(NodeType::Multiply);
+        place(node, x, y);
+        const std::vector<PinID> inputs = node.inputs;
+        const PinID result = node.outputs.empty() ? PinID{0} : node.outputs[0];
+        if (inputs.size() >= 2) {
+            graph.CreateLink(a, inputs[0]);
+            graph.CreateLink(b, inputs[1]);
         }
-        Node& tex = graph.CreateNode(NodeType::TextureSample);
-        tex.resourcePath = path;
-        tex.posX = -60.0f;
-        tex.posY = y;
-        const std::vector<PinID> sampleOutputs = tex.outputs;
-        Node& split = graph.CreateNode(NodeType::BreakVector);
-        split.posX = 160.0f;
-        split.posY = y;
-        const std::vector<PinID> splitInputs = split.inputs;
-        const std::vector<PinID> splitOutputs = split.outputs;
-        if (!sampleOutputs.empty() && !splitInputs.empty() && channel < splitOutputs.size()) {
-            graph.CreateLink(sampleOutputs[0], splitInputs[0]);
-            graph.CreateLink(splitOutputs[channel], outputPin);
+        return result;
+    };
+    auto sample = [&](NodeType type, const std::string& path, bool scalar, uint32_t channel, float y) {
+        const bool worldAligned = material.useWorldAlignedTexture;
+        const bool split = scalar && channel != 0;
+        Node& node = graph.CreateNode(worldAligned ? NodeType::WorldAlignedTexture
+                                      : split      ? NodeType::TextureSample
+                                                   : type);
+        node.resourcePath = path;
+        node.worldAlignedScale = material.worldTextureScale;
+        place(node, split ? kSampleX - 220.0f : kSampleX, y);
+        const std::vector<PinID> outputs = node.outputs;
+        if (outputs.empty()) {
+            return PinID{0};
         }
+        if (!split) {
+            return worldAligned && scalar && outputs.size() > 1 ? outputs[1] : outputs[0];
+        }
+        Node& breakNode = graph.CreateNode(NodeType::BreakVector);
+        place(breakNode, kSampleX, y);
+        const std::vector<PinID> breakInputs = breakNode.inputs;
+        const std::vector<PinID> breakOutputs = breakNode.outputs;
+        if (breakInputs.empty() || channel >= breakOutputs.size()) {
+            return PinID{0};
+        }
+        graph.CreateLink(outputs[0], breakInputs[0]);
+        return breakOutputs[channel];
+    };
+    auto mapTimes = [&](NodeType type, const std::string& path, uint32_t channel, float factor, size_t outputSlot) {
+        PinID map = sample(type, path, true, channel, rowY);
+        if (factor != 1.0f) {
+            map = multiply(map, scalarNode(factor, kSampleX, rowY + kRowHeight * 0.5f), kInputX, rowY);
+            rowY += kRowHeight * 0.5f;
+        }
+        link(map, outputSlot);
+        rowY += kRowHeight;
     };
 
-    auto connectColor = [&](const Vec3& color, PinID outputPin) {
-        Node& colorNode = graph.CreateNode(NodeType::ConstantVec3);
-        colorNode.color = Float3{color.x, color.y, color.z};
-        colorNode.posX = 160.0f;
-        colorNode.posY = outputY;
-        if (!colorNode.outputs.empty()) {
-            graph.CreateLink(colorNode.outputs[0], outputPin);
+    if (material.useAlbedoTexture && !material.albedoTexturePath.empty()) {
+        PinID color = sample(NodeType::AlbedoTextureSample, material.albedoTexturePath, false, 0, rowY);
+        const Vec3& tint = material.albedo;
+        if (tint.x != 1.0f || tint.y != 1.0f || tint.z != 1.0f) {
+            color = multiply(color, colorNode(tint, kSampleX, rowY + kRowHeight * 0.5f), kInputX, rowY);
+            rowY += kRowHeight * 0.5f;
         }
-    };
-
-    if (!outputInputs.empty()) {
-        if (material.useAlbedoTexture && !material.albedoTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::AlbedoTextureSample);
-            tex.resourcePath = material.albedoTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 80.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], outputInputs[0]);
-            }
-        } else {
-            connectColor(material.albedo, outputInputs[0]);
-        }
+        link(color, 0);
+    } else {
+        link(colorNode(material.albedo, kInputX, rowY), 0);
     }
-    if (outputInputs.size() > 1) {
-        if (material.useMetallicTexture && !material.metallicTexturePath.empty()) {
-            connectMap(NodeType::MetallicTextureSample, material.metallicTexturePath, material.metallicChannel, 140.0f,
-                       outputInputs[1]);
-        } else {
-            connectScalar(material.metallic, outputInputs[1]);
-        }
-    }
-    if (outputInputs.size() > 2) connectScalar(material.roughness, outputInputs[2]);
-    if (outputInputs.size() > 3) connectColor(material.emissive, outputInputs[3]);
+    rowY += kRowHeight;
 
-    if (outputInputs.size() > 4 && material.useNormalTexture && !material.normalTexturePath.empty()) {
-        Node& tex = graph.CreateNode(NodeType::NormalTextureSample);
-        tex.resourcePath = material.normalTexturePath;
-        tex.posX = 140.0f;
-        tex.posY = 260.0f;
-        if (!tex.outputs.empty()) {
-            graph.CreateLink(tex.outputs[0], outputInputs[4]);
-        }
+    if (material.useMetallicTexture && !material.metallicTexturePath.empty()) {
+        mapTimes(NodeType::MetallicTextureSample, material.metallicTexturePath, material.metallicChannel,
+                 material.metallic, 1);
+    } else {
+        link(scalarNode(material.metallic, kInputX, rowY), 1);
+        rowY += kRowHeight;
     }
 
-    if (outputInputs.size() > 5) {
-        if (material.useRoughnessTexture && !material.roughnessTexturePath.empty()) {
-            connectMap(NodeType::RoughnessTextureSample, material.roughnessTexturePath, material.roughnessChannel,
-                       320.0f, outputInputs[5]);
-        } else {
-            connectScalar(material.roughness, outputInputs[5]);
-        }
+    link(scalarNode(material.roughness, kInputX, rowY), 2);
+    rowY += kRowHeight;
+    if (material.useRoughnessTexture && !material.roughnessTexturePath.empty()) {
+        link(sample(NodeType::RoughnessTextureSample, material.roughnessTexturePath, true, material.roughnessChannel,
+                    rowY), 5);
+        rowY += kRowHeight;
     }
 
-    if (outputInputs.size() > 6) {
-        if (material.useAoTexture && !material.aoTexturePath.empty()) {
-            connectMap(NodeType::AoTextureSample, material.aoTexturePath, material.aoChannel, 380.0f, outputInputs[6]);
-        } else {
-            connectScalar(material.ao, outputInputs[6]);
-        }
+    if (material.emissive.x != 0.0f || material.emissive.y != 0.0f || material.emissive.z != 0.0f) {
+        link(colorNode(material.emissive, kInputX, rowY), 3);
+        rowY += kRowHeight;
     }
 
+    if (material.useNormalTexture && !material.normalTexturePath.empty()) {
+        link(sample(NodeType::NormalTextureSample, material.normalTexturePath, false, 0, rowY), 4);
+        rowY += kRowHeight;
+    }
+
+    if (material.useAoTexture && !material.aoTexturePath.empty()) {
+        mapTimes(NodeType::AoTextureSample, material.aoTexturePath, material.aoChannel, material.ao, 6);
+    } else if (material.ao != defaults.ao) {
+        link(scalarNode(material.ao, kInputX, rowY), 6);
+        rowY += kRowHeight;
+    }
+
+    link(scalarNode(material.specular, kInputX, rowY), 7);
+    rowY += kRowHeight;
+    link(scalarNode(material.opacity, kInputX, rowY), 8);
+    rowY += kRowHeight;
+    if (material.opacityMask != defaults.opacityMask || material.blendMode == MaterialBlendMode::Masked) {
+        link(scalarNode(material.opacityMask, kInputX, rowY), 9);
+        rowY += kRowHeight;
+    }
+    if (material.refraction != defaults.refraction) {
+        link(scalarNode(material.refraction, kInputX, rowY), 10);
+        rowY += kRowHeight;
+    }
+
+    if (Node* output = graph.FindNode(outputId)) {
+        place(*output, 480.0f, std::max(0.0f, rowY * 0.5f - 200.0f));
+    }
     graph.UpdateNextIDs();
 }
 

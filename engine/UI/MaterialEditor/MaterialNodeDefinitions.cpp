@@ -18,7 +18,7 @@ const std::vector<NodeDefinition>& Definitions() {
             {"Base Color", ValueType::Float3}, {"Metallic", ValueType::Float1}, {"Roughness", ValueType::Float1},
             {"Emissive", ValueType::Float3}, {"Normal Map", ValueType::Float3}, {"Roughness Map", ValueType::Float1},
             {"AO Map", ValueType::Float1}, {"Specular", ValueType::Float1}, {"Opacity", ValueType::Float1},
-            {"Opacity Mask", ValueType::Float1}, {"Refraction", ValueType::Float1}}, NoPins()},
+            {"Opacity Mask Clip", ValueType::Float1}, {"Refraction", ValueType::Float1}}, NoPins()},
 
         {NodeType::ConstantFloat, "ConstantFloat", "Scalar", "Inputs", "Constant float value.", NoPins(), {{"Value", ValueType::Float1}}},
         {NodeType::ConstantVec3, "ConstantVec3", "Vector3", "Inputs", "Constant RGB/vector value.", NoPins(), {{"Value", ValueType::Float3}}},

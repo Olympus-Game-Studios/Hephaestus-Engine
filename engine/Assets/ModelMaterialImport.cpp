@@ -8,6 +8,7 @@
 #include "AssetPathPolicy.h"
 #include "FbxDocument.h"
 #include "GltfDocument.h"
+#include "../Scene/Components.h"
 
 #include <nlohmann/json.hpp>
 #include "stb_image.h"
@@ -153,7 +154,10 @@ bool ReadGltfMaterials(const std::filesystem::path& path, std::vector<SourceMate
             out.emissive = Vec3(out.emissive.x * strength, out.emissive.y * strength, out.emissive.z * strength);
         }
         const std::string alphaMode = m.value("alphaMode", "OPAQUE");
-        out.blend = alphaMode == "OPAQUE" ? SourceBlend::Opaque : SourceBlend::Blend;
+        out.blend = alphaMode == "MASK" ? SourceBlend::Mask
+            : alphaMode == "BLEND"      ? SourceBlend::Blend
+                                        : SourceBlend::Opaque;
+        out.alphaCutoff = m.value("alphaCutoff", 0.5f);
         outMaterials.push_back(std::move(out));
     }
     return true;
@@ -298,7 +302,10 @@ std::string MaterialAssetWriter::Write(const SourceMaterial& material, const std
         }
     }
     if (material.blend == SourceBlend::Blend) {
-        out["blendMode"] = "alphaBlend";
+        out["blendMode"] = MaterialBlendModeName(MaterialBlendMode::AlphaBlend);
+    } else if (material.blend == SourceBlend::Mask) {
+        out["blendMode"] = MaterialBlendModeName(MaterialBlendMode::Masked);
+        out["opacityMask"] = std::clamp(material.alphaCutoff, 0.0f, 1.0f);
     }
     std::error_code ec;
     std::filesystem::create_directories(m_folder, ec);

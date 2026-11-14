@@ -1215,6 +1215,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_skinned.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_masked.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_masked.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.vert
@@ -1231,6 +1233,7 @@ if (GLSLC_EXECUTABLE)
     set(SHADER_INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/lighting_common.glsl
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_common.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/material_common.glsl
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)

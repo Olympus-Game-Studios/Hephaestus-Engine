@@ -402,141 +402,6 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
     return result;
 }
 
-struct SyncResult {
-    bool representable = true;
-    QString warning;
-};
-
-SyncResult SyncLegacyFieldsFromGraph(const Graph& graph, MaterialComponent& ioMaterial) {
-    SyncResult sync;
-
-    const Node* output = nullptr;
-    for (const Node& node : graph.GetNodes()) {
-        if (node.type == NodeType::MaterialOutput) {
-            output = &node;
-            break;
-        }
-    }
-    if (!output) {
-        sync.representable = false;
-        sync.warning = QObject::tr("Missing MaterialOutput node.");
-        return sync;
-    }
-
-    auto findDirectNode = [&](int inputIndex) -> const Node* {
-        if (inputIndex < 0 || inputIndex >= static_cast<int>(output->inputs.size())) {
-            return nullptr;
-        }
-        const PinID sourcePin = graph.FindInputSource(output->inputs[inputIndex]);
-        if (sourcePin == 0) {
-            return nullptr;
-        }
-        const Pin* pin = graph.FindPin(sourcePin);
-        if (!pin) {
-            return nullptr;
-        }
-        return graph.FindNode(pin->node);
-    };
-
-    auto markComplex = [&]() {
-        sync.representable = false;
-        if (sync.warning.isEmpty()) {
-            sync.warning = QObject::tr("Graph uses features not representable in legacy fields. Legacy values preserved.");
-        }
-    };
-
-    if (const Node* n = findDirectNode(0)) {
-        if (n->type == NodeType::ConstantVec3 || n->type == NodeType::ColorParameter) {
-            ioMaterial.albedo = Vec3(n->color.x, n->color.y, n->color.z);
-            ioMaterial.useAlbedoTexture = false;
-            ioMaterial.albedoTexturePath.clear();
-        } else if (n->type == NodeType::AlbedoTextureSample || n->type == NodeType::WorldAlignedTexture) {
-            ioMaterial.useAlbedoTexture = true;
-            ioMaterial.albedoTexturePath = n->resourcePath;
-            ioMaterial.useWorldAlignedTexture = (n->type == NodeType::WorldAlignedTexture);
-            ioMaterial.worldTextureScale = n->worldAlignedScale;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(1)) {
-        if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.metallic = n->scalar;
-            ioMaterial.useMetallicTexture = false;
-            ioMaterial.metallicTexturePath.clear();
-        } else if (n->type == NodeType::MetallicTextureSample || n->type == NodeType::WorldAlignedTexture ||
-                   n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useMetallicTexture = true;
-            ioMaterial.metallicTexturePath = n->resourcePath;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(2)) {
-        if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.roughness = n->scalar;
-            ioMaterial.useRoughnessTexture = false;
-            ioMaterial.roughnessTexturePath.clear();
-        } else if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture ||
-                   n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useRoughnessTexture = true;
-            ioMaterial.roughnessTexturePath = n->resourcePath;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(3)) {
-        if (n->type == NodeType::ConstantVec3 || n->type == NodeType::ColorParameter) {
-            ioMaterial.emissive = Vec3(n->color.x, n->color.y, n->color.z);
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(4)) {
-        if (n->type == NodeType::NormalTextureSample || n->type == NodeType::WorldAlignedTexture ||
-            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useNormalTexture = true;
-            ioMaterial.normalTexturePath = n->resourcePath;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(5)) {
-        if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture ||
-            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useRoughnessTexture = true;
-            ioMaterial.roughnessTexturePath = n->resourcePath;
-        } else if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.roughness = n->scalar;
-            ioMaterial.useRoughnessTexture = false;
-            ioMaterial.roughnessTexturePath.clear();
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(6)) {
-        if (n->type == NodeType::AoTextureSample || n->type == NodeType::WorldAlignedTexture ||
-            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useAoTexture = true;
-            ioMaterial.aoTexturePath = n->resourcePath;
-        } else if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.ao = n->scalar;
-            ioMaterial.useAoTexture = false;
-            ioMaterial.aoTexturePath.clear();
-        } else {
-            markComplex();
-        }
-    }
-
-    return sync;
-}
-
 class PinItem final : public QGraphicsItem {
 public:
     enum { Type = QGraphicsItem::UserType + 4001 };
@@ -1815,6 +1680,16 @@ private:
         if (!LoadMaterialAssetCompat(fs::path(m_absolutePath.toStdString()), m_material, m_displayName, m_graph, m_lastError)) {
             return false;
         }
+        if (!m_graph.HasSourceGraph()) {
+            Graph migrated = m_graph;
+            BuildMinimalGraphFromLegacyPbr(m_material, migrated);
+            MaterialComponent evaluated = m_material;
+            std::string evalError;
+            if (EvaluateGraph(migrated, evaluated, evalError) &&
+                DescribeRenderedDifferences(m_material, evaluated).empty()) {
+                m_graph = std::move(migrated);
+            }
+        }
 
         if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
             MaterialComponent evaluated = m_material;
@@ -1966,10 +1841,17 @@ private:
         materialForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         m_nameEdit = new QLineEdit(QString::fromStdString(m_displayName), materialSection);
         materialForm->addRow(QObject::tr("Name"), m_nameEdit);
-        m_syncLegacyCheck = new QCheckBox(QObject::tr("Sync legacy fields from graph"), materialSection);
-        m_syncLegacyCheck->setChecked(true);
-        m_syncLegacyCheck->setToolTip(QObject::tr("When saving, also write the graph's result into the legacy PBR fields."));
-        materialForm->addRow(QString(), m_syncLegacyCheck);
+        m_blendModeCombo = new QComboBox(materialSection);
+        m_blendModeCombo->addItem(QObject::tr("Opaque"), static_cast<int>(MaterialBlendMode::Opaque));
+        m_blendModeCombo->addItem(QObject::tr("Masked"), static_cast<int>(MaterialBlendMode::Masked));
+        m_blendModeCombo->addItem(QObject::tr("Translucent"), static_cast<int>(MaterialBlendMode::AlphaBlend));
+        m_blendModeCombo->addItem(QObject::tr("Additive"), static_cast<int>(MaterialBlendMode::Additive));
+        m_blendModeCombo->setItemData(0, QObject::tr("Solid surface. Writes depth and casts shadows."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(1, QObject::tr("Cut out where Opacity times the base color texture's alpha is below Opacity Mask Clip. Casts cut-out shadows; use for foliage, fences and grates."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(2, QObject::tr("Blended by Opacity times the base color texture's alpha, drawn after solid surfaces, furthest first. Casts no shadows; use for glass and decals."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(3, QObject::tr("Unlit, added to the image. Casts no shadows; use for flashes, sparks and glows."), Qt::ToolTipRole);
+        m_blendModeCombo->setCurrentIndex(m_blendModeCombo->findData(static_cast<int>(m_material.blendMode)));
+        materialForm->addRow(QObject::tr("Blend Mode"), m_blendModeCombo);
         inspectorLayout->addWidget(materialSection);
 
         auto* scroll = new QScrollArea(inspectorHost);
@@ -2077,6 +1959,24 @@ private:
             showNodeSearchPopup(m_graphView->mapToGlobal(m_graphView->viewport()->rect().center()), graphViewCenter());
         });
 
+        connect(m_blendModeCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+            const auto oldMode = m_material.blendMode;
+            const auto newMode = static_cast<MaterialBlendMode>(m_blendModeCombo->itemData(index).toInt());
+            if (oldMode == newMode) {
+                return;
+            }
+            auto apply = [this](MaterialBlendMode mode) {
+                m_material.blendMode = mode;
+                const QSignalBlocker blocker(m_blendModeCombo);
+                m_blendModeCombo->setCurrentIndex(m_blendModeCombo->findData(static_cast<int>(mode)));
+                markDirty();
+                schedulePreviewUpdate();
+            };
+            m_undo->push(new EditMaterialPropertyCommand([apply, oldMode]() { apply(oldMode); },
+                                                         [apply, newMode]() { apply(newMode); },
+                                                         QObject::tr("Change Blend Mode")));
+        });
+
         connect(m_nameEdit, &QLineEdit::editingFinished, this, [this]() {
             m_displayName = m_nameEdit->text().trimmed().isEmpty()
                 ? QFileInfo(m_absolutePath).completeBaseName().toStdString()
@@ -2102,7 +2002,7 @@ private:
     void refreshGraphBanner() {
         if (m_graph.IsLegacyMode()) {
             m_graphBanner->setText(QObject::tr("Legacy PBR"));
-            m_graphBanner->setToolTip(QObject::tr("The graph is missing or invalid. Use Convert to graph to enter graph mode."));
+            m_graphBanner->setToolTip(QObject::tr("The graph is missing or invalid, or a graph cannot yet express every setting of this material. Use Convert to graph to enter graph mode."));
             SetStyleProperty(m_graphBanner, "tone", QStringLiteral("warning"));
             m_convertButton->setVisible(true);
         } else if (m_graph.HasSourceGraph()) {
@@ -2591,6 +2491,16 @@ private:
             });
         };
 
+        auto* reflectionStrength = makeSpin(0.0, 10.0, 0.01, m_material.reflectionStrength);
+        auto* emissiveStrength = makeSpin(0.0, 100.0, 0.01, m_material.emissiveStrength);
+        m_inspectorForm->addRow(QObject::tr("Reflection Strength"), reflectionStrength);
+        m_inspectorForm->addRow(QObject::tr("Emissive Strength"), emissiveStrength);
+        addUndoSpin(reflectionStrength, QObject::tr("Edit Reflection Strength"), [this]() { return m_material.reflectionStrength; }, [this](double v) { m_material.reflectionStrength = static_cast<float>(v); });
+        addUndoSpin(emissiveStrength, QObject::tr("Edit Emissive Strength"), [this]() { return m_material.emissiveStrength; }, [this](double v) { m_material.emissiveStrength = static_cast<float>(v); });
+        if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
+            return;
+        }
+
         auto* albedoX = makeSpin(0.0, 10.0, 0.01, m_material.albedo.x);
         auto* albedoY = makeSpin(0.0, 10.0, 0.01, m_material.albedo.y);
         auto* albedoZ = makeSpin(0.0, 10.0, 0.01, m_material.albedo.z);
@@ -2608,8 +2518,6 @@ private:
         auto* metallic = makeSpin(0.0, 1.0, 0.01, m_material.metallic);
         auto* roughness = makeSpin(0.0, 1.0, 0.01, m_material.roughness);
         auto* ao = makeSpin(0.0, 1.0, 0.01, m_material.ao);
-        auto* reflectionStrength = makeSpin(0.0, 10.0, 0.01, m_material.reflectionStrength);
-        auto* emissiveStrength = makeSpin(0.0, 100.0, 0.01, m_material.emissiveStrength);
         auto* specular = makeSpin(0.0, 1.0, 0.01, m_material.specular);
         auto* opacity = makeSpin(0.0, 1.0, 0.01, m_material.opacity);
         auto* opacityMask = makeSpin(0.0, 1.0, 0.01, m_material.opacityMask);
@@ -2618,21 +2526,17 @@ private:
         m_inspectorForm->addRow(QObject::tr("Metallic"), metallic);
         m_inspectorForm->addRow(QObject::tr("Roughness"), roughness);
         m_inspectorForm->addRow(QObject::tr("AO"), ao);
-        m_inspectorForm->addRow(QObject::tr("Reflection Strength"), reflectionStrength);
-        m_inspectorForm->addRow(QObject::tr("Emissive Strength"), emissiveStrength);
         m_inspectorForm->addRow(QObject::tr("Specular"), specular);
         m_inspectorForm->addRow(QObject::tr("Opacity"), opacity);
-        m_inspectorForm->addRow(QObject::tr("Opacity Mask"), opacityMask);
+        m_inspectorForm->addRow(QObject::tr("Opacity Mask Clip"), opacityMask);
         m_inspectorForm->addRow(QObject::tr("Refraction"), refraction);
 
         addUndoSpin(metallic, QObject::tr("Edit Metallic"), [this]() { return m_material.metallic; }, [this](double v) { m_material.metallic = static_cast<float>(v); });
         addUndoSpin(roughness, QObject::tr("Edit Roughness"), [this]() { return m_material.roughness; }, [this](double v) { m_material.roughness = static_cast<float>(v); });
         addUndoSpin(ao, QObject::tr("Edit AO"), [this]() { return m_material.ao; }, [this](double v) { m_material.ao = static_cast<float>(v); });
-        addUndoSpin(reflectionStrength, QObject::tr("Edit Reflection Strength"), [this]() { return m_material.reflectionStrength; }, [this](double v) { m_material.reflectionStrength = static_cast<float>(v); });
-        addUndoSpin(emissiveStrength, QObject::tr("Edit Emissive Strength"), [this]() { return m_material.emissiveStrength; }, [this](double v) { m_material.emissiveStrength = static_cast<float>(v); });
         addUndoSpin(specular, QObject::tr("Edit Specular"), [this]() { return m_material.specular; }, [this](double v) { m_material.specular = static_cast<float>(v); });
         addUndoSpin(opacity, QObject::tr("Edit Opacity"), [this]() { return m_material.opacity; }, [this](double v) { m_material.opacity = static_cast<float>(v); });
-        addUndoSpin(opacityMask, QObject::tr("Edit Opacity Mask"), [this]() { return m_material.opacityMask; }, [this](double v) { m_material.opacityMask = static_cast<float>(v); });
+        addUndoSpin(opacityMask, QObject::tr("Edit Opacity Mask Clip"), [this]() { return m_material.opacityMask; }, [this](double v) { m_material.opacityMask = static_cast<float>(v); });
         addUndoSpin(refraction, QObject::tr("Edit Refraction"), [this]() { return m_material.refraction; }, [this](double v) { m_material.refraction = static_cast<float>(v); });
     }
 
@@ -3178,14 +3082,7 @@ private:
     void saveMaterial() {
         compileAndApply();
 
-        MaterialComponent toSave = m_material;
-        if (m_syncLegacyCheck->isChecked() && m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
-            SyncResult sync = SyncLegacyFieldsFromGraph(m_graph, toSave);
-            if (!sync.representable && !sync.warning.isEmpty()) {
-                addIssueItem(sync.warning, 0, GraphIssue::Severity::Warning);
-                refreshIssueCount();
-            }
-        }
+        const MaterialComponent& toSave = m_material;
 
         const std::string saveName = m_nameEdit->text().trimmed().isEmpty()
             ? QFileInfo(m_absolutePath).completeBaseName().toStdString()
@@ -3255,7 +3152,7 @@ private:
     QPushButton* m_addNodeButton = nullptr;
     QToolButton* m_viewButton = nullptr;
     QToolButton* m_snapCheck = nullptr;
-    QCheckBox* m_syncLegacyCheck = nullptr;
+    QComboBox* m_blendModeCombo = nullptr;
     QLabel* m_dirtyLabel = nullptr;
     bool m_dirty = false;
 

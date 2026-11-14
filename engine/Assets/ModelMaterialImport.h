@@ -30,7 +30,7 @@ struct SourceTexture {
     bool Exists() const { return !embedded.empty() || !file.empty(); }
 };
 
-enum class SourceBlend { Opaque, Blend };
+enum class SourceBlend { Opaque, Mask, Blend };
 
 struct SourceMaterial {
     std::string name;
@@ -40,6 +40,7 @@ struct SourceMaterial {
     float roughness = 0.5f;
     Vec3 emissive{0.0f, 0.0f, 0.0f};
     SourceBlend blend = SourceBlend::Opaque;
+    float alphaCutoff = 0.5f; ///< Mask: coverage below this is cut out
     SourceTexture baseColorTexture;
     SourceTexture normalTexture;
     SourceTexture roughnessTexture;

@@ -50,7 +50,7 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float opacity;            // offset 116
     float opacityMask;        // offset 120
     float refraction;         // offset 124 (reserved)
-    uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive
+    uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive, 3 masked
     uint textureChannels;     // offset 132: roughness, metallic, AO map channel, 2 bits each (0 R .. 3 A)
 } material;
 
@@ -63,6 +63,7 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #include "lighting_common.glsl"
 #define GI_SET 2
 #include "probe_common.glsl"
+#include "material_common.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
@@ -359,27 +360,6 @@ vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv, vec3 tangentNormal) {
     return normalize(tbn * tangentNormal);
 }
 
-// Calculate world-aligned UV coordinates using triplanar projection
-vec2 getWorldAlignedUV(vec3 worldPos, vec3 normal, float scale) {
-    // Use triplanar mapping - blend between XY, XZ, and YZ planes based on normal
-    vec3 blendWeights = abs(normal);
-    blendWeights = blendWeights / (blendWeights.x + blendWeights.y + blendWeights.z);
-    
-    // Sample coordinates for each plane
-    vec2 uvXY = worldPos.xy * scale;
-    vec2 uvXZ = worldPos.xz * scale;
-    vec2 uvYZ = worldPos.yz * scale;
-    
-    // For mostly horizontal surfaces (floors/ceilings), use XZ plane
-    // For vertical surfaces, blend between XY and YZ based on normal direction
-    // This gives the most intuitive result for ground textures
-    if (blendWeights.y > 0.7) {
-        return uvXZ;  // Mostly horizontal - use top-down projection
-    }
-    // Blend between the three projections for angled surfaces
-    return uvXY * blendWeights.z + uvXZ * blendWeights.y + uvYZ * blendWeights.x;
-}
-
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(ubo.viewPos - fragWorldPos);
@@ -402,7 +382,12 @@ void main() {
     }
 
     float opacity = clamp(material.opacity, 0.0, 1.0);
-    if (material.blendMode != 0u) {
+    if (material.blendMode == 3u) {
+        if (opacity * textureAlpha < clamp(material.opacityMask, 0.0, 1.0)) {
+            discard;
+        }
+        opacity = 1.0;
+    } else if (material.blendMode != 0u) {
         opacity *= textureAlpha;
         if (opacity <= 0.002) {
             discard;

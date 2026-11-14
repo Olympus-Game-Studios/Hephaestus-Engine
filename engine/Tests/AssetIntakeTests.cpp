@@ -1,6 +1,7 @@
 #include "Assets/AssetIntake.h"
 #include "Assets/GltfDocument.h"
 #include "Assets/ModelImporter.h"
+#include "Assets/ModelMaterialImport.h"
 #include "UI/MaterialEditor/MaterialAssetSerializer.h"
 #include "UI/MaterialEditor/MaterialGraphEvaluator.h"
 
@@ -740,6 +741,46 @@ bool TestGltfCollisionNode(const fs::path& scratch) {
     return ok;
 }
 
+bool TestGltfMaskImportsMasked(const fs::path& scratch) {
+    bool ok = true;
+    const fs::path project = scratch / "MaskProject";
+    fs::create_directories(project / "assets");
+    const fs::path gltf = scratch / "leaves.gltf";
+    {
+        std::ofstream out(gltf, std::ios::trunc);
+        out << json{{"asset", {{"version", "2.0"}}},
+                    {"materials", {{{"name", "Leaves"}, {"alphaMode", "MASK"}, {"alphaCutoff", 0.3}},
+                                   {{"name", "DefaultCutoff"}, {"alphaMode", "MASK"}},
+                                   {{"name", "Bark"}}}}}.dump();
+    }
+    std::vector<Hephaestus::SourceMaterial> materials;
+    std::string error;
+    ok &= Check(Hephaestus::ReadGltfMaterials(gltf, materials, error) && materials.size() == 3,
+                "glTF materials read: " + error);
+    if (!ok) {
+        return false;
+    }
+    Hephaestus::MaterialAssetWriter writer(project, project / "assets/materials");
+    const std::string leaves = writer.Write(materials[0], "Leaves", error);
+    const std::string fallback = writer.Write(materials[1], "DefaultCutoff", error);
+    const std::string bark = writer.Write(materials[2], "Bark", error);
+    const json leavesJson = json::parse(ReadText(project / leaves));
+    ok &= Check(leavesJson["blendMode"] == "masked" && std::abs(leavesJson["opacityMask"].get<double>() - 0.3) < 1e-6,
+                "glTF MASK writes a masked material with its alphaCutoff");
+    const json fallbackJson = json::parse(ReadText(project / fallback));
+    ok &= Check(std::abs(fallbackJson["opacityMask"].get<double>() - 0.5) < 1e-6,
+                "glTF MASK without alphaCutoff clips at the spec default 0.5");
+    ok &= Check(!json::parse(ReadText(project / bark)).contains("blendMode"), "opaque glTF material stays opaque");
+
+    MaterialComponent loaded;
+    std::string displayName;
+    MaterialEditor::Graph graph;
+    ok &= Check(MaterialEditor::LoadMaterialAssetCompat(project / leaves, loaded, displayName, graph, error) &&
+                    loaded.blendMode == MaterialBlendMode::Masked,
+                "the masked material loads as Masked");
+    return ok;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: AssetIntakeTests <repo_root>\n";
@@ -757,6 +798,7 @@ int main(int argc, char** argv) {
     ok &= TestRejections(scratch);
     ok &= TestImportUsdKit(scratch);
     ok &= TestGltfCollisionNode(scratch);
+    ok &= TestGltfMaskImportsMasked(scratch);
     std::cout << (ok ? "AssetIntakeTests passed\n" : "AssetIntakeTests FAILED\n");
     return ok ? 0 : 1;
 }

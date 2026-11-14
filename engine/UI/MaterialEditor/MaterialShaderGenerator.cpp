@@ -145,7 +145,11 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
     auto binary = [&](const char* op) {
         const Expression a = input(0, pin->valueType);
         const Expression b = input(1, pin->valueType);
-        return MakeTemp(ctx, pin->valueType, "(" + CoerceExpression(a, pin->valueType) + " " + op + " " + CoerceExpression(b, pin->valueType) + ")");
+        ValueType type = ValueTypeComponentCount(a.type) >= ValueTypeComponentCount(b.type) ? a.type : b.type;
+        if (!IsNumericValueType(type)) {
+            type = ValueType::Float1;
+        }
+        return MakeTemp(ctx, type, "(" + CoerceExpression(a, type) + " " + op + " " + CoerceExpression(b, type) + ")");
     };
 
     Expression expression{pin->valueType, DefaultExpression(pin->valueType)};

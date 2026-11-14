@@ -2,6 +2,7 @@
 #include "../Core/Math.h"
 #include <entt/entt.hpp>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <limits>
 #include <utility>
@@ -607,7 +608,31 @@ enum class MaterialBlendMode : uint32_t {
     Opaque = 0,     ///< writes depth; opacity below opacityMask is cut out
     AlphaBlend = 1, ///< lit, blended by opacity times the albedo texture's alpha, drawn after opaque surfaces
     Additive = 2,   ///< unlit, (albedo + emissive) times opacity added to the image; for flashes and glows
+    Masked = 3,     ///< opaque pass and shadows; opacity times the albedo texture's alpha below opacityMask is cut out
 };
+
+/// File-format name of a blend mode, as written to "blendMode" in .hematerial files.
+inline const char* MaterialBlendModeName(MaterialBlendMode mode) {
+    switch (mode) {
+    case MaterialBlendMode::AlphaBlend: return "alphaBlend";
+    case MaterialBlendMode::Additive: return "additive";
+    case MaterialBlendMode::Masked: return "masked";
+    default: return "opaque";
+    }
+}
+
+/// Unknown names read as Opaque, matching files written before a mode existed.
+inline MaterialBlendMode MaterialBlendModeFromName(std::string_view name) {
+    if (name == "alphaBlend") return MaterialBlendMode::AlphaBlend;
+    if (name == "additive") return MaterialBlendMode::Additive;
+    if (name == "masked") return MaterialBlendMode::Masked;
+    return MaterialBlendMode::Opaque;
+}
+
+/// AlphaBlend and Additive surfaces are sorted and drawn after opaque ones and cast no shadows.
+inline bool IsTranslucentBlendMode(MaterialBlendMode mode) {
+    return mode == MaterialBlendMode::AlphaBlend || mode == MaterialBlendMode::Additive;
+}
 
 /**
  * Material component - defines surface properties for rendering

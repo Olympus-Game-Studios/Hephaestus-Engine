@@ -144,7 +144,12 @@ public:
                 color(s.emission_color, out.emissive, nullptr);
             }
         }
-        out.blend = in.materialTag == tydra::MaterialTag::Translucent ? SourceBlend::Blend : SourceBlend::Opaque;
+        out.blend = in.materialTag == tydra::MaterialTag::Translucent ? SourceBlend::Blend
+            : in.materialTag == tydra::MaterialTag::Masked             ? SourceBlend::Mask
+                                                                       : SourceBlend::Opaque;
+        if (out.blend == SourceBlend::Mask && in.surfaceShader.has_value()) {
+            out.alphaCutoff = in.surfaceShader->opacityThreshold.value;
+        }
         return out;
     }
 

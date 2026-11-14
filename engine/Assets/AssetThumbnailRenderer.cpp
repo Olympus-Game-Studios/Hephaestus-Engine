@@ -61,6 +61,14 @@ Vec3 SampleLinear(const ThumbnailImage& image, float u, float v)
     return vmix(top, bottom, fy);
 }
 
+/** Nearest, repeat-wrapped alpha, for the Masked cutout test. */
+float SampleAlpha(const ThumbnailImage& image, float u, float v)
+{
+    const int x = static_cast<int>((u - std::floor(u)) * image.width) % image.width;
+    const int y = static_cast<int>((v - std::floor(v)) * image.height) % image.height;
+    return image.rgba[(static_cast<size_t>(y) * image.width + x) * 4 + 3] / 255.0f;
+}
+
 float DistributionGGX(Vec3 N, Vec3 H, float roughness)
 {
     const float a = roughness * roughness;
@@ -186,7 +194,18 @@ Vec3 TransformNormal(const Mat4& inverseWorld, const float* n)
 
 bool Discards(const MaterialComponent& m)
 {
-    return Clamp01(m.opacity) < Clamp01(m.opacityMask);
+    return m.blendMode != MaterialBlendMode::Masked && Clamp01(m.opacity) < Clamp01(m.opacityMask);
+}
+
+/** Masked surfaces cut out where opacity times the albedo texture's alpha falls below the clip threshold. */
+bool CutOut(const ThumbnailMaterial& material, float u, float v)
+{
+    const MaterialComponent& m = material.params;
+    if (m.blendMode != MaterialBlendMode::Masked) {
+        return false;
+    }
+    const float alpha = m.useAlbedoTexture && material.albedo ? SampleAlpha(*material.albedo, u, v) : 1.0f;
+    return Clamp01(m.opacity) * alpha < Clamp01(m.opacityMask);
 }
 
 struct PreparedDraw {
@@ -302,13 +321,17 @@ ThumbnailImage RenderThumbnail(const std::vector<ThumbnailDraw>& draws, int size
             screen.push_back(project(pos));
         }
         for (uint32_t t = 0; t < p.triangleMaterials.size(); ++t) {
-            if (Discards(p.triangleMaterials[t]->params)) {
+            const ThumbnailMaterial& material = *p.triangleMaterials[t];
+            if (Discards(material.params)) {
                 continue;
             }
             const uint32_t i0 = indices[t * 3], i1 = indices[t * 3 + 1], i2 = indices[t * 3 + 2];
             if (i0 >= screen.size() || i1 >= screen.size() || i2 >= screen.size()) {
                 continue;
             }
+            const bool masked = material.params.blendMode == MaterialBlendMode::Masked;
+            const Vertex* corners[3] = {&p.draw->mesh->vertices[i0], &p.draw->mesh->vertices[i1],
+                                        &p.draw->mesh->vertices[i2]};
             const ScreenVertex& a = screen[i0];
             const ScreenVertex& b = screen[i1];
             const ScreenVertex& c = screen[i2];
@@ -335,6 +358,14 @@ ThumbnailImage RenderThumbnail(const std::vector<ThumbnailDraw>& draws, int size
                     Fragment& f = fragments[static_cast<size_t>(y) * S + x];
                     if (invZ <= f.invDepth) {
                         continue;
+                    }
+                    if (masked) {
+                        const float b0 = w0 * a.invZ / invZ, b1 = w1 * b.invZ / invZ, b2 = 1.0f - b0 - b1;
+                        const float u = b0 * corners[0]->texCoord[0] + b1 * corners[1]->texCoord[0] + b2 * corners[2]->texCoord[0];
+                        const float v = b0 * corners[0]->texCoord[1] + b1 * corners[1]->texCoord[1] + b2 * corners[2]->texCoord[1];
+                        if (CutOut(material, u, v)) {
+                            continue;
+                        }
                     }
                     f.invDepth = invZ;
                     f.draw = d;

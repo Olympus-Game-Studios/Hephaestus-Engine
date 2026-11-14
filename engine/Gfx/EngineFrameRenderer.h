@@ -425,7 +425,7 @@ private:
     void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera,
                          const FrameRenderConfig& config);
     void updateLightingUBO(uint32_t imageIndex, Scene* scene, const RenderCamera& camera);
-    void recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera,
+    void recordShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const RenderCamera& camera,
                           const FrameRenderConfig& config);
     void recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
                         const FrameRenderConfig& config);
@@ -658,13 +658,18 @@ private:
     bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
     bool createLocalShadowResources();
     void transitionShadowMapForSampling(VkImage image);
-    void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
+    void recordLocalShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const FrameRenderConfig& config);
     // The ray-query build of triangle.frag reads the scene acceleration structure in ProbeGI's set.
     const char* surfaceFragmentShader() const {
         return m_probeGI.HardwareRayTracingAvailable() ? "triangle_rt.frag.spv" : "triangle.frag.spv";
     }
-    void drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config, const Mat4& viewProj,
-                           const Vec3* cullCenter, float cullRadius);
+    void drawShadowCasters(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const FrameRenderConfig& config,
+                           const Mat4& viewProj, const Vec3* cullCenter, float cullRadius);
+    // Masked (alpha cutout) static surfaces in the shadow passes; reads materialTextures from the main set 0.
+    VkPipelineLayout m_maskedShadowLayout = VK_NULL_HANDLE;
+    VkPipeline m_maskedShadowPipeline = VK_NULL_HANDLE;
+    bool createMaskedShadowPipeline();
+    void destroyMaskedShadowPipeline();
 
     ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);

@@ -1,5 +1,8 @@
 #include "../UI/MaterialEditor/MaterialAssetSerializer.h"
+#include "../UI/MaterialEditor/MaterialGraphEvaluator.h"
 #include "../UI/MaterialEditor/MaterialShaderGenerator.h"
+
+#include <cmath>
 
 #include <filesystem>
 #include <fstream>
@@ -300,11 +303,143 @@ bool TestExpandedNodesAndShaderGeneration() {
     return ok;
 }
 
+bool CheckDefaultGraphLossless(const MaterialComponent& material, const std::string& label) {
+    Graph graph;
+    BuildMinimalGraphFromLegacyPbr(material, graph);
+    MaterialComponent evaluated = material;
+    std::string error;
+    if (!Check(EvaluateGraph(graph, evaluated, error), label + ": default graph evaluates: " + error)) {
+        return false;
+    }
+    const std::string loss = DescribeRenderedDifferences(material, evaluated);
+    return Check(loss.empty(), label + ": default graph loses" + loss);
+}
+
+bool TestDefaultGraphIsLossless() {
+    bool ok = true;
+    MaterialComponent plain;
+    plain.albedo = Vec3(0.2f, 0.4f, 0.6f);
+    plain.metallic = 0.3f;
+    plain.roughness = 0.7f;
+    plain.specular = 0.25f;
+    plain.emissive = Vec3(1.0f, 0.5f, 0.0f);
+    plain.emissiveStrength = 3.0f;
+    plain.reflectionStrength = 0.4f;
+    ok &= CheckDefaultGraphLossless(plain, "constant PBR");
+
+    MaterialComponent tinted;
+    tinted.albedo = Vec3(0.8f, 0.6f, 0.4f);
+    tinted.useAlbedoTexture = true;
+    tinted.albedoTexturePath = "assets/textures/bark.png";
+    tinted.useMetallicTexture = true;
+    tinted.metallicTexturePath = "assets/textures/orm.png";
+    tinted.metallicChannel = 2;
+    tinted.metallic = 0.5f;
+    tinted.useRoughnessTexture = true;
+    tinted.roughnessTexturePath = "assets/textures/orm.png";
+    tinted.roughnessChannel = 1;
+    tinted.roughness = 0.9f;
+    tinted.useAoTexture = true;
+    tinted.aoTexturePath = "assets/textures/orm.png";
+    tinted.ao = 0.8f;
+    tinted.useNormalTexture = true;
+    tinted.normalTexturePath = "assets/textures/bark_n.png";
+    ok &= CheckDefaultGraphLossless(tinted, "tinted textures with packed maps");
+
+    MaterialComponent worldAligned = tinted;
+    worldAligned.useWorldAlignedTexture = true;
+    worldAligned.worldTextureScale = 0.25f;
+    worldAligned.metallicChannel = 0;
+    worldAligned.roughnessChannel = 0;
+    ok &= CheckDefaultGraphLossless(worldAligned, "world-aligned textures");
+
+    MaterialComponent worldAlignedPacked = worldAligned;
+    worldAlignedPacked.roughnessChannel = 1;
+    Graph packedGraph;
+    BuildMinimalGraphFromLegacyPbr(worldAlignedPacked, packedGraph);
+    MaterialComponent packedEvaluated = worldAlignedPacked;
+    std::string error;
+    ok &= Check(EvaluateGraph(packedGraph, packedEvaluated, error) &&
+                    !DescribeRenderedDifferences(worldAlignedPacked, packedEvaluated).empty(),
+                "a world-aligned packed map the graph cannot express is reported, not silently changed");
+
+    MaterialComponent masked;
+    masked.blendMode = MaterialBlendMode::Masked;
+    masked.useAlbedoTexture = true;
+    masked.albedoTexturePath = "assets/textures/leaves.png";
+    masked.opacityMask = 0.35f;
+    ok &= CheckDefaultGraphLossless(masked, "masked foliage");
+
+    MaterialComponent glass;
+    glass.blendMode = MaterialBlendMode::AlphaBlend;
+    glass.opacity = 0.25f;
+    glass.opacityMask = 0.0f;
+    glass.refraction = 1.2f;
+    ok &= CheckDefaultGraphLossless(glass, "translucent glass");
+
+    MaterialComponent flash;
+    flash.blendMode = MaterialBlendMode::Additive;
+    flash.ao = 0.5f;
+    ok &= CheckDefaultGraphLossless(flash, "additive");
+    return ok;
+}
+
+bool TestMaskedBlendModeRoundtrip(const fs::path& outDir) {
+    MaterialComponent material;
+    material.blendMode = MaterialBlendMode::Masked;
+    material.opacityMask = 0.4f;
+    Graph graph;
+    BuildMinimalGraphFromLegacyPbr(material, graph);
+    const fs::path output = outDir / "masked.saved.hematerial";
+    std::string error;
+    bool ok = Check(SaveMaterialAssetCompat(output, material, "Masked", graph, {}, error), "save masked: " + error);
+    ok &= Check(LoadJson(output).value("blendMode", std::string()) == "masked", "masked writes blendMode masked");
+    MaterialComponent loaded;
+    std::string displayName;
+    Graph loadedGraph;
+    ok &= Check(LoadMaterialAssetCompat(output, loaded, displayName, loadedGraph, error) &&
+                    loaded.blendMode == MaterialBlendMode::Masked && std::abs(loaded.opacityMask - 0.4f) < 1e-6f,
+                "masked loads back with its clip threshold");
+    return ok;
+}
+
+bool TestProjectMaterialsMigrate(const fs::path& folder) {
+    bool ok = true;
+    int checked = 0;
+    int graphs = 0;
+    for (const auto& entry : fs::recursive_directory_iterator(folder)) {
+        if (entry.path().extension() != ".hematerial") continue;
+        MaterialComponent material;
+        std::string displayName;
+        std::string error;
+        Graph graph;
+        if (!Check(LoadMaterialAssetCompat(entry.path(), material, displayName, graph, error),
+                   entry.path().string() + ": " + error)) {
+            ok = false;
+            continue;
+        }
+        if (graph.HasSourceGraph()) {
+            MaterialComponent evaluated = material;
+            if (!graph.IsLegacyMode() && EvaluateGraph(graph, evaluated, error)) {
+                ok &= Check(evaluated.blendMode == material.blendMode,
+                            entry.path().string() + ": graph keeps its blend mode");
+            }
+            ++graphs;
+            continue;
+        }
+        ok &= CheckDefaultGraphLossless(material, entry.path().string());
+        ++checked;
+    }
+    std::cout << "Migrated " << checked << " materials without a graph, evaluated " << graphs << " graphs, under "
+              << folder.string() << "\n";
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: MaterialCompatibilityTests <repo_root>\n";
+        std::cerr << "Usage: MaterialCompatibilityTests <repo_root> [project_assets_folder]\n";
         return 2;
     }
 
@@ -319,6 +454,11 @@ int main(int argc, char** argv) {
     ok &= TestGoldenRoundtrip(root, outDir, "unknown_graph_payload.hematerial");
     ok &= TestPinIdCollision(root, outDir);
     ok &= TestExpandedNodesAndShaderGeneration();
+    ok &= TestDefaultGraphIsLossless();
+    ok &= TestMaskedBlendModeRoundtrip(outDir);
+    if (argc > 2) {
+        ok &= TestProjectMaterialsMigrate(fs::path(argv[2]));
+    }
 
     if (!ok) {
         return 1;
