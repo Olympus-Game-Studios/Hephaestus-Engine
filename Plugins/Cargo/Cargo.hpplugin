@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "apiVersion": 1,
+  "id": "com.hephaestus.cargo",
+  "name": "Cargo",
+  "description": "Import models downloaded with KitBash3D Cargo, with their materials and textures.",
+  "author": "Hephaestus Engine",
+  "pluginVersion": "1.0.0",
+  "engineVersion": ">=2026.11.12",
+  "type": "editor",
+  "entry": "bin/HephaestusCargo.dll",
+  "icon": "Resources/cargo.svg"
+}

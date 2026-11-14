@@ -817,7 +817,7 @@ if(HEPHAESTUS_USE_QT)
 
         # Asset store plugins: Fab (packs from disk and Fab in Launcher's socket export) and Sketchfab over its
         # Download API. Both need Qt Network.
-        foreach(_store Fab Sketchfab)
+        foreach(_store Fab Sketchfab Cargo)
             if(NOT TARGET Qt6::Network)
                 message(WARNING "Qt6 Network not found; the ${_store} plugin is not built.")
                 continue()
