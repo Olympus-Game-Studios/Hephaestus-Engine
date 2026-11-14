@@ -229,6 +229,8 @@ public:
         }
         m_progress->setFormat(text);
         m_progress->setVisible(true);
+        // The editor's style draws a slim bar without text, so the label carries the words and percentage.
+        m_status->setText(percent >= 0 ? QString(text).replace(QStringLiteral("%p"), QString::number(percent)) : text);
     }
     void HideProgress() { m_progress->setVisible(false); }
     /// The import runs on the UI thread, so the bar is painted before it starts.
@@ -379,8 +381,11 @@ private:
         QDir().mkpath(folder);
         download->setDownloadDirectory(folder);
         download->accept();
-        const QString title = panel->AssetTitle().isEmpty() ? QFileInfo(download->downloadFileName()).completeBaseName()
-                                                            : panel->AssetTitle();
+        // Sketchfab downloads start from search pages and pop-ups whose title is not the model's, and the
+        // file is named after the model; Fab's listing page title is the listing's name.
+        const QString fileTitle = QFileInfo(download->downloadFileName()).completeBaseName();
+        const QString title =
+            panel->StoreInfo().sketchfabCredits || panel->AssetTitle().isEmpty() ? fileTitle : panel->AssetTitle();
         const QString pageUrl = panel->PageUrl();
         QPointer<StorePanel> target = panel;
         panel->SetStatus(tr("Downloading %1...").arg(title));
