@@ -29,7 +29,20 @@ struct EvaluatedGeometry {
     std::vector<FaceTag> triangleTags;  // one per triangle
     std::vector<LocalBox> solids;       // disjoint boxes covering the solid volume, for collision
     std::vector<RoundCollider> rounds;  // collision for cylinders and spheres
+    std::vector<std::vector<Vec3>> hulls;  // convex collision pieces that are not axis-aligned boxes
 };
+
+// A wall path segment in the wall's local frame: d runs from its first point to its second, n is d turned a
+// quarter turn to the left seen from above (the +Z face of the segment's own box), mid is its centre on the ground.
+struct WallSegmentFrame {
+    Vec3 mid;
+    Vec3 d;
+    Vec3 n;
+    float length = 0.0f;
+};
+
+// False for a segment index out of range or a segment too short to have a direction.
+bool GetWallSegmentFrame(const ConstructionShapeComponent& shape, int segment, WallSegmentFrame& out);
 
 // A wall of a box in local space: u runs along the wall (the direction OpeningParams::offset is measured in),
 // v is up, normal points out of the box.
@@ -43,6 +56,10 @@ struct WallFrame {
 };
 
 WallFrame GetWallFrame(const BoxParams& box, WallSide side);
+// The face of a box or wall host an opening is placed on: a box side, or the PosZ or NegZ face of a wall segment.
+bool GetHostWallFrame(const ConstructionShapeComponent& host, WallSide side, int segment, WallFrame& out);
+// Height of the top of the host's floor above its base, where doors stand.
+float HostFloorTop(const ConstructionShapeComponent& host);
 
 // Openings are evaluated in a canonical order, so the result does not depend on child order.
 // cuts are subtract boxes already in this box's local frame.
@@ -51,6 +68,15 @@ bool EvaluateBox(const BoxParams& box, std::vector<OpeningParams> openings, Eval
 
 // Solid stairs climbing towards +Z, one step per column; the steps' tops and fronts are the walkable faces.
 bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out);
+
+// A wall of BoxParams height and wallThickness along the shape's path. Each segment is a solid box, so its openings
+// (by OpeningParams::segment) and the cuts work as on blocks; corners are filled with mitred prisms, and a closed
+// path with a floor gets a slab over the whole path. Corners and floors are not cut.
+bool EvaluateWall(const ConstructionShapeComponent& shape, const std::vector<OpeningParams>& openings,
+                  EvaluatedGeometry& out, const std::vector<LocalBox>& cuts = {});
+
+// Triangles covering a simple polygon on the XZ plane, as index triples, wound counter-clockwise in (x, z).
+std::vector<int> TriangulatePolygon(const std::vector<WallPoint>& polygon);
 
 // Evaluates any shape with its own geometry (HasOwnGeometry), using the openings for boxes.
 bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningParams> openings,

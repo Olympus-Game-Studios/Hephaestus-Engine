@@ -23,8 +23,10 @@ Json ParamsSchema()
 {
     return {{"type", "object"},
             {"description",
-             "Box: width, height, depth, hollow, wallThickness, floor, ceiling. Opening: side (+x, -x, +z, -z), "
-             "offset, sill, width, height. Metres."}};
+             "Box: width, height, depth, hollow, wallThickness, floor, ceiling. Wall: points ([[x, z], ...] from "
+             "the entity's position), closed (a room), height, thickness, floor. Opening: side (+x, -x, +z, -z), "
+             "segment (on walls: the path segment, from points[segment] to the next), offset, sill, width, height. "
+             "Metres."}};
 }
 
 bool ReadVec3(const Json& value, Vec3& out)
@@ -108,9 +110,10 @@ void RegisterConstructionAutomation(AutomationService& service)
     RegisterOrThrow(service, Definition(
         "construction.create",
         "Create a construction shape: 'box' (solid), 'room' (hollow with a floor), 'stairs' (climbing towards "
-        "+Z; params steps and maxRise), 'plane', 'cylinder' or 'sphere' (params width, height, depth, segments). "
+        "+Z; params steps and maxRise), 'wall' (params points and closed; a closed wall is a room of any shape), 'plane', "
+        "'cylinder' or 'sphere' (params width, height, depth, segments). "
         "Its base sits on position. operation 'subtract' makes a box cut every box it overlaps.",
-        ObjectSchema({{"recipe", {{"type", "string"}, {"enum", Json::array({"box", "room", "stairs", "plane", "cylinder", "sphere"})}}},
+        ObjectSchema({{"recipe", {{"type", "string"}, {"enum", Json::array({"box", "room", "stairs", "wall", "plane", "cylinder", "sphere"})}}},
                       {"operation", {{"type", "string"}, {"enum", Json::array({"add", "subtract"})}}},
                       {"name", {{"type", "string"}}},
                       {"role", {{"type", "string"}}},
@@ -123,7 +126,8 @@ void RegisterConstructionAutomation(AutomationService& service)
             const std::string recipe = arguments["recipe"].get<std::string>();
             ConstructionShapeComponent shape;
             shape.recipe = recipe == "stairs" ? Recipe::Stairs : recipe == "plane" ? Recipe::Plane
-                : recipe == "cylinder" ? Recipe::Cylinder : recipe == "sphere" ? Recipe::Sphere : Recipe::Box;
+                : recipe == "cylinder" ? Recipe::Cylinder : recipe == "sphere" ? Recipe::Sphere
+                : recipe == "wall" ? Recipe::Wall : Recipe::Box;
             shape.box.hollow = recipe == "room";
             shape.role = recipe == "box" ? "block" : recipe;
             std::string error;
@@ -150,7 +154,7 @@ void RegisterConstructionAutomation(AutomationService& service)
 
     RegisterOrThrow(service, Definition(
         "construction.add_opening",
-        "Cut a doorway or window into a construction box wall. The opening is a child entity of the host.",
+        "Cut a doorway or window into a construction block, room or wall. The opening is a child entity of the host.",
         ObjectSchema({{"host", {{"type", "string"}}},
                       {"name", {{"type", "string"}}},
                       {"role", {{"type", "string"}}},
@@ -161,8 +165,9 @@ void RegisterConstructionAutomation(AutomationService& service)
             ToolResult failure;
             const auto host = ResolveEntity(context, hostArguments, failure);
             if (!host) return failure;
-            if (!ConstructionSystem::IsBox(*host->scene, host->handle)) {
-                return Failure(ErrorCode::InvalidArguments, "host is not a construction box");
+            const auto* hostShape = host->scene->GetRegistry().try_get<ConstructionShapeComponent>(host->handle);
+            if (!hostShape || !Construction::CanHostOpenings(*hostShape)) {
+                return Failure(ErrorCode::InvalidArguments, "host is not a construction block, room or wall");
             }
             ConstructionShapeComponent shape;
             shape.recipe = Recipe::Opening;

@@ -465,8 +465,8 @@ WallFrame GetWallFrame(const BoxParams& box, WallSide side)
 void SortOpenings(std::vector<OpeningParams>& openings)
 {
     std::sort(openings.begin(), openings.end(), [](const OpeningParams& a, const OpeningParams& b) {
-        return std::make_tuple(static_cast<int>(a.side), a.offset, a.sill, a.width, a.height) <
-               std::make_tuple(static_cast<int>(b.side), b.offset, b.sill, b.width, b.height);
+        return std::make_tuple(a.segment, static_cast<int>(a.side), a.offset, a.sill, a.width, a.height) <
+               std::make_tuple(b.segment, static_cast<int>(b.side), b.offset, b.sill, b.width, b.height);
     });
 }
 
@@ -662,9 +662,389 @@ bool EvaluateSphere(const BoxParams& size, int segments, EvaluatedGeometry& out)
     return true;
 }
 
+namespace {
+
+float Cross2(float ax, float az, float bx, float bz)
+{
+    return ax * bz - az * bx;
+}
+
+float SignedArea(const std::vector<WallPoint>& polygon)
+{
+    float area = 0.0f;
+    for (size_t n = 0; n < polygon.size(); ++n) {
+        const WallPoint& a = polygon[n];
+        const WallPoint& b = polygon[(n + 1) % polygon.size()];
+        area += Cross2(a.x, a.z, b.x, b.z);
+    }
+    return area * 0.5f;
+}
+
+// Adds a triangle facing along normal, flipping its winding when needed.
+void PushFacing(EvaluatedGeometry& out, const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& normal, FaceTag tag)
+{
+    const bool flip = vdot(vcross(vsub(b, a), vsub(c, a)), normal) < 0.0f;
+    const uint32_t base = static_cast<uint32_t>(out.mesh.vertices.size());
+    for (const Vec3& p : {a, b, c}) {
+        float u = p.x;
+        float v = p.z;
+        if (std::fabs(normal.y) < 0.5f) {
+            u = std::fabs(normal.x) > std::fabs(normal.z) ? p.z : p.x;
+            v = p.y;
+        }
+        PushVertex(out.mesh, p, normal, u, v);
+    }
+    if (flip) {
+        out.mesh.indices.insert(out.mesh.indices.end(), {base, base + 2, base + 1});
+    } else {
+        out.mesh.indices.insert(out.mesh.indices.end(), {base, base + 1, base + 2});
+    }
+    out.triangleTags.push_back(tag);
+}
+
+LocalBox BoundsOfPoints(const std::vector<Vec3>& points)
+{
+    LocalBox box{points.front(), points.front()};
+    for (const Vec3& p : points) {
+        box.min = Vec3(std::min(box.min.x, p.x), std::min(box.min.y, p.y), std::min(box.min.z, p.z));
+        box.max = Vec3(std::max(box.max.x, p.x), std::max(box.max.y, p.y), std::max(box.max.z, p.z));
+    }
+    return box;
+}
+
+// A box collider when the points are an axis-aligned box's corners, otherwise a convex hull.
+void AddSolid(EvaluatedGeometry& out, const std::vector<Vec3>& corners)
+{
+    const LocalBox bounds = BoundsOfPoints(corners);
+    bool aligned = true;
+    for (const Vec3& p : corners) {
+        const bool onX = std::fabs(p.x - bounds.min.x) < 1e-4f || std::fabs(p.x - bounds.max.x) < 1e-4f;
+        const bool onZ = std::fabs(p.z - bounds.min.z) < 1e-4f || std::fabs(p.z - bounds.max.z) < 1e-4f;
+        aligned = aligned && onX && onZ;
+    }
+    // A prism over a quad has 8 corners; over a triangle 6, which is never a box.
+    if (aligned && corners.size() == 8) {
+        out.solids.push_back(bounds);
+    } else {
+        out.hulls.push_back(corners);
+    }
+}
+
+// A vertical prism over a convex polygon (counter-clockwise in x, z), with all its faces.
+void AddPrism(EvaluatedGeometry& out, const std::vector<WallPoint>& polygon, float y0, float y1)
+{
+    const Vec3 up(0.0f, 1.0f, 0.0f);
+    const Vec3 down(0.0f, -1.0f, 0.0f);
+    const FaceTag reveal{FaceGroup::Reveal, -1, -1};
+    for (size_t n = 1; n + 1 < polygon.size(); ++n) {
+        const WallPoint& a = polygon[0];
+        const WallPoint& b = polygon[n];
+        const WallPoint& c = polygon[n + 1];
+        PushFacing(out, Vec3(a.x, y1, a.z), Vec3(b.x, y1, b.z), Vec3(c.x, y1, c.z), up, FaceTag{FaceGroup::Top, -1, -1});
+        PushFacing(out, Vec3(a.x, y0, a.z), Vec3(b.x, y0, b.z), Vec3(c.x, y0, c.z), down, FaceTag{FaceGroup::Bottom, -1, -1});
+    }
+    std::vector<Vec3> corners;
+    for (size_t n = 0; n < polygon.size(); ++n) {
+        const WallPoint& a = polygon[n];
+        const WallPoint& b = polygon[(n + 1) % polygon.size()];
+        const Vec3 normal = vnorm(Vec3(b.z - a.z, 0.0f, -(b.x - a.x)));
+        PushFacing(out, Vec3(a.x, y0, a.z), Vec3(b.x, y0, b.z), Vec3(b.x, y1, b.z), normal, reveal);
+        PushFacing(out, Vec3(a.x, y0, a.z), Vec3(b.x, y1, b.z), Vec3(a.x, y1, a.z), normal, reveal);
+        corners.push_back(Vec3(a.x, y0, a.z));
+        corners.push_back(Vec3(a.x, y1, a.z));
+    }
+    AddSolid(out, corners);
+}
+
+bool PointInPolygon(const std::vector<WallPoint>& polygon, float x, float z)
+{
+    bool inside = false;
+    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+        const WallPoint& a = polygon[i];
+        const WallPoint& b = polygon[j];
+        if ((a.z > z) != (b.z > z) && x < (b.x - a.x) * (z - a.z) / (b.z - a.z) + a.x) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+} // namespace
+
+std::vector<int> TriangulatePolygon(const std::vector<WallPoint>& polygon)
+{
+    std::vector<int> triangles;
+    std::vector<int> remaining;
+    for (int n = 0; n < static_cast<int>(polygon.size()); ++n) {
+        remaining.push_back(n);
+    }
+    if (SignedArea(polygon) < 0.0f) {
+        std::reverse(remaining.begin(), remaining.end());
+    }
+    auto inTriangle = [&](const WallPoint& p, const WallPoint& a, const WallPoint& b, const WallPoint& c) {
+        const float d0 = Cross2(b.x - a.x, b.z - a.z, p.x - a.x, p.z - a.z);
+        const float d1 = Cross2(c.x - b.x, c.z - b.z, p.x - b.x, p.z - b.z);
+        const float d2 = Cross2(a.x - c.x, a.z - c.z, p.x - c.x, p.z - c.z);
+        return d0 >= 0.0f && d1 >= 0.0f && d2 >= 0.0f;
+    };
+    // Ear clipping. A polygon that crosses itself runs out of ears; what is left is not covered.
+    size_t guard = remaining.size() * remaining.size() + 8;
+    while (remaining.size() > 3 && guard-- > 0) {
+        bool clipped = false;
+        const size_t count = remaining.size();
+        for (size_t n = 0; n < count; ++n) {
+            const WallPoint& a = polygon[remaining[(n + count - 1) % count]];
+            const WallPoint& b = polygon[remaining[n]];
+            const WallPoint& c = polygon[remaining[(n + 1) % count]];
+            if (Cross2(b.x - a.x, b.z - a.z, c.x - b.x, c.z - b.z) <= 1e-7f) {
+                continue;
+            }
+            bool ear = true;
+            for (size_t m = 0; m < count && ear; ++m) {
+                if (m == n || m == (n + 1) % count || m == (n + count - 1) % count) continue;
+                ear = !inTriangle(polygon[remaining[m]], a, b, c);
+            }
+            if (!ear) continue;
+            triangles.insert(triangles.end(), {remaining[(n + count - 1) % count], remaining[n], remaining[(n + 1) % count]});
+            remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(n));
+            clipped = true;
+            break;
+        }
+        if (!clipped) {
+            break;
+        }
+    }
+    if (remaining.size() == 3) {
+        triangles.insert(triangles.end(), {remaining[0], remaining[1], remaining[2]});
+    }
+    return triangles;
+}
+
+bool GetWallSegmentFrame(const ConstructionShapeComponent& shape, int segment, WallSegmentFrame& out)
+{
+    if (segment < 0 || segment >= WallSegmentCount(shape)) {
+        return false;
+    }
+    const auto& points = shape.wall.points;
+    const WallPoint& a = points[static_cast<size_t>(segment)];
+    const WallPoint& b = points[static_cast<size_t>(segment + 1) % points.size()];
+    const Vec3 delta(b.x - a.x, 0.0f, b.z - a.z);
+    out.length = vlen(delta);
+    if (out.length < 1e-3f) {
+        return false;
+    }
+    out.d = vscale(delta, 1.0f / out.length);
+    out.n = Vec3(-out.d.z, 0.0f, out.d.x);
+    out.mid = Vec3((a.x + b.x) * 0.5f, 0.0f, (a.z + b.z) * 0.5f);
+    return true;
+}
+
+bool GetHostWallFrame(const ConstructionShapeComponent& host, WallSide side, int segment, WallFrame& out)
+{
+    if (host.recipe != Recipe::Wall) {
+        out = GetWallFrame(host.box, side);
+        return true;
+    }
+    WallSegmentFrame frame;
+    if ((side != WallSide::PosZ && side != WallSide::NegZ) || !GetWallSegmentFrame(host, segment, frame)) {
+        return false;
+    }
+    const float sign = side == WallSide::PosZ ? 1.0f : -1.0f;
+    out.center = vadd(frame.mid, vscale(frame.n, sign * host.box.wallThickness * 0.5f));
+    out.u = frame.d;
+    out.normal = vscale(frame.n, sign);
+    out.halfLength = frame.length * 0.5f;
+    out.height = host.box.height;
+    out.thickness = host.box.wallThickness;
+    return true;
+}
+
+float HostFloorTop(const ConstructionShapeComponent& host)
+{
+    if (host.recipe == Recipe::Wall) {
+        return host.wall.closed && host.box.floor ? host.box.wallThickness : 0.0f;
+    }
+    return host.box.hollow && host.box.floor ? host.box.wallThickness : 0.0f;
+}
+
+bool EvaluateWall(const ConstructionShapeComponent& shape, const std::vector<OpeningParams>& openings,
+                  EvaluatedGeometry& out, const std::vector<LocalBox>& cuts)
+{
+    out = EvaluatedGeometry{};
+    const float t = shape.box.wallThickness;
+    const float h = shape.box.height;
+    const int count = WallSegmentCount(shape);
+    const Vec3 up(0.0f, 1.0f, 0.0f);
+    std::vector<WallSegmentFrame> frames(static_cast<size_t>(std::max(count, 0)));
+    std::vector<bool> valid(frames.size(), false);
+    for (int i = 0; i < count; ++i) {
+        valid[static_cast<size_t>(i)] = GetWallSegmentFrame(shape, i, frames[static_cast<size_t>(i)]);
+    }
+
+    for (int i = 0; i < count; ++i) {
+        if (!valid[static_cast<size_t>(i)]) continue;
+        const WallSegmentFrame& f = frames[static_cast<size_t>(i)];
+        auto toWall = [&](const Vec3& p) { return vadd(f.mid, vadd(vscale(f.d, p.x), vadd(vscale(up, p.y), vscale(f.n, p.z)))); };
+        auto toSegment = [&](const Vec3& p) {
+            const Vec3 r = vsub(p, f.mid);
+            return Vec3(vdot(r, f.d), p.y, vdot(r, f.n));
+        };
+        BoxParams box;
+        box.width = f.length;
+        box.height = h;
+        box.depth = t;
+        box.hollow = false;
+        std::vector<OpeningParams> own;
+        for (OpeningParams o : openings) {
+            if (o.segment == i) {
+                o.side = WallSide::PosZ;
+                own.push_back(o);
+            }
+        }
+        std::vector<LocalBox> segmentCuts;
+        for (const LocalBox& cut : cuts) {
+            std::vector<Vec3> corners;
+            for (int n = 0; n < 8; ++n) {
+                corners.push_back(toSegment(Vec3(n & 1 ? cut.max.x : cut.min.x, n & 2 ? cut.max.y : cut.min.y,
+                                                 n & 4 ? cut.max.z : cut.min.z)));
+            }
+            segmentCuts.push_back(BoundsOfPoints(corners));
+        }
+        EvaluatedGeometry part;
+        EvaluateBox(box, own, part, segmentCuts);
+        const uint32_t base = static_cast<uint32_t>(out.mesh.vertices.size());
+        for (Vertex v : part.mesh.vertices) {
+            const Vec3 p = toWall(Vec3(v.pos[0], v.pos[1], v.pos[2]));
+            const Vec3 n = vadd(vscale(f.d, v.normal[0]), vadd(vscale(up, v.normal[1]), vscale(f.n, v.normal[2])));
+            v.pos[0] = p.x; v.pos[1] = p.y; v.pos[2] = p.z;
+            v.normal[0] = n.x; v.normal[1] = n.y; v.normal[2] = n.z;
+            out.mesh.vertices.push_back(v);
+        }
+        for (uint32_t index : part.mesh.indices) {
+            out.mesh.indices.push_back(base + index);
+        }
+        for (FaceTag tag : part.triangleTags) {
+            const bool face = tag.wall == static_cast<std::int8_t>(WallSide::PosZ) ||
+                              tag.wall == static_cast<std::int8_t>(WallSide::NegZ);
+            tag.wall = face ? tag.wall : static_cast<std::int8_t>(-1);
+            tag.segment = static_cast<std::int16_t>(i);
+            out.triangleTags.push_back(tag);
+        }
+        for (const LocalBox& solid : part.solids) {
+            std::vector<Vec3> corners;
+            for (int n = 0; n < 8; ++n) {
+                corners.push_back(toWall(Vec3(n & 1 ? solid.max.x : solid.min.x, n & 2 ? solid.max.y : solid.min.y,
+                                              n & 4 ? solid.max.z : solid.min.z)));
+            }
+            AddSolid(out, corners);
+        }
+    }
+
+    // Corners: the wedge between two segments' outer faces, out to where those faces meet.
+    const int joints = shape.wall.closed ? count : count - 1;
+    for (int j = 0; j < joints; ++j) {
+        const int ia = shape.wall.closed ? (j + count - 1) % count : j;
+        const int ib = shape.wall.closed ? j : j + 1;
+        if (!valid[static_cast<size_t>(ia)] || !valid[static_cast<size_t>(ib)]) continue;
+        const WallSegmentFrame& a = frames[static_cast<size_t>(ia)];
+        const WallSegmentFrame& b = frames[static_cast<size_t>(ib)];
+        const float turn = Cross2(a.d.x, a.d.z, b.d.x, b.d.z);
+        if (std::fabs(turn) < 1e-4f) continue;
+        const WallPoint& joint = shape.wall.points[static_cast<size_t>(ib)];
+        const Vec3 p(joint.x, 0.0f, joint.z);
+        const float outer = turn > 0.0f ? -0.5f * t : 0.5f * t;
+        const Vec3 aOut = vadd(p, vscale(a.n, outer));
+        const Vec3 bOut = vadd(p, vscale(b.n, outer));
+        std::vector<WallPoint> wedge = {{p.x, p.z}, {aOut.x, aOut.z}};
+        // The outer faces meet at aOut + s * a.d.
+        const float s = Cross2(bOut.x - aOut.x, bOut.z - aOut.z, b.d.x, b.d.z) / Cross2(a.d.x, a.d.z, b.d.x, b.d.z);
+        const Vec3 miter = vadd(aOut, vscale(a.d, s));
+        if (s > 0.0f && vlen(vsub(miter, p)) <= 2.0f * t) {
+            wedge.push_back({miter.x, miter.z});
+        }
+        wedge.push_back({bOut.x, bOut.z});
+        if (SignedArea(wedge) < 0.0f) {
+            std::reverse(wedge.begin(), wedge.end());
+        }
+        AddPrism(out, wedge, 0.0f, h);
+    }
+
+    // The floor slab, under the walls' centre line so its edges are hidden inside them.
+    if (shape.wall.closed && shape.box.floor && count >= 3) {
+        const std::vector<WallPoint>& polygon = shape.wall.points;
+        const std::vector<int> triangles = TriangulatePolygon(polygon);
+        for (size_t n = 0; n + 2 < triangles.size(); n += 3) {
+            const WallPoint& a = polygon[static_cast<size_t>(triangles[n])];
+            const WallPoint& b = polygon[static_cast<size_t>(triangles[n + 1])];
+            const WallPoint& c = polygon[static_cast<size_t>(triangles[n + 2])];
+            PushFacing(out, Vec3(a.x, t, a.z), Vec3(b.x, t, b.z), Vec3(c.x, t, c.z), up, FaceTag{FaceGroup::Inner, -1, -1});
+            PushFacing(out, Vec3(a.x, 0.0f, a.z), Vec3(b.x, 0.0f, b.z), Vec3(c.x, 0.0f, c.z), Vec3(0.0f, -1.0f, 0.0f),
+                       FaceTag{FaceGroup::Bottom, -1, -1});
+        }
+        bool rectilinear = true;
+        for (size_t n = 0; n < polygon.size(); ++n) {
+            const WallPoint& a = polygon[n];
+            const WallPoint& b = polygon[(n + 1) % polygon.size()];
+            rectilinear = rectilinear && (std::fabs(a.x - b.x) < 1e-4f || std::fabs(a.z - b.z) < 1e-4f);
+        }
+        if (rectilinear) {
+            // Exact boxes: the grid of every point's x and z, keeping the cells inside the path.
+            std::vector<float> xs;
+            std::vector<float> zs;
+            for (const WallPoint& point : polygon) {
+                xs.push_back(point.x);
+                zs.push_back(point.z);
+            }
+            Unique(xs);
+            Unique(zs);
+            std::vector<Prism> cells;
+            for (size_t i = 0; i + 1 < xs.size(); ++i) {
+                for (size_t k = 0; k + 1 < zs.size(); ++k) {
+                    if (PointInPolygon(polygon, (xs[i] + xs[i + 1]) * 0.5f, (zs[k] + zs[k + 1]) * 0.5f)) {
+                        cells.push_back(Prism{{xs[i], 0.0f, zs[k]}, {xs[i + 1], t, zs[k + 1]}});
+                    }
+                }
+            }
+            if (!cells.empty()) {
+                EmitSolids(CellGrid(cells), out);
+            }
+        } else {
+            for (size_t n = 0; n + 2 < triangles.size(); n += 3) {
+                std::vector<Vec3> prism;
+                for (size_t m = 0; m < 3; ++m) {
+                    const WallPoint& point = polygon[static_cast<size_t>(triangles[n + m])];
+                    prism.push_back(Vec3(point.x, 0.0f, point.z));
+                    prism.push_back(Vec3(point.x, t, point.z));
+                }
+                out.hulls.push_back(prism);
+            }
+        }
+    }
+
+    if (out.mesh.vertices.empty()) {
+        return false;
+    }
+    std::vector<Vec3> positions;
+    for (const Vertex& v : out.mesh.vertices) {
+        positions.push_back(Vec3(v.pos[0], v.pos[1], v.pos[2]));
+    }
+    const LocalBox bounds = BoundsOfPoints(positions);
+    out.mesh.bounds = AABB(bounds.min, bounds.max);
+    MeshData::Submesh all;
+    all.indexCount = static_cast<uint32_t>(out.mesh.indices.size());
+    all.name = "Construction";
+    all.bounds = out.mesh.bounds;
+    out.mesh.submeshes.push_back(all);
+    return true;
+}
+
 bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningParams> openings,
                    EvaluatedGeometry& out, const std::vector<LocalBox>& cuts)
 {
+    if (shape.recipe == Recipe::Wall) {
+        SortOpenings(openings);
+        return EvaluateWall(shape, openings, out, cuts);
+    }
     if (shape.recipe == Recipe::Plane) {
         return EvaluatePlane(shape.box, out);
     }
@@ -704,11 +1084,18 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
     h.Int(b.ceiling);
     h.Int(shape.stairs.steps);
     h.Int(shape.segments);
+    h.Int(shape.wall.closed);
+    h.Int(static_cast<std::int64_t>(shape.wall.points.size()));
+    for (const WallPoint& point : shape.wall.points) {
+        h.Float(point.x);
+        h.Float(point.z);
+    }
     h.Float(shape.stairs.maxRise);
     SortOpenings(openings);
     h.Int(static_cast<std::int64_t>(openings.size()));
     for (const OpeningParams& o : openings) {
         h.Int(static_cast<int>(o.side));
+        h.Int(o.segment);
         h.Float(o.offset);
         h.Float(o.sill);
         h.Float(o.width);
@@ -734,6 +1121,12 @@ std::uint64_t HashGeometry(const EvaluatedGeometry& geometry)
     for (const LocalBox& box : geometry.solids) {
         h.Float(box.min.x); h.Float(box.min.y); h.Float(box.min.z);
         h.Float(box.max.x); h.Float(box.max.y); h.Float(box.max.z);
+    }
+    for (const auto& hull : geometry.hulls) {
+        h.Int(static_cast<std::int64_t>(hull.size()));
+        for (const Vec3& p : hull) {
+            h.Float(p.x); h.Float(p.y); h.Float(p.z);
+        }
     }
     return h.value;
 }

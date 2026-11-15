@@ -98,9 +98,25 @@ void AddRectLines(std::vector<EditorDebugLine>& lines, const Vec3 corners[4], co
     }
 }
 
-float FloorTop(const BoxParams& box)
+// The face of a host an opening sits on: a box side, or a face of a wall segment.
+bool HostFrame(Scene& scene, entt::entity host, WallSide side, int segment, WallFrame& out)
 {
-    return box.hollow && box.floor ? box.wallThickness : 0.0f;
+    entt::registry& registry = scene.GetRegistry();
+    if (!registry.valid(host) || !registry.all_of<ConstructionShapeComponent>(host)) {
+        return false;
+    }
+    const auto& shape = registry.get<ConstructionShapeComponent>(host);
+    return CanHostOpenings(shape) && GetHostWallFrame(shape, side, segment, out);
+}
+
+Vec3 FrameCoordinates(const WallFrame& wall, const Vec3& local)
+{
+    return Vec3(vdot(vsub(local, wall.center), wall.u), local.y, 0.0f);
+}
+
+float HostFloor(Scene& scene, entt::entity host)
+{
+    return HostFloorTop(scene.GetRegistry().get<ConstructionShapeComponent>(host));
 }
 
 const char* PhaseHint(int phase)
@@ -111,6 +127,8 @@ const char* PhaseHint(int phase)
     case 3: return "Drag to resize. Shift resizes both sides. Ctrl turns snapping off. Esc cancels.";
     case 4: return "Drag the opening's outline on the wall. Click for a default door or window.";
     case 5: return "Drag to move the opening along the wall. Esc cancels.";
+    case 6: return "Click to add corners. Click the first corner to close a room, or the last one again (or Enter) to "
+                   "finish. Type a length then Enter. Shift keeps it straight. Backspace removes a corner.";
     default: return "";
     }
 }
@@ -119,8 +137,7 @@ const char* PhaseHint(int phase)
 
 Vec3 WallCoordinates(const BoxParams& box, WallSide side, const Vec3& local)
 {
-    const WallFrame wall = GetWallFrame(box, side);
-    return Vec3(vdot(vsub(local, wall.center), wall.u), local.y, 0.0f);
+    return FrameCoordinates(GetWallFrame(box, side), local);
 }
 
 void ConstructionTool::SetMode(ToolMode mode)
@@ -157,6 +174,17 @@ std::vector<ConstructionTool::Handle> ConstructionTool::HandlesFor(const Constru
     const BoxParams& b = shape.box;
     const float hw = b.width * 0.5f;
     const float hd = b.depth * 0.5f;
+    if (shape.recipe == Recipe::Wall) {
+        std::vector<Handle> handles;
+        for (size_t n = 0; n < shape.wall.points.size(); ++n) {
+            handles.push_back({1, 1, Vec3(shape.wall.points[n].x, 0.0f, shape.wall.points[n].z), static_cast<int>(n)});
+        }
+        WallSegmentFrame first;
+        if (GetWallSegmentFrame(shape, 0, first)) {
+            handles.push_back({1, 1, vadd(first.mid, Vec3(0.0f, b.height, 0.0f)), -1});
+        }
+        return handles;
+    }
     if (shape.recipe == Recipe::Plane) {
         return {{0, 1, Vec3(hw, 0.0f, 0.0f)}, {0, -1, Vec3(-hw, 0.0f, 0.0f)},
                 {2, 1, Vec3(0.0f, 0.0f, hd)}, {2, -1, Vec3(0.0f, 0.0f, -hd)}};
@@ -204,6 +232,18 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
         CommitBox(scene);
         return true;
     }
+    if (m_phase == Phase::Path) {
+        UpdatePath(input);
+        if (PathCanClose(input)) {
+            CommitWall(scene, true);
+        } else if (vlen(vsub(m_corner, m_path.back())) < kMinDimension) {
+            // Clicking the last corner again finishes an open wall.
+            if (m_path.size() >= 2) CommitWall(scene, false);
+        } else {
+            m_path.push_back(m_corner);
+        }
+        return true;
+    }
     if (m_phase != Phase::Idle) {
         return true;
     }
@@ -218,6 +258,18 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
         m_phase = Phase::Base;
         return true;
     }
+    if (m_mode == ToolMode::DrawWall) {
+        Vec3 point;
+        if (!PlacementPoint(scene, system, input, point)) {
+            return false;
+        }
+        m_path = {point};
+        m_anchor = point;
+        m_corner = point;
+        m_typed.clear();
+        m_phase = Phase::Path;
+        return true;
+    }
     if (m_mode == ToolMode::DrawOpening) {
         entt::entity picked = entt::null;
         Vec3 pickedLocal;
@@ -226,9 +278,13 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
             m_target = scene.GetRegistry().get<TransformComponent>(picked).parent;
             m_startOpening = scene.GetRegistry().get<ConstructionShapeComponent>(picked).opening;
             m_wall = m_startOpening.side;
+            m_segment = m_startOpening.segment;
             m_planePoint = pickedLocal;
-            m_wallStart = WallCoordinates(scene.GetRegistry().get<ConstructionShapeComponent>(m_target).box, m_wall,
-                                          pickedLocal);
+            WallFrame frame;
+            if (!HostFrame(scene, m_target, m_wall, m_segment, frame)) {
+                return false;
+            }
+            m_wallStart = FrameCoordinates(frame, pickedLocal);
             if (m_host.pushUndo) m_host.pushUndo("Move opening");
             m_phase = Phase::OpeningMove;
             return true;
@@ -237,11 +293,15 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
         if (!system.Raycast(scene, input.ray, hit) || hit.tag.wall < 0) {
             return false;
         }
+        WallFrame frame;
+        if (!HostFrame(scene, hit.entity, static_cast<WallSide>(hit.tag.wall), std::max<int>(0, hit.tag.segment), frame)) {
+            return false;
+        }
         m_target = hit.entity;
         m_wall = static_cast<WallSide>(hit.tag.wall);
+        m_segment = std::max<int>(0, hit.tag.segment);
         m_planePoint = hit.localPoint;
-        const BoxParams& box = scene.GetRegistry().get<ConstructionShapeComponent>(m_target).box;
-        const Vec3 wc = WallCoordinates(box, m_wall, hit.localPoint);
+        const Vec3 wc = FrameCoordinates(frame, hit.localPoint);
         m_wallStart = wc;
         m_wallCurrent = wc;
         m_opening = entt::null;
@@ -259,6 +319,7 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
     m_handle = handle;
     const auto& shape = scene.GetRegistry().get<ConstructionShapeComponent>(entity);
     m_startBox = shape.box;
+    m_startWall = shape.wall;
     m_startPosition = scene.GetRegistry().get<TransformComponent>(entity).position;
     const Mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
     m_handleWorldOrigin = Mat4::TransformPoint(world, handle.local);
@@ -281,17 +342,22 @@ void ConstructionTool::OnMove(Scene& scene, ConstructionSystem& system, const To
     case Phase::Handle: UpdateHandleDrag(scene, input); return;
     case Phase::OpeningDraw: UpdateOpeningDraw(scene, input); return;
     case Phase::OpeningMove: UpdateOpeningMove(scene, input); return;
+    case Phase::Path: UpdatePath(input); return;
     case Phase::Idle: break;
     }
     m_hoverValid = false;
-    if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs) {
+    if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
+        m_mode == ToolMode::DrawWall) {
         m_hoverValid = PlacementPoint(scene, system, input, m_hoverPoint);
     } else if (m_mode == ToolMode::DrawOpening) {
         ConstructionHit hit;
-        if (system.Raycast(scene, input.ray, hit) && hit.tag.wall >= 0) {
+        WallFrame frame;
+        if (system.Raycast(scene, input.ray, hit) && hit.tag.wall >= 0 &&
+            HostFrame(scene, hit.entity, static_cast<WallSide>(hit.tag.wall), std::max<int>(0, hit.tag.segment), frame)) {
             m_hoverValid = true;
             m_hoverHost = hit.entity;
             m_hoverWall = static_cast<WallSide>(hit.tag.wall);
+            m_hoverSegment = std::max<int>(0, hit.tag.segment);
             m_hoverLocal = hit.localPoint;
         }
     }
@@ -327,11 +393,72 @@ bool ConstructionTool::OnRelease(Scene& scene, ConstructionSystem&, const ToolIn
         CommitOpening(scene);
         return true;
     case Phase::Height:
+    case Phase::Path:
         return true;
     case Phase::Idle:
         break;
     }
     return false;
+}
+
+void ConstructionTool::UpdatePath(const ToolInput& input)
+{
+    Vec3 point;
+    if (!IntersectPlane(input.ray, m_anchor, Vec3(0, 1, 0), point)) {
+        return;
+    }
+    point = Vec3(Snap(point.x, input), m_anchor.y, Snap(point.z, input));
+    if (input.shift && !m_path.empty()) {
+        const Vec3& last = m_path.back();
+        if (std::fabs(point.x - last.x) > std::fabs(point.z - last.z)) {
+            point.z = last.z;
+        } else {
+            point.x = last.x;
+        }
+    }
+    m_corner = point;
+}
+
+bool ConstructionTool::PathCanClose(const ToolInput& input) const
+{
+    if (m_path.size() < 3) {
+        return false;
+    }
+    const float reach = std::max(0.15f, input.gridStep * 0.5f);
+    return std::hypot(m_corner.x - m_path.front().x, m_corner.z - m_path.front().z) < reach;
+}
+
+void ConstructionTool::CommitWall(Scene& scene, bool closed)
+{
+    std::vector<WallPoint> points;
+    const Vec3 origin = m_path.front();
+    for (const Vec3& p : m_path) {
+        const WallPoint point{p.x - origin.x, p.z - origin.z};
+        if (points.empty() || std::hypot(point.x - points.back().x, point.z - points.back().z) >= kMinDimension) {
+            points.push_back(point);
+        }
+    }
+    m_phase = Phase::Idle;
+    m_typed.clear();
+    m_path.clear();
+    if (points.size() < 2 || (closed && points.size() < 3)) {
+        return;
+    }
+    if (m_host.pushUndo) m_host.pushUndo(closed ? "Draw room" : "Draw wall");
+    Entity entity = scene.CreateEntity(closed ? "Room" : "Wall");
+    entity.GetComponent<TransformComponent>().position = origin;
+    auto& shape = entity.AddComponent<ConstructionShapeComponent>();
+    shape.recipe = Recipe::Wall;
+    shape.role = closed ? "room" : "wall";
+    shape.wall.points = std::move(points);
+    shape.wall.closed = closed;
+    shape.box.height = 3.0f;
+    shape.box.wallThickness = 0.2f;
+    shape.box.floor = true;
+    Sanitize(shape);
+    if (m_host.created) m_host.created(static_cast<entt::entity>(entity));
+    if (m_host.select) m_host.select(static_cast<entt::entity>(entity));
+    if (m_host.changed) m_host.changed();
 }
 
 void ConstructionTool::UpdateBase(const ToolInput& input)
@@ -410,6 +537,17 @@ void ConstructionTool::UpdateHandleDrag(Scene& scene, const ToolInput& input)
     if (!ClosestOnLine(m_handleWorldOrigin, m_handleWorldAxis, input.ray, t)) {
         return;
     }
+    if (m_handle.point >= 0) {
+        auto& shape = registry.get<ConstructionShapeComponent>(m_target);
+        Vec3 world;
+        if (m_handle.point >= static_cast<int>(shape.wall.points.size()) ||
+            !IntersectPlane(input.ray, m_handleWorldOrigin, Vec3(0, 1, 0), world)) {
+            return;
+        }
+        const Vec3 local = Mat4::TransformPoint(Mat4::Invert(scene.GetWorldTransform(Entity(m_target, &scene))), world);
+        shape.wall.points[static_cast<size_t>(m_handle.point)] = WallPoint{Snap(local.x, input), Snap(local.z, input)};
+        return;
+    }
     // The axis is one local unit long in world space, so t is already in the shape's own units.
     const float localDelta = t - m_handleStartT;
     auto& shape = registry.get<ConstructionShapeComponent>(m_target);
@@ -431,14 +569,13 @@ void ConstructionTool::UpdateHandleDrag(Scene& scene, const ToolInput& input)
 
 bool ConstructionTool::WallPointFromRay(Scene& scene, const ToolInput& input, Vec3& outLocal) const
 {
-    if (!scene.GetRegistry().valid(m_target)) {
+    WallFrame wall;
+    if (!HostFrame(scene, m_target, m_wall, m_segment, wall)) {
         return false;
     }
-    const BoxParams& box = scene.GetRegistry().get<ConstructionShapeComponent>(m_target).box;
     const Mat4 inverse = Mat4::Invert(scene.GetWorldTransform(Entity(m_target, &scene)));
     const Vec3 origin = Mat4::TransformPoint(inverse, input.ray.origin);
     const Vec3 dir = vsub(Mat4::TransformPoint(inverse, vadd(input.ray.origin, input.ray.direction)), origin);
-    const WallFrame wall = GetWallFrame(box, m_wall);
     return IntersectPlane(Ray(origin, dir), m_planePoint, wall.normal, outLocal) ||
            IntersectPlane(Ray(origin, dir), m_planePoint, vscale(wall.normal, -1.0f), outLocal);
 }
@@ -451,13 +588,11 @@ bool ConstructionTool::PickOpening(Scene& scene, const Ray& ray, entt::entity& o
     for (entt::entity entity : registry.view<ConstructionShapeComponent, TransformComponent>()) {
         const auto& shape = registry.get<ConstructionShapeComponent>(entity);
         const entt::entity host = registry.get<TransformComponent>(entity).parent;
-        if (shape.recipe != Recipe::Opening || host == entt::null || !registry.valid(host) ||
-            !ConstructionSystem::IsBox(scene, host)) {
+        const OpeningParams& o = shape.opening;
+        WallFrame wall;
+        if (shape.recipe != Recipe::Opening || host == entt::null || !HostFrame(scene, host, o.side, o.segment, wall)) {
             continue;
         }
-        const BoxParams& box = registry.get<ConstructionShapeComponent>(host).box;
-        const OpeningParams& o = shape.opening;
-        const WallFrame wall = GetWallFrame(box, o.side);
         const Mat4 world = scene.GetWorldTransform(Entity(host, &scene));
         const Mat4 inverse = Mat4::Invert(world);
         const Vec3 origin = Mat4::TransformPoint(inverse, ray.origin);
@@ -467,7 +602,7 @@ bool ConstructionTool::PickOpening(Scene& scene, const Ray& ray, entt::entity& o
             !IntersectPlane(Ray(origin, dir), wall.center, vscale(wall.normal, -1.0f), local)) {
             continue;
         }
-        const Vec3 wc = WallCoordinates(box, o.side, local);
+        const Vec3 wc = FrameCoordinates(wall, local);
         if (std::fabs(wc.x - o.offset) > o.width * 0.5f || wc.y < o.sill || wc.y > o.sill + o.height) {
             continue;
         }
@@ -488,8 +623,11 @@ void ConstructionTool::UpdateOpeningDraw(Scene& scene, const ToolInput& input)
     if (!WallPointFromRay(scene, input, local)) {
         return;
     }
-    const BoxParams& box = scene.GetRegistry().get<ConstructionShapeComponent>(m_target).box;
-    const Vec3 wc = WallCoordinates(box, m_wall, local);
+    WallFrame wall;
+    if (!HostFrame(scene, m_target, m_wall, m_segment, wall)) {
+        return;
+    }
+    const Vec3 wc = FrameCoordinates(wall, local);
     m_wallCurrent = Vec3(Snap(wc.x, input), Snap(wc.y, input), 0.0f);
 }
 
@@ -504,27 +642,30 @@ void ConstructionTool::UpdateOpeningMove(Scene& scene, const ToolInput& input)
     if (!WallPointFromRay(scene, input, local)) {
         return;
     }
-    const BoxParams& box = registry.get<ConstructionShapeComponent>(m_target).box;
-    const Vec3 wc = WallCoordinates(box, m_wall, local);
+    WallFrame wall;
+    if (!HostFrame(scene, m_target, m_wall, m_segment, wall)) {
+        return;
+    }
+    const Vec3 wc = FrameCoordinates(wall, local);
     OpeningParams& o = registry.get<ConstructionShapeComponent>(m_opening).opening;
-    const WallFrame wall = GetWallFrame(box, m_wall);
     const float limit = std::max(0.0f, wall.halfLength - o.width * 0.5f);
     // Snap the movement, not the position, so an opening standing on the floor stays on it.
     o.offset = std::clamp(m_startOpening.offset + Snap(wc.x - m_wallStart.x, input), -limit, limit);
-    o.sill = std::max(FloorTop(box), m_startOpening.sill + Snap(wc.y - m_wallStart.y, input));
+    o.sill = std::max(HostFloor(scene, m_target), m_startOpening.sill + Snap(wc.y - m_wallStart.y, input));
 }
 
 void ConstructionTool::CommitOpening(Scene& scene)
 {
     m_phase = Phase::Idle;
     entt::registry& registry = scene.GetRegistry();
-    if (!registry.valid(m_target) || !ConstructionSystem::IsBox(scene, m_target)) {
+    WallFrame wall;
+    if (!HostFrame(scene, m_target, m_wall, m_segment, wall)) {
         return;
     }
-    const BoxParams& box = registry.get<ConstructionShapeComponent>(m_target).box;
-    const float base = FloorTop(box);
+    const float base = HostFloor(scene, m_target);
     OpeningParams o;
     o.side = m_wall;
+    o.segment = m_segment;
     const float u0 = std::min(m_wallStart.x, m_wallCurrent.x);
     const float u1 = std::max(m_wallStart.x, m_wallCurrent.x);
     const float v0 = std::min(m_wallStart.y, m_wallCurrent.y);
@@ -544,11 +685,10 @@ void ConstructionTool::CommitOpening(Scene& scene)
         o.sill = door ? base : v0;
         o.height = v1 - o.sill;
     }
-    const WallFrame wall = GetWallFrame(box, m_wall);
     o.width = std::min(o.width, wall.halfLength * 2.0f);
     const float limit = std::max(0.0f, wall.halfLength - o.width * 0.5f);
     o.offset = std::clamp(o.offset, -limit, limit);
-    o.height = std::min(o.height, std::max(kMinDimension, box.height - o.sill));
+    o.height = std::min(o.height, std::max(kMinDimension, wall.height - o.sill));
 
     if (m_host.pushUndo) m_host.pushUndo(door ? "Add doorway" : "Add window");
     Entity opening = scene.CreateEntity(door ? "Doorway" : "Window");
@@ -595,6 +735,15 @@ bool ConstructionTool::ApplyTyped(Scene& scene, ConstructionSystem&)
         CommitBox(scene);
         return true;
     }
+    if (m_phase == Phase::Path) {
+        // The next corner, that far from the last one towards the cursor (along +X when the cursor is on it).
+        const Vec3 last = m_path.back();
+        Vec3 dir(m_corner.x - last.x, 0.0f, m_corner.z - last.z);
+        dir = vlen(dir) < 1e-4f ? Vec3(1.0f, 0.0f, 0.0f) : vnorm(dir);
+        m_path.push_back(vadd(last, vscale(dir, values[0])));
+        m_corner = m_path.back();
+        return true;
+    }
     return false;
 }
 
@@ -607,7 +756,7 @@ bool ConstructionTool::OnKey(Scene& scene, ConstructionSystem& system, int qtKey
         Cancel(scene);
         return true;
     }
-    if (m_phase != Phase::Base && m_phase != Phase::Height) {
+    if (m_phase != Phase::Base && m_phase != Phase::Height && m_phase != Phase::Path) {
         return false;
     }
     if ((qtKey >= '0' && qtKey <= '9') || qtKey == '.' || qtKey == ',') {
@@ -615,11 +764,20 @@ bool ConstructionTool::OnKey(Scene& scene, ConstructionSystem& system, int qtKey
         return true;
     }
     if (qtKey == kKeyBackspace) {
-        if (!m_typed.empty()) m_typed.pop_back();
+        if (!m_typed.empty()) {
+            m_typed.pop_back();
+        } else if (m_phase == Phase::Path) {
+            m_path.pop_back();
+            if (m_path.empty()) m_phase = Phase::Idle;
+        }
         return true;
     }
     if (qtKey == kKeyReturn || qtKey == kKeyEnter) {
-        ApplyTyped(scene, system);
+        if (m_phase == Phase::Path && m_typed.empty()) {
+            CommitWall(scene, false);
+        } else {
+            ApplyTyped(scene, system);
+        }
         return true;
     }
     return false;
@@ -630,6 +788,7 @@ void ConstructionTool::Cancel(Scene& scene)
     entt::registry& registry = scene.GetRegistry();
     if (m_phase == Phase::Handle && registry.valid(m_target) && registry.all_of<ConstructionShapeComponent>(m_target)) {
         registry.get<ConstructionShapeComponent>(m_target).box = m_startBox;
+        registry.get<ConstructionShapeComponent>(m_target).wall = m_startWall;
         registry.get<TransformComponent>(m_target).position = m_startPosition;
         if (m_host.discardUndo) m_host.discardUndo();
     } else if (m_phase == Phase::OpeningMove && registry.valid(m_opening) &&
@@ -639,6 +798,7 @@ void ConstructionTool::Cancel(Scene& scene)
     }
     m_phase = Phase::Idle;
     m_typed.clear();
+    m_path.clear();
 }
 
 std::string ConstructionTool::StatusText() const
@@ -650,10 +810,12 @@ std::string ConstructionTool::StatusText() const
     case Phase::Handle: text = PhaseHint(3); break;
     case Phase::OpeningDraw: text = PhaseHint(4); break;
     case Phase::OpeningMove: text = PhaseHint(5); break;
+    case Phase::Path: text = PhaseHint(6); break;
     case Phase::Idle:
         if (m_mode == ToolMode::DrawBox) text = "Draw Block: drag on the ground or a surface. Click for a 1 m block.";
         else if (m_mode == ToolMode::DrawRoom) text = "Draw Room: drag on the ground or a surface. Click for a 6 x 4 m room.";
         else if (m_mode == ToolMode::DrawStairs) text = "Draw Stairs: drag the footprint (they climb along the longer side, away from where you start), then move up for the height.";
+        else if (m_mode == ToolMode::DrawWall) text = "Draw Wall: click on the ground or a surface to place the first corner.";
         else if (m_mode == ToolMode::DrawOpening) text = "Draw Opening: drag on a wall. Click for a door near the floor or a window higher up. Drag an opening to move it.";
         break;
     }
@@ -675,18 +837,35 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
         return;
     }
     if (m_hoverValid && m_phase == Phase::Idle &&
-        (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs)) {
+        (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
+         m_mode == ToolMode::DrawWall)) {
         points.push_back({m_hoverPoint, kPreviewColor, 0.15f});
+    }
+    if (m_phase == Phase::Path && !m_path.empty()) {
+        const Vec3 lift(0.0f, 3.0f, 0.0f);
+        std::vector<Vec3> path = m_path;
+        path.push_back(m_corner);
+        for (size_t n = 0; n < path.size(); ++n) {
+            lines.push_back({path[n], vadd(path[n], lift), kPreviewColor});
+            if (n + 1 < path.size()) {
+                lines.push_back({path[n], path[n + 1], kPreviewColor});
+                lines.push_back({vadd(path[n], lift), vadd(path[n + 1], lift), kPreviewColor});
+            }
+            points.push_back({path[n], kPreviewColor, 0.12f});
+        }
+        if (PathCanClose(m_lastInput)) {
+            points.push_back({m_path.front(), kHandleColor, 0.25f});
+        }
+        return;
     }
 
     entt::registry& registry = scene.GetRegistry();
-    auto openingRect = [&](entt::entity host, WallSide side, float offset, float sill, float width, float height,
-                           const Vec3& color) {
-        if (!registry.valid(host) || !ConstructionSystem::IsBox(scene, host)) {
+    auto openingRect = [&](entt::entity host, WallSide side, int segment, float offset, float sill, float width,
+                           float height, const Vec3& color) {
+        WallFrame wall;
+        if (!HostFrame(scene, host, side, segment, wall)) {
             return;
         }
-        const BoxParams& box = registry.get<ConstructionShapeComponent>(host).box;
-        const WallFrame wall = GetWallFrame(box, side);
         const Mat4 world = scene.GetWorldTransform(Entity(host, &scene));
         const Vec3 lift = vscale(wall.normal, 0.01f);
         Vec3 corners[4];
@@ -703,13 +882,13 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
         const float u1 = std::max(m_wallStart.x, m_wallCurrent.x);
         const float v0 = std::min(m_wallStart.y, m_wallCurrent.y);
         const float v1 = std::max(m_wallStart.y, m_wallCurrent.y);
-        openingRect(m_target, m_wall, (u0 + u1) * 0.5f, v0, u1 - u0, v1 - v0, kPreviewColor);
-    } else if (m_mode == ToolMode::DrawOpening && m_hoverValid && m_phase == Phase::Idle &&
-               registry.valid(m_hoverHost) && ConstructionSystem::IsBox(scene, m_hoverHost)) {
-        const BoxParams& box = registry.get<ConstructionShapeComponent>(m_hoverHost).box;
-        const Vec3 wc = WallCoordinates(box, m_hoverWall, m_hoverLocal);
-        const bool door = wc.y < FloorTop(box) + 1.0f;
-        openingRect(m_hoverHost, m_hoverWall, wc.x, door ? FloorTop(box) : wc.y - kDefaultWindowHeight * 0.5f,
+        openingRect(m_target, m_wall, m_segment, (u0 + u1) * 0.5f, v0, u1 - u0, v1 - v0, kPreviewColor);
+    } else if (WallFrame hoverFrame; m_mode == ToolMode::DrawOpening && m_hoverValid && m_phase == Phase::Idle &&
+               HostFrame(scene, m_hoverHost, m_hoverWall, m_hoverSegment, hoverFrame)) {
+        const Vec3 wc = FrameCoordinates(hoverFrame, m_hoverLocal);
+        const float base = HostFloor(scene, m_hoverHost);
+        const bool door = wc.y < base + 1.0f;
+        openingRect(m_hoverHost, m_hoverWall, m_hoverSegment, wc.x, door ? base : wc.y - kDefaultWindowHeight * 0.5f,
                     kDefaultDoorWidth, door ? kDefaultDoorHeight : kDefaultWindowHeight, kPreviewColor);
     }
 
@@ -723,12 +902,13 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
     if (m_mode == ToolMode::DrawOpening && m_hoverValid) {
         host = m_hoverHost;
     }
-    if (host != entt::null && registry.valid(host) && ConstructionSystem::IsBox(scene, host)) {
+    if (host != entt::null && registry.valid(host) && registry.all_of<ConstructionShapeComponent>(host) &&
+        CanHostOpenings(registry.get<ConstructionShapeComponent>(host))) {
         for (entt::entity child : registry.get<TransformComponent>(host).children) {
             const auto* shape = registry.try_get<ConstructionShapeComponent>(child);
             if (shape && shape->recipe == Recipe::Opening) {
                 const OpeningParams& o = shape->opening;
-                openingRect(host, o.side, o.offset, o.sill, o.width, o.height,
+                openingRect(host, o.side, o.segment, o.offset, o.sill, o.width, o.height,
                             child == selected ? kHandleColor : kOpeningColor);
             }
         }
@@ -742,11 +922,13 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
             const Vec3 p = Mat4::TransformPoint(world, handle.local);
             const float distance = vlen(vsub(p, m_lastInput.ray.origin));
             const float s = std::max(0.04f, distance * 0.012f);
-            const bool active = m_phase == Phase::Handle && m_handle.axis == handle.axis && m_handle.dir == handle.dir;
+            const bool active = m_phase == Phase::Handle && m_handle.axis == handle.axis && m_handle.dir == handle.dir &&
+                                m_handle.point == handle.point;
             const Vec3 a = vscale(Axis((handle.axis + 1) % 3), s);
             const Vec3 b = vscale(Axis((handle.axis + 2) % 3), s);
             Vec3 corners[4] = {vadd(p, vadd(a, b)), vadd(p, vsub(a, b)), vsub(p, vadd(a, b)), vsub(p, vsub(a, b))};
             AddRectLines(lines, corners, active ? kPreviewColor : kHandleColor);
+            if (handle.point >= 0) continue;
             lines.push_back({p, vadd(p, vscale(Mat4::TransformDirection(world, vscale(Axis(handle.axis), float(handle.dir))), s * 3.0f)),
                              active ? kPreviewColor : kHandleColor});
         }

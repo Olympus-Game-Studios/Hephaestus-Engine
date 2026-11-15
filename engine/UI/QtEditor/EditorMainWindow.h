@@ -365,6 +365,7 @@ private:
     QAction* m_drawBlockAction = nullptr;
     QAction* m_drawRoomAction = nullptr;
     QAction* m_drawOpeningAction = nullptr;
+    QAction* m_drawWallAction = nullptr;
     QAction* m_drawStairsAction = nullptr;
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;

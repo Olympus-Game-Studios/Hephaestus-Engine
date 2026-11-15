@@ -91,7 +91,8 @@ public:
     // Openings parented to a box host, in canonical order.
     static std::vector<OpeningParams> CollectOpenings(Scene& scene, entt::entity host);
     static bool IsBox(Scene& scene, entt::entity entity);
-    // Switches a box between adding and cutting, swapping its material and in-game visibility to match.
+    // Switches a block between adding and cutting, swapping its material and in-game visibility to match. Other shapes
+    // only add; they get the blockout material if they have none.
     static void SetOperation(Scene& scene, entt::entity entity, Operation operation);
 
 private:

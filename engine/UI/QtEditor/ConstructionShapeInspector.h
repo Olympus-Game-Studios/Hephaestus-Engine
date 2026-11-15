@@ -42,6 +42,8 @@ private:
     QDoubleSpinBox* m_depth = nullptr;
     QDoubleSpinBox* m_segments = nullptr;
     QCheckBox* m_hollow = nullptr;
+    QCheckBox* m_closed = nullptr;
+    QLabel* m_wallInfo = nullptr;
     QDoubleSpinBox* m_wallThickness = nullptr;
     QCheckBox* m_floor = nullptr;
     QCheckBox* m_ceiling = nullptr;
@@ -52,7 +54,9 @@ private:
     QLabel* m_stairsInfo = nullptr;
 
     QGroupBox* m_openingGroup = nullptr;
+    QFormLayout* m_openingForm = nullptr;
     QComboBox* m_side = nullptr;
+    QDoubleSpinBox* m_openingSegment = nullptr;
     QDoubleSpinBox* m_offset = nullptr;
     QDoubleSpinBox* m_sill = nullptr;
     QDoubleSpinBox* m_openingWidth = nullptr;

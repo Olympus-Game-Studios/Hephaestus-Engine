@@ -36,6 +36,17 @@ Recipe PrimaryRecipe(EditorContext* ctx, entt::entity entity)
     return shape ? shape->recipe : Recipe::Box;
 }
 
+// Whether an opening sits on a wall (placed by segment) rather than a box side.
+bool OnWallHost(EditorContext* ctx, entt::entity opening)
+{
+    if (!ctx || !ctx->HasActiveScene()) return false;
+    const entt::registry& registry = ctx->GetActiveScene()->GetRegistry();
+    const auto* transform = registry.try_get<TransformComponent>(opening);
+    if (!transform || transform->parent == entt::null || !registry.valid(transform->parent)) return false;
+    const auto* host = registry.try_get<ConstructionShapeComponent>(transform->parent);
+    return host && host->recipe == Recipe::Wall;
+}
+
 } // namespace
 
 ConstructionShapeInspector::ConstructionShapeInspector(EditorContext* ctx, entt::entity entity, QWidget* parent)
@@ -82,6 +93,12 @@ void ConstructionShapeInspector::buildUI()
     m_hollow = new QCheckBox(tr("Hollow (room)"));
     m_hollow->setToolTip(tr("Walls of the given thickness around an empty inside."));
     box->addRow(QString(), m_hollow);
+    m_closed = new QCheckBox(tr("Closed (room)"));
+    m_closed->setToolTip(tr("Joins the last corner back to the first, with a floor inside when Floor is on."));
+    box->addRow(QString(), m_closed);
+    m_wallInfo = new QLabel();
+    m_wallInfo->setWordWrap(true);
+    box->addRow(QString(), m_wallInfo);
     m_wallThickness = makeSpin(0.01, 50.0, 0.05);
     box->addRow(tr("Wall Thickness"), m_wallThickness);
     m_floor = new QCheckBox(tr("Floor"));
@@ -108,6 +125,7 @@ void ConstructionShapeInspector::buildUI()
 
     m_openingGroup = new QGroupBox(tr("Opening"), this);
     auto* opening = new QFormLayout(m_openingGroup);
+    m_openingForm = opening;
     layout->addWidget(m_openingGroup);
     m_side = new QComboBox();
     m_side->addItem(tr("+X wall"), static_cast<int>(WallSide::PosX));
@@ -115,6 +133,10 @@ void ConstructionShapeInspector::buildUI()
     m_side->addItem(tr("+Z wall"), static_cast<int>(WallSide::PosZ));
     m_side->addItem(tr("-Z wall"), static_cast<int>(WallSide::NegZ));
     opening->addRow(tr("Wall"), m_side);
+    m_openingSegment = new QDoubleSpinBox();
+    ConfigureMixedSpin(m_openingSegment, 0, 10000, 1, 0);
+    m_openingSegment->setToolTip(tr("Which side of the wall the opening is on, counting from the first corner (0)."));
+    opening->addRow(tr("Wall Side"), m_openingSegment);
     m_offset = makeSpin(-kMaxSize, kMaxSize, 0.25);
     m_offset->setToolTip(tr("Distance of the opening's centre from the middle of its wall."));
     opening->addRow(tr("Offset"), m_offset);
@@ -140,10 +162,10 @@ void ConstructionShapeInspector::connectSignals()
         Refresh();
     };
     for (QDoubleSpinBox* spin : {m_width, m_height, m_depth, m_wallThickness, m_offset, m_sill, m_openingWidth,
-                                 m_openingHeight, m_steps, m_maxRise, m_segments}) {
+                                 m_openingHeight, m_steps, m_maxRise, m_segments, m_openingSegment}) {
         connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
     }
-    for (QCheckBox* check : {m_hollow, m_floor, m_ceiling, m_solid}) {
+    for (QCheckBox* check : {m_hollow, m_floor, m_ceiling, m_solid, m_closed}) {
         connect(check, &QCheckBox::stateChanged, this, edited);
     }
     connect(m_side, qOverload<int>(&QComboBox::currentIndexChanged), this, edited);
@@ -180,6 +202,7 @@ void ConstructionShapeInspector::applyToComponent()
             if (TryReadSpin(m_depth, value)) shape.box.depth = static_cast<float>(value);
             if (TryReadSpin(m_wallThickness, value)) shape.box.wallThickness = static_cast<float>(value);
             if (TryReadCheck(m_hollow, flag)) shape.box.hollow = flag;
+            if (TryReadCheck(m_closed, flag)) shape.wall.closed = flag;
             if (TryReadCheck(m_floor, flag)) shape.box.floor = flag;
             if (TryReadCheck(m_ceiling, flag)) shape.box.ceiling = flag;
             if (TryReadCheck(m_solid, flag)) {
@@ -194,6 +217,7 @@ void ConstructionShapeInspector::applyToComponent()
             if (TryReadSpin(m_sill, value)) shape.opening.sill = static_cast<float>(value);
             if (TryReadSpin(m_openingWidth, value)) shape.opening.width = static_cast<float>(value);
             if (TryReadSpin(m_openingHeight, value)) shape.opening.height = static_cast<float>(value);
+            if (TryReadSpin(m_openingSegment, value)) shape.opening.segment = static_cast<int>(value);
         }
         Construction::Sanitize(shape);
     });
@@ -210,7 +234,8 @@ void ConstructionShapeInspector::Refresh()
     EndEdit();
     const Recipe recipe = PrimaryRecipe(m_ctx, GetEntity());
     MixedScalar width, height, depth, thickness, offset, sill, openingWidth, openingHeight;
-    MixedBool hollow, floor, ceiling, solid;
+    MixedBool hollow, floor, ceiling, solid, closed;
+    MixedScalar openingSegment, corners;
     MixedString role;
     MixedScalar side, steps, maxRise, stepCount, rise, segments, operation;
     QString kind;
@@ -226,6 +251,9 @@ void ConstructionShapeInspector::Refresh()
         AccumulateScalar(depth, shape.box.depth);
         AccumulateScalar(thickness, shape.box.wallThickness);
         AccumulateBool(hollow, shape.box.hollow);
+        AccumulateBool(closed, shape.wall.closed);
+        AccumulateScalar(corners, static_cast<double>(shape.wall.points.size()));
+        AccumulateScalar(openingSegment, shape.opening.segment);
         AccumulateBool(floor, shape.box.floor);
         AccumulateBool(ceiling, shape.box.ceiling);
         AccumulateBool(solid, shape.collision == Construction::CollisionMode::Solid);
@@ -248,7 +276,19 @@ void ConstructionShapeInspector::Refresh()
     m_role->setText(role.mixed ? QString() : QString::fromStdString(role.value));
     m_role->setPlaceholderText(role.mixed ? tr("Mixed") : QString());
     m_boxGroup->setVisible(recipe != Recipe::Opening);
+    const bool wall = recipe == Recipe::Wall;
     m_boxForm->setRowVisible(m_height, recipe != Recipe::Plane);
+    m_boxForm->setRowVisible(m_width, !wall);
+    m_boxForm->setRowVisible(m_depth, !wall);
+    m_boxForm->setRowVisible(m_closed, wall);
+    m_boxForm->setRowVisible(m_wallInfo, wall);
+    SetCheckFromMixed(m_closed, closed);
+    m_wallInfo->setText(corners.mixed ? QString()
+                        : tr("%1 corners. Drag the corner handles in the viewport to move them.").arg(static_cast<int>(corners.value)));
+    const bool onWall = recipe == Recipe::Opening && OnWallHost(m_ctx, GetEntity());
+    m_openingForm->setRowVisible(m_side, !onWall);
+    m_openingForm->setRowVisible(m_openingSegment, onWall);
+    SetSpinFromMixed(m_openingSegment, openingSegment);
     m_boxForm->setRowVisible(m_segments, recipe == Recipe::Cylinder || recipe == Recipe::Sphere);
     SetSpinFromMixed(m_segments, segments);
     m_stairsGroup->setVisible(recipe == Recipe::Stairs);
@@ -256,6 +296,8 @@ void ConstructionShapeInspector::Refresh()
     for (QWidget* roomOnly : std::initializer_list<QWidget*>{m_hollow, m_wallThickness, m_floor, m_ceiling}) {
         m_boxForm->setRowVisible(roomOnly, recipe == Recipe::Box && !subtract);
     }
+    m_boxForm->setRowVisible(m_wallThickness, (recipe == Recipe::Box && !subtract) || wall);
+    m_boxForm->setRowVisible(m_floor, (recipe == Recipe::Box && !subtract) || wall);
     m_boxForm->setRowVisible(m_solid, !(recipe == Recipe::Box && subtract));
     SetSpinFromMixed(m_steps, steps);
     SetSpinFromMixed(m_maxRise, maxRise);
@@ -271,8 +313,8 @@ void ConstructionShapeInspector::Refresh()
     SetCheckFromMixed(m_ceiling, ceiling);
     SetCheckFromMixed(m_solid, solid);
     const bool roomControls = hollow.mixed || hollow.value;
-    m_wallThickness->setEnabled(roomControls);
-    m_floor->setEnabled(roomControls);
+    m_wallThickness->setEnabled(roomControls || wall);
+    m_floor->setEnabled(wall ? (closed.mixed || closed.value) : roomControls);
     m_ceiling->setEnabled(roomControls);
     SetComboFromMixed(m_side, side.mixed, static_cast<int>(side.value));
     SetSpinFromMixed(m_offset, offset);

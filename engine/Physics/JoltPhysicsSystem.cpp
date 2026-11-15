@@ -15,6 +15,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -1050,6 +1051,25 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
                     return applyOffset(result.Get());
                 }
                 std::cerr << "Failed to create cylinder collision shape: " << result.GetError().c_str() << "\n";
+                break;
+            }
+            case PhysicsShapeType::ConvexHull: {
+                std::vector<JPH::Vec3> points;
+                points.reserve(shapeComp.points.size());
+                for (const Vec3& p : shapeComp.points) {
+                    points.emplace_back(p.x * scale.x, p.y * scale.y, p.z * scale.z);
+                }
+                if (points.size() < 4) {
+                    std::cerr << "Convex hull collision shape needs at least 4 points\n";
+                    break;
+                }
+                // A small convex radius keeps the hull's corners sharp; the default would round them by 5 cm.
+                JPH::ConvexHullShapeSettings settings(points.data(), static_cast<int>(points.size()), 0.005f);
+                auto result = settings.Create();
+                if (!result.HasError()) {
+                    return applyOffset(result.Get());
+                }
+                std::cerr << "Failed to create convex hull collision shape: " << result.GetError().c_str() << "\n";
                 break;
             }
             case PhysicsShapeType::Mesh:

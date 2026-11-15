@@ -500,6 +500,8 @@ const char* PhysicsShapeTypeToString(PhysicsShapeType type)
         return "Cylinder";
     case PhysicsShapeType::Mesh:
         return "Mesh";
+    case PhysicsShapeType::ConvexHull:
+        return "ConvexHull";
     default:
         return "Box";
     }
@@ -701,6 +703,9 @@ static PhysicsShapeType ParsePhysicsShapeType(const JsonValue& value, std::strin
     }
     if (typeStr == "Mesh") {
         return PhysicsShapeType::Mesh;
+    }
+    if (typeStr == "ConvexHull") {
+        return PhysicsShapeType::ConvexHull;
     }
 
     errorOut = "Unknown physics shape type: " + typeStr;
@@ -975,6 +980,13 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"extents\": " << FormatVec3(physicsShape->extents) << ",\n";
             oss << "          \"radius\": " << FormatFloat(physicsShape->radius) << ",\n";
             oss << "          \"height\": " << FormatFloat(physicsShape->height) << ",\n";
+            if (!physicsShape->points.empty()) {
+                oss << "          \"points\": [";
+                for (size_t n = 0; n < physicsShape->points.size(); ++n) {
+                    oss << (n ? ", " : "") << FormatVec3(physicsShape->points[n]);
+                }
+                oss << "],\n";
+            }
             oss << "          \"offset\": " << FormatVec3(physicsShape->offset) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
@@ -1533,6 +1545,17 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* offsetValue = shapeObj->Find("offset")) {
                 ParseVec3(*offsetValue, shape.offset);
+            }
+            if (const JsonValue* pointsValue = shapeObj->Find("points"); pointsValue && pointsValue->IsArray()) {
+                shape.points.clear();
+                for (const JsonValue& pointValue : pointsValue->AsArray()) {
+                    Vec3 point(0.0f, 0.0f, 0.0f);
+                    if (!ParseVec3(pointValue, point)) {
+                        outError = "PhysicsShape points must be [x, y, z] arrays.";
+                        return false;
+                    }
+                    shape.points.push_back(point);
+                }
             }
         }
 
@@ -2647,6 +2670,13 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"extents\": " << FormatVec3(physicsShape->extents) << ",\n";
             oss << "          \"radius\": " << FormatFloat(physicsShape->radius) << ",\n";
             oss << "          \"height\": " << FormatFloat(physicsShape->height) << ",\n";
+            if (!physicsShape->points.empty()) {
+                oss << "          \"points\": [";
+                for (size_t n = 0; n < physicsShape->points.size(); ++n) {
+                    oss << (n ? ", " : "") << FormatVec3(physicsShape->points[n]);
+                }
+                oss << "],\n";
+            }
             oss << "          \"offset\": " << FormatVec3(physicsShape->offset) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());

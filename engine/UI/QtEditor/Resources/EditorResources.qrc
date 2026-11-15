@@ -35,6 +35,7 @@
     <file alias="icons/drag.svg">../../../../Branding/design-system-export/icons/drag.svg</file>
     <file alias="icons/draw-block.svg">../../../../Branding/design-system-export/icons/draw-block.svg</file>
     <file alias="icons/draw-opening.svg">../../../../Branding/design-system-export/icons/draw-opening.svg</file>
+    <file alias="icons/draw-wall.svg">../../../../Branding/design-system-export/icons/draw-wall.svg</file>
     <file alias="icons/draw-room.svg">../../../../Branding/design-system-export/icons/draw-room.svg</file>
     <file alias="icons/draw-stairs.svg">../../../../Branding/design-system-export/icons/draw-stairs.svg</file>
     <file alias="icons/error.svg">../../../../Branding/design-system-export/icons/error.svg</file>

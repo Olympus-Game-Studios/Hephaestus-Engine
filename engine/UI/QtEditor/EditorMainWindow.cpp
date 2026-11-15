@@ -1987,6 +1987,7 @@ void EditorMainWindow::setupTopToolbar()
     m_drawRoomAction = new QAction(Theme::Icon(QStringLiteral("draw-room")), tr("Draw Room (Shift+B)"), this);
     m_drawOpeningAction = new QAction(Theme::Icon(QStringLiteral("draw-opening")), tr("Draw Opening (O)"), this);
     m_drawStairsAction = new QAction(Theme::Icon(QStringLiteral("draw-stairs")), tr("Draw Stairs (T)"), this);
+    m_drawWallAction = new QAction(Theme::Icon(QStringLiteral("draw-wall")), tr("Draw Wall (L)"), this);
     const auto setToolTip = [](QAction* action, const QString& description) {
         action->setToolTip(QStringLiteral("<b>%1</b><br>%2").arg(action->text().toHtmlEscaped(), description.toHtmlEscaped()));
     };
@@ -1994,9 +1995,11 @@ void EditorMainWindow::setupTopToolbar()
     setToolTip(m_drawBlockAction, tr("Drag a footprint on the ground or any surface, then move up for the height"));
     setToolTip(m_drawRoomAction, tr("Drag a footprint for a room with walls and a floor, then move up for the height"));
     setToolTip(m_drawOpeningAction, tr("Drag on a wall to cut a doorway or window, or drag an existing one to move it"));
+    setToolTip(m_drawWallAction, tr("Click corner by corner to draw a wall; click the first corner again to close it into a room of any shape"));
     const std::pair<QAction*, ToolMode> constructionActions[] = {
         {m_drawBlockAction, ToolMode::DrawBox}, {m_drawRoomAction, ToolMode::DrawRoom},
-        {m_drawStairsAction, ToolMode::DrawStairs}, {m_drawOpeningAction, ToolMode::DrawOpening}};
+        {m_drawWallAction, ToolMode::DrawWall}, {m_drawStairsAction, ToolMode::DrawStairs},
+        {m_drawOpeningAction, ToolMode::DrawOpening}};
     for (const auto& [action, mode] : constructionActions) {
         action->setCheckable(true);
         transformGroup->addAction(action);
@@ -2021,7 +2024,8 @@ void EditorMainWindow::setupTopToolbar()
     m_artistToolRail->setIconSize(QSize(16, 16));
     m_artistToolRail->toggleViewAction()->setEnabled(false);
     for (QAction* action : { m_selectAction, m_translateAction, m_rotateAction, m_scaleAction,
-                             m_drawBlockAction, m_drawRoomAction, m_drawStairsAction, m_drawOpeningAction }) {
+                             m_drawBlockAction, m_drawRoomAction, m_drawWallAction, m_drawStairsAction,
+                             m_drawOpeningAction }) {
         m_artistToolRail->addAction(action);
     }
     addToolBar(Qt::LeftToolBarArea, m_artistToolRail);
@@ -3756,11 +3760,12 @@ void EditorMainWindow::setupEditorCallbacks()
                 QAction* active = mode == ToolMode::DrawBox ? m_drawBlockAction
                     : mode == ToolMode::DrawRoom ? m_drawRoomAction
                     : mode == ToolMode::DrawStairs ? m_drawStairsAction
+                    : mode == ToolMode::DrawWall ? m_drawWallAction
                     : mode == ToolMode::DrawOpening ? m_drawOpeningAction : nullptr;
                 if (active && !active->isChecked()) {
                     active->setChecked(true);
                 } else if (!active && m_drawBlockAction && (m_drawBlockAction->isChecked() ||
-                           m_drawRoomAction->isChecked() || m_drawStairsAction->isChecked() ||
+                           m_drawRoomAction->isChecked() || m_drawStairsAction->isChecked() || m_drawWallAction->isChecked() ||
                            m_drawOpeningAction->isChecked())) {
                     const auto* ctx = m_engine->GetEditorContext();
                     const GizmoMode gizmo = ctx ? ctx->GetGizmoMode() : GizmoMode::Translate;

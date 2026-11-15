@@ -15,7 +15,7 @@ class Scene;
 
 namespace Hephaestus::Construction {
 
-enum class ToolMode { Select, DrawBox, DrawRoom, DrawStairs, DrawOpening };
+enum class ToolMode { Select, DrawBox, DrawRoom, DrawStairs, DrawOpening, DrawWall };
 
 struct ToolInput {
     Ray ray;
@@ -41,8 +41,8 @@ struct ToolHost {
     std::function<entt::entity()> selected;
 };
 
-// Viewport interaction for construction shapes: drawing boxes, rooms and openings, and dragging face handles of the
-// selected box. Mouse handlers return true when they used the event, so the caller skips its own handling.
+// Viewport interaction for construction shapes: drawing boxes, rooms, walls and openings, and dragging face and point
+// handles of the selected shape. Mouse handlers return true when they used the event, so the caller skips its own handling.
 class ConstructionTool {
 public:
     void SetHost(ToolHost host) { m_host = std::move(host); }
@@ -64,12 +64,13 @@ public:
     std::string StatusText() const;
 
 private:
-    enum class Phase { Idle, Base, Height, Handle, OpeningDraw, OpeningMove };
+    enum class Phase { Idle, Base, Height, Handle, OpeningDraw, OpeningMove, Path };
 
     struct Handle {
         int axis = 0;   // 0 x, 1 y (top), 2 z
         int dir = 1;
         Vec3 local;
+        int point = -1;  // a wall path point, dragged on the ground plane
     };
 
     std::vector<Handle> HandlesFor(const ConstructionShapeComponent& shape) const;
@@ -78,6 +79,9 @@ private:
     void UpdateBase(const ToolInput& input);
     void UpdateHeight(const ToolInput& input);
     void CommitBox(Scene& scene);
+    void UpdatePath(const ToolInput& input);
+    bool PathCanClose(const ToolInput& input) const;
+    void CommitWall(Scene& scene, bool closed);
     float DefaultHeight() const;
     void UpdateHandleDrag(Scene& scene, const ToolInput& input);
     bool WallPointFromRay(Scene& scene, const ToolInput& input, Vec3& outLocal) const;
@@ -99,6 +103,7 @@ private:
     Vec3 m_hoverPoint;
     entt::entity m_hoverHost = entt::null;
     WallSide m_hoverWall = WallSide::PosZ;
+    int m_hoverSegment = 0;
     Vec3 m_hoverLocal;
 
     // Box drawing, in world space on a horizontal plane at m_anchor.y.
@@ -107,10 +112,14 @@ private:
     float m_height = 0.0f;
     ToolInput m_lastInput;
 
+    // Wall drawing: the corners placed so far, in world space; m_corner follows the cursor.
+    std::vector<Vec3> m_path;
+
     // Handle drag.
     entt::entity m_target = entt::null;
     Handle m_handle;
     BoxParams m_startBox;
+    WallParams m_startWall;
     Vec3 m_startPosition;
     Vec3 m_handleWorldOrigin;
     Vec3 m_handleWorldAxis;
@@ -118,6 +127,7 @@ private:
 
     // Opening drawing and moving, in the host's local space.
     WallSide m_wall = WallSide::PosZ;
+    int m_segment = 0;
     Vec3 m_planePoint;    // a point on the wall face that was pressed
     Vec3 m_wallStart;     // (u, v) at press, in x and y
     Vec3 m_wallCurrent;

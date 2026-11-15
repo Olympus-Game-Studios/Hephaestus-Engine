@@ -1520,6 +1520,11 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                         SetConstructionToolMode(ToolMode::DrawStairs);
                     }
                     break;
+                case 0x4C: // Qt::Key_L - Draw Wall
+                    if (!m_inputState.ctrlDown) {
+                        SetConstructionToolMode(ToolMode::DrawWall);
+                    }
+                    break;
                 case 0x4F: // Qt::Key_O - Draw Opening
                     if (!m_inputState.ctrlDown) {
                         SetConstructionToolMode(ToolMode::DrawOpening);

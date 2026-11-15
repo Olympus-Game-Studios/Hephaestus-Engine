@@ -190,6 +190,14 @@ void CapturePhysicsShape(const PhysicsShapeComponent& shape, JsonValue& data) {
     data.objectValue["radius"] = MakeNumber(shape.radius);
     data.objectValue["height"] = MakeNumber(shape.height);
     data.objectValue["offset"] = MakeVec3(shape.offset);
+    if (!shape.points.empty()) {
+        JsonValue points;
+        points.type = JsonValue::Type::Array;
+        for (const Vec3& point : shape.points) {
+            points.arrayValue.push_back(MakeVec3(point));
+        }
+        data.objectValue["points"] = std::move(points);
+    }
 }
 
 void ApplyPhysicsShape(PhysicsShapeComponent& shape, const JsonValue& data) {
@@ -207,6 +215,14 @@ void ApplyPhysicsShape(PhysicsShapeComponent& shape, const JsonValue& data) {
     if (const JsonValue* radiusValue = data.Find("radius")) {
         if (radiusValue->IsNumber()) {
             shape.radius = static_cast<float>(radiusValue->AsNumber());
+        }
+    }
+    if (const JsonValue* pointsValue = data.Find("points"); pointsValue && pointsValue->IsArray()) {
+        shape.points.clear();
+        for (const JsonValue& pointValue : pointsValue->AsArray()) {
+            Vec3 point(0.0f, 0.0f, 0.0f);
+            ParseVec3(pointValue, point);
+            shape.points.push_back(point);
         }
     }
     if (const JsonValue* heightValue = data.Find("height")) {
@@ -1597,6 +1613,7 @@ std::string PhysicsShapeTypeToString(PhysicsShapeType type) {
         case PhysicsShapeType::Capsule: return "Capsule";
         case PhysicsShapeType::Cylinder: return "Cylinder";
         case PhysicsShapeType::Mesh: return "Mesh";
+        case PhysicsShapeType::ConvexHull: return "ConvexHull";
         default: return "Box";
     }
 }
@@ -1606,6 +1623,7 @@ PhysicsShapeType ParsePhysicsShapeType(const std::string& str) {
     if (str == "Capsule") return PhysicsShapeType::Capsule;
     if (str == "Cylinder") return PhysicsShapeType::Cylinder;
     if (str == "Mesh") return PhysicsShapeType::Mesh;
+    if (str == "ConvexHull") return PhysicsShapeType::ConvexHull;
     return PhysicsShapeType::Box;
 }
 

@@ -236,6 +236,30 @@ int main()
                   std::to_string(feet.z) + ")");
     }
     {
+        // A triangular construction room: its sloped wall and floor are convex hull colliders.
+        Session session("ConstructionHulls");
+        Entity room = session.scene.CreateEntity("Triangle Room");
+        auto& shape = room.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Hephaestus::Construction::Recipe::Wall;
+        shape.wall.points = {{0.0f, 0.0f}, {6.0f, 0.0f}, {0.0f, 6.0f}};
+        shape.wall.closed = true;
+        shape.box.height = 3.0f;
+        shape.box.wallThickness = 0.2f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        session.Step(2);
+        Physics::RaycastHit floorHit;
+        const bool floor = session.system.Raycast(entt::null, Vec3(1.5f, 5.0f, 1.5f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, floorHit);
+        Check(floor && std::fabs(floorHit.point.y - 0.2f) < 0.02f,
+              "A triangular room's floor hull collides at its top (hit y " + std::to_string(floorHit.point.y) + ")");
+        Physics::RaycastHit wallHit;
+        const Vec3 towardWall = vnorm(Vec3(1.0f, 0.0f, 1.0f));
+        const bool wall = session.system.Raycast(entt::null, Vec3(1.0f, 1.5f, 1.0f), towardWall, 10.0f, wallHit);
+        const float expected = 2.0f * std::sqrt(2.0f) - 0.1f;
+        Check(wall && std::fabs(wallHit.distance - expected) < 0.03f,
+              "The sloped wall hull stops a ray at its inner face (distance " + std::to_string(wallHit.distance) + ")");
+    }
+    {
         Session session("Lifecycle");
         AddFloor(session);
         Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));

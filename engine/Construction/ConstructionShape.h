@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "../Scene/Json.h"
 
@@ -9,7 +10,8 @@ namespace Hephaestus::Construction {
 
 enum class SourceKind : std::uint8_t { Recipe, Asset, EditableMesh };
 // Plane, Cylinder and Sphere use BoxParams width, height and depth as their size and stand on their origin.
-enum class Recipe : std::uint8_t { Box, Opening, Stairs, Plane, Cylinder, Sphere };
+// Wall uses WallParams for its path and BoxParams height, wallThickness and floor.
+enum class Recipe : std::uint8_t { Box, Opening, Stairs, Plane, Cylinder, Sphere, Wall };
 // The four walls of a box an opening can cut, named by the wall's outward normal.
 enum class WallSide : std::uint8_t { PosX, NegX, PosZ, NegZ };
 enum class CollisionMode : std::uint8_t { Solid, None };
@@ -27,6 +29,19 @@ struct BoxParams {
     bool ceiling = false;
 };
 
+// A point of a wall's path on the shape's local ground plane.
+struct WallPoint {
+    float x = 0.0f;
+    float z = 0.0f;
+};
+
+// A wall of the given thickness centred on a path of points. A closed path is a room, with a floor slab inside
+// the path when BoxParams::floor is set.
+struct WallParams {
+    std::vector<WallPoint> points;
+    bool closed = false;
+};
+
 // Placed on its host box's wall: offset is the opening centre along the wall from the wall's centre (along +X for the
 // Z walls, along +Z for the X walls), sill is its bottom above the box's base.
 struct OpeningParams {
@@ -36,6 +51,9 @@ struct OpeningParams {
     // 1.2 m: the narrowest doorway the default navmesh settings (agent radius 0.35 on a 0.2 m grid) can pass.
     float width = 1.2f;
     float height = 2.1f;
+    // On a Wall host: the path segment (from point segment to the next) the opening is on; offset runs along it
+    // from its middle. Ignored on boxes.
+    int segment = 0;
 };
 
 // Stairs use BoxParams width, height and depth for their footprint and total rise, and climb towards +Z.
@@ -49,6 +67,7 @@ enum class FaceGroup : std::uint8_t { Top, Bottom, PosX, NegX, PosZ, NegZ, Inner
 struct FaceTag {
     FaceGroup group = FaceGroup::Reveal;
     std::int8_t wall = -1;  // WallSide this face belongs to, or -1
+    std::int16_t segment = -1;  // wall path segment this face belongs to, or -1
 };
 
 constexpr int kEvaluatorVersion = 1;
@@ -73,6 +92,7 @@ struct ConstructionShapeComponent {
     Hephaestus::Construction::BoxParams box;
     Hephaestus::Construction::OpeningParams opening;
     Hephaestus::Construction::StairsParams stairs;
+    Hephaestus::Construction::WallParams wall;
     int segments = 24;  // around a cylinder or sphere
     int evaluatorVersion = Hephaestus::Construction::kEvaluatorVersion;
 };
@@ -96,6 +116,11 @@ bool IsCutter(const ConstructionShapeComponent& shape);
 int StairCount(const ConstructionShapeComponent& shape);
 // What the editor calls the shape: Block, Room, Subtract, Stairs, Plane, Cylinder, Sphere or Opening.
 const char* DisplayName(const ConstructionShapeComponent& shape);
+
+// Boxes that are not cutters, and walls: shapes that doors and windows can be cut into.
+bool CanHostOpenings(const ConstructionShapeComponent& shape);
+// Segments of a wall's path (closed paths have one more, back to the first point).
+int WallSegmentCount(const ConstructionShapeComponent& shape);
 
 // Clamps parameters to values the evaluator accepts (positive sizes, walls thinner than the box).
 void Sanitize(ConstructionShapeComponent& shape);

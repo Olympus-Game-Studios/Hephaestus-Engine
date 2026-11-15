@@ -257,7 +257,8 @@ enum class PhysicsShapeType {
     Sphere,
     Capsule,
     Cylinder,
-    Mesh
+    Mesh,
+    ConvexHull
 };
 
 /**
@@ -274,6 +275,9 @@ struct PhysicsShapeComponent {
     
     // Capsule/Cylinder
     float height = 1.0f;
+
+    // ConvexHull: points relative to the entity, before offset
+    std::vector<Vec3> points;
     
     // Offset from entity center
     Vec3 offset;

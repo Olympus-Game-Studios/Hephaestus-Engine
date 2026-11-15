@@ -635,6 +635,217 @@ void TestSetOperation()
     Check(!IsCutter(block.GetComponent<ConstructionShapeComponent>()) &&
           block.GetComponent<MaterialComponent>().useAlbedoTexture && !block.GetComponent<MeshRendererComponent>().hideInGame,
           "switching back to add restores the blockout look and in-game visibility");
+
+    for (Recipe recipe : {Recipe::Wall, Recipe::Sphere, Recipe::Cylinder, Recipe::Plane}) {
+        Entity other = scene.CreateEntity("Other");
+        other.AddComponent<ConstructionShapeComponent>().recipe = recipe;
+        ConstructionSystem::SetOperation(scene, other, Operation::Subtract);
+        Check(other.HasComponent<MaterialComponent>() && other.GetComponent<MaterialComponent>().useAlbedoTexture &&
+                  other.GetComponent<ConstructionShapeComponent>().operation == Operation::Add,
+              std::string("a ") + RecipeName(recipe) + " gets the blockout material and stays additive");
+    }
+}
+
+Entity AddWall(Scene& scene, const std::string& name, std::vector<WallPoint> points, bool closed,
+               const Vec3& position = Vec3(0, 0, 0))
+{
+    Entity entity = scene.CreateEntity(name);
+    entity.GetComponent<TransformComponent>().position = position;
+    auto& shape = entity.AddComponent<ConstructionShapeComponent>();
+    shape.recipe = Recipe::Wall;
+    shape.wall.points = std::move(points);
+    shape.wall.closed = closed;
+    shape.box.height = 3.0f;
+    shape.box.wallThickness = 0.2f;
+    shape.box.floor = true;
+    Sanitize(shape);
+    return entity;
+}
+
+void TestWalls()
+{
+    ConstructionShapeComponent wall;
+    wall.recipe = Recipe::Wall;
+    wall.box.height = 3.0f;
+    wall.box.wallThickness = 0.2f;
+    wall.wall.points = {{0.0f, 0.0f}, {4.0f, 0.0f}, {4.0f, 3.0f}};
+    EvaluatedGeometry corner;
+    Check(EvaluateShape(wall, {}, corner), "an open L-shaped wall evaluates");
+    Check(corner.hulls.empty() && InsideSolid(corner, Vec3(2.0f, 1.5f, 0.0f)) && InsideSolid(corner, Vec3(4.0f, 1.5f, 1.5f)),
+          "a square-cornered wall collides as boxes along both segments");
+    Check(InsideSolid(corner, Vec3(4.05f, 1.5f, -0.05f)), "the outer corner is filled");
+    Check(std::fabs(SolidVolume(corner) - (4.0f * 0.2f * 3.0f + 3.0f * 0.2f * 3.0f + 0.1f * 0.1f * 3.0f)) < 0.05f,
+          "the corner adds only its outer square, give or take where the two segments overlap");
+    Check(WindingMatchesNormals(corner), "wall winding matches its normals");
+    Check(std::fabs(corner.mesh.bounds.max.x - 4.1f) < 1e-4f && std::fabs(corner.mesh.bounds.min.z + 0.1f) < 1e-4f,
+          "the wall's bounds reach the mitred corner");
+
+    OpeningParams door;
+    door.segment = 1;
+    door.offset = 0.0f;
+    door.width = 1.2f;
+    door.height = 2.1f;
+    EvaluatedGeometry doorway;
+    EvaluateShape(wall, {door}, doorway);
+    Check(!InsideSolid(doorway, Vec3(4.0f, 1.0f, 1.5f)) && InsideSolid(doorway, Vec3(2.0f, 1.0f, 0.0f)) &&
+              InsideSolid(doorway, Vec3(4.0f, 2.5f, 1.5f)),
+          "a doorway cuts only the segment it is on, under its lintel");
+    bool segmentTagged = false;
+    for (const FaceTag& tag : doorway.triangleTags) {
+        segmentTagged = segmentTagged || (tag.segment == 1 && tag.wall == static_cast<std::int8_t>(WallSide::PosZ));
+    }
+    Check(segmentTagged, "wall faces know their segment, so openings can be drawn on them");
+    WallFrame frame;
+    Check(GetHostWallFrame(wall, WallSide::PosZ, 1, frame) && std::fabs(frame.halfLength - 1.5f) < 1e-4f &&
+              std::fabs(frame.u.z - 1.0f) < 1e-4f && std::fabs(frame.center.x - 3.9f) < 1e-4f,
+          "a segment's wall frame runs along it, on its left face");
+
+    ConstructionShapeComponent angled = wall;
+    angled.wall.points = {{0.0f, 0.0f}, {4.0f, 0.0f}, {6.0f, 2.0f}};
+    EvaluatedGeometry slanted;
+    EvaluateShape(angled, {}, slanted);
+    Check(!slanted.hulls.empty() && WindingMatchesNormals(slanted), "a 45 degree wall collides with convex hulls");
+
+    ConstructionShapeComponent room = wall;
+    room.wall.points = {{0.0f, 0.0f}, {6.0f, 0.0f}, {6.0f, 4.0f}, {3.0f, 4.0f}, {3.0f, 7.0f}, {0.0f, 7.0f}};
+    room.wall.closed = true;
+    EvaluatedGeometry lRoom;
+    EvaluateShape(room, {}, lRoom);
+    Check(lRoom.hulls.empty() && InsideSolid(lRoom, Vec3(1.5f, 0.1f, 5.5f)) && InsideSolid(lRoom, Vec3(4.5f, 0.1f, 2.0f)) &&
+              !InsideSolid(lRoom, Vec3(4.5f, 0.1f, 5.5f)) && !InsideSolid(lRoom, Vec3(1.5f, 1.5f, 2.0f)),
+          "an L-shaped room has a floor in both arms and none outside the L");
+    Check(WindingMatchesNormals(lRoom) && HasGroup(lRoom, FaceGroup::Inner), "the room's floor faces up into the room");
+    Check(DisplayName(room) == std::string("Room") && HostFloorTop(room) > 0.19f, "a closed wall is a room with a floor");
+
+    ConstructionShapeComponent triangle = wall;
+    triangle.wall.points = {{0.0f, 0.0f}, {6.0f, 0.0f}, {0.0f, 6.0f}};
+    triangle.wall.closed = true;
+    EvaluatedGeometry triangleRoom;
+    EvaluateShape(triangle, {}, triangleRoom);
+    Check(triangleRoom.hulls.size() >= 2 && WindingMatchesNormals(triangleRoom),
+          "a triangular room's sloped wall and floor collide as convex hulls");
+
+    Check(TriangulatePolygon(room.wall.points).size() == 12, "an L of six points makes four floor triangles");
+
+    Scene scene("Walls");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity lWall = AddWall(scene, "L Room", room.wall.points, true);
+    Entity slope = AddWall(scene, "Triangle", triangle.wall.points, true, Vec3(20.0f, 0.0f, 0.0f));
+    Check(system.Update(scene) == 2, "walls evaluate in the system");
+    int hullColliders = 0;
+    for (auto entity : scene.GetRegistry().view<ConstructionGeneratedComponent, PhysicsShapeComponent>()) {
+        const auto& physicsShape = scene.GetRegistry().get<PhysicsShapeComponent>(entity);
+        hullColliders += physicsShape.type == PhysicsShapeType::ConvexHull && physicsShape.points.size() >= 6 ? 1 : 0;
+    }
+    Check(hullColliders == static_cast<int>(system.Geometry(slope)->hulls.size()), "every hull gets a convex hull collider");
+
+    BoxParams holeParams;
+    holeParams.width = 1.0f;
+    holeParams.height = 1.0f;
+    holeParams.depth = 1.0f;
+    Entity hole = AddBox(scene, "Hole", holeParams, Vec3(3.0f, 1.0f, 0.0f));
+    hole.GetComponent<ConstructionShapeComponent>().operation = Operation::Subtract;
+    system.Update(scene);
+    Check(!InsideSolid(*system.Geometry(lWall), Vec3(3.0f, 1.5f, 0.0f)) && InsideSolid(*system.Geometry(lWall), Vec3(1.0f, 1.5f, 0.0f)),
+          "a subtract block cuts the wall segment it overlaps");
+
+    Entity opening = scene.CreateEntity("Doorway");
+    auto& openingShape = opening.AddComponent<ConstructionShapeComponent>();
+    openingShape.recipe = Recipe::Opening;
+    openingShape.opening = door;
+    openingShape.opening.segment = 4;
+    openingShape.opening.sill = 0.2f;
+    scene.SetParent(opening, lWall, false);
+    Check(system.Update(scene) == 1, "adding an opening re-evaluates only its wall");
+    Check(!InsideSolid(*system.Geometry(lWall), Vec3(1.5f, 1.0f, 7.0f)), "the opening cuts the room's fifth segment");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    ConstructionSystem loadedSystem;
+    loadedSystem.Update(loaded);
+    Entity loadedWall = loaded.FindEntityByName("L Room");
+    Check(loadedWall && loadedWall.GetComponent<ConstructionShapeComponent>().wall.points.size() == 6 &&
+              HashGeometry(*loadedSystem.Geometry(loadedWall)) == HashGeometry(*system.Geometry(lWall)),
+          "a saved and reloaded wall rebuilds the same geometry, openings and cuts included");
+}
+
+void TestWallTool()
+{
+    Scene scene("Wall Tool");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    ConstructionTool tool;
+    int undoSteps = 0;
+    int discarded = 0;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [&]() { ++discarded; };
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+
+    tool.SetMode(ToolMode::DrawWall);
+    auto click = [&](const Vec3& p, bool shift = false) {
+        tool.OnMove(scene, system, camera.At(p, shift));
+        tool.OnPress(scene, system, camera.At(p, shift));
+        tool.OnRelease(scene, system, camera.At(p, shift));
+    };
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    Check(tool.IsBusy(), "clicking the ground starts a wall");
+    click(Vec3(3.0f, 0.0f, -2.0f));
+    click(Vec3(3.2f, 0.0f, 2.0f), true);
+    click(Vec3(-3.0f, 0.0f, 2.0f));
+    Check(tool.IsBusy() && undoSteps == 0, "each click adds a corner without changing the scene yet");
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    Entity room(selected, &scene);
+    const auto* roomShape = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(!tool.IsBusy() && undoSteps == 1 && roomShape && roomShape->recipe == Recipe::Wall && roomShape->wall.closed &&
+              roomShape->wall.points.size() == 4,
+          "clicking the first corner closes the path into a room in one undo step");
+    Check(roomShape && std::fabs(roomShape->wall.points[2].x - 6.0f) < 1e-4f && std::fabs(roomShape->wall.points[2].z - 4.0f) < 1e-4f &&
+              vlen(vsub(room.GetComponent<TransformComponent>().position, Vec3(-3.0f, 0.0f, -2.0f))) < 1e-4f,
+          "corners are stored from the first one, and Shift kept the third side straight");
+    system.Update(scene);
+
+    tool.SetMode(ToolMode::DrawOpening);
+    tool.OnMove(scene, system, camera.At(Vec3(0.0f, 0.5f, 2.1f)));
+    Check(tool.OnPress(scene, system, camera.At(Vec3(0.0f, 0.5f, 2.1f))), "pressing on a wall segment starts an opening");
+    tool.OnRelease(scene, system, camera.At(Vec3(0.0f, 0.5f, 2.1f)));
+    const auto openings = ConstructionSystem::CollectOpenings(scene, room);
+    Check(openings.size() == 1 && openings[0].segment == 2 && std::fabs(openings[0].sill - 0.2f) < 1e-4f &&
+              std::fabs(std::fabs(openings[0].offset) - 0.0f) < 1e-4f,
+          "a click low on the room's far wall adds a door on that segment, standing on the floor");
+    system.Update(scene);
+    Check(!InsideSolid(*system.Geometry(room), Vec3(3.0f, 1.0f, 4.0f)), "the door is cut through the wall");
+
+    tool.SetMode(ToolMode::Select);
+    selected = room;
+    Check(tool.OnPress(scene, system, camera.At(Vec3(3.0f, 0.0f, 2.0f))), "pressing on a corner handle starts a drag");
+    tool.OnMove(scene, system, camera.At(Vec3(4.0f, 0.0f, 3.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(4.0f, 0.0f, 3.0f)));
+    Check(std::fabs(roomShape->wall.points[2].x - 7.0f) < 1e-4f && std::fabs(roomShape->wall.points[2].z - 5.0f) < 1e-4f,
+          "dragging a corner moves it on the ground");
+    tool.OnPress(scene, system, camera.At(Vec3(4.0f, 0.0f, 3.0f)));
+    tool.OnMove(scene, system, camera.At(Vec3(6.0f, 0.0f, 3.0f)));
+    tool.OnKey(scene, system, 0x01000000);
+    Check(std::fabs(roomShape->wall.points[2].x - 7.0f) < 1e-4f && discarded == 1, "Esc during a corner drag puts it back");
+
+    tool.SetMode(ToolMode::DrawWall);
+    click(Vec3(8.0f, 0.0f, 0.0f));
+    for (int key : std::initializer_list<int>{'4', 0x01000004, 0x01000004}) {
+        tool.OnKey(scene, system, key);
+    }
+    const auto* typed = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(typed && typed->recipe == Recipe::Wall && !typed->wall.closed && typed->wall.points.size() == 2 &&
+              std::fabs(typed->wall.points[1].x - 4.0f) < 1e-4f,
+          "typing 4 then Enter places a corner 4 m along, and Enter again finishes an open wall");
 }
 
 void TestScale()
@@ -682,6 +893,8 @@ int main()
     TestSubtract();
     TestRoundShapes();
     TestSetOperation();
+    TestWalls();
+    TestWallTool();
     TestScale();
     if (!g_pass) {
         return 1;

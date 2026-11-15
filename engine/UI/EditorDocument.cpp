@@ -84,6 +84,7 @@ std::string PhysicsShapeTypeToString(PhysicsShapeType type) {
         case PhysicsShapeType::Capsule: return "Capsule";
         case PhysicsShapeType::Cylinder: return "Cylinder";
         case PhysicsShapeType::Mesh: return "Mesh";
+        case PhysicsShapeType::ConvexHull: return "ConvexHull";
         default: return "Box";
     }
 }

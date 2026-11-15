@@ -80,6 +80,7 @@ const char* RecipeName(Recipe recipe)
     case Recipe::Plane: return "plane";
     case Recipe::Cylinder: return "cylinder";
     case Recipe::Sphere: return "sphere";
+    case Recipe::Wall: return "wall";
     case Recipe::Box: break;
     }
     return "box";
@@ -116,7 +117,7 @@ bool ParseRecipe(const std::string& name, Recipe& out)
         out = Recipe::Opening;
         return true;
     }
-    for (Recipe recipe : {Recipe::Stairs, Recipe::Plane, Recipe::Cylinder, Recipe::Sphere}) {
+    for (Recipe recipe : {Recipe::Stairs, Recipe::Plane, Recipe::Cylinder, Recipe::Sphere, Recipe::Wall}) {
         if (name == RecipeName(recipe)) {
             out = recipe;
             return true;
@@ -165,6 +166,17 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
         oss << in2 << "\"height\": " << Number(b.height) << ",\n";
         oss << in2 << "\"depth\": " << Number(b.depth) << ",\n";
         oss << in2 << "\"segments\": " << shape.segments << "\n";
+    } else if (shape.recipe == Recipe::Wall) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"thickness\": " << Number(b.wallThickness) << ",\n";
+        oss << in2 << "\"floor\": " << (b.floor ? "true" : "false") << ",\n";
+        oss << in2 << "\"closed\": " << (shape.wall.closed ? "true" : "false") << ",\n";
+        oss << in2 << "\"points\": [";
+        for (size_t n = 0; n < shape.wall.points.size(); ++n) {
+            oss << (n ? ", " : "") << "[" << Number(shape.wall.points[n].x) << ", " << Number(shape.wall.points[n].z) << "]";
+        }
+        oss << "]\n";
     } else if (shape.recipe == Recipe::Stairs) {
         const BoxParams& b = shape.box;
         oss << in2 << "\"width\": " << Number(b.width) << ",\n";
@@ -178,7 +190,8 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
         oss << in2 << "\"offset\": " << Number(o.offset) << ",\n";
         oss << in2 << "\"sill\": " << Number(o.sill) << ",\n";
         oss << in2 << "\"width\": " << Number(o.width) << ",\n";
-        oss << in2 << "\"height\": " << Number(o.height) << "\n";
+        oss << in2 << "\"height\": " << Number(o.height) << ",\n";
+        oss << in2 << "\"segment\": " << o.segment << "\n";
     }
     oss << in << "}\n";
     oss << indent << "}";
@@ -221,6 +234,20 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
         params.objectValue["height"] = number(shape.box.height);
         params.objectValue["depth"] = number(shape.box.depth);
         params.objectValue["segments"] = number(shape.segments);
+    } else if (shape.recipe == Recipe::Wall) {
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["thickness"] = number(shape.box.wallThickness);
+        params.objectValue["floor"] = boolean(shape.box.floor);
+        params.objectValue["closed"] = boolean(shape.wall.closed);
+        JsonValue points;
+        points.type = JsonValue::Type::Array;
+        for (const WallPoint& point : shape.wall.points) {
+            JsonValue pair;
+            pair.type = JsonValue::Type::Array;
+            pair.arrayValue = {number(point.x), number(point.z)};
+            points.arrayValue.push_back(std::move(pair));
+        }
+        params.objectValue["points"] = std::move(points);
     } else if (shape.recipe == Recipe::Stairs) {
         params.objectValue["width"] = number(shape.box.width);
         params.objectValue["height"] = number(shape.box.height);
@@ -234,6 +261,7 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
         params.objectValue["sill"] = number(o.sill);
         params.objectValue["width"] = number(o.width);
         params.objectValue["height"] = number(o.height);
+        params.objectValue["segment"] = number(o.segment);
     }
     JsonValue out;
     out.type = JsonValue::Type::Object;
@@ -298,6 +326,24 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
             float segments = static_cast<float>(shape.segments);
             ReadFloat(*params, "segments", segments);
             shape.segments = static_cast<int>(std::lround(segments));
+        } else if (shape.recipe == Recipe::Wall) {
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "thickness", shape.box.wallThickness);
+            ReadBool(*params, "floor", shape.box.floor);
+            ReadBool(*params, "closed", shape.wall.closed);
+            if (const JsonValue* points = params->Find("points"); points && points->IsArray()) {
+                std::vector<WallPoint> read;
+                for (const JsonValue& pair : points->AsArray()) {
+                    if (!pair.IsArray() || pair.AsArray().size() != 2 || !pair.AsArray()[0].IsNumber() ||
+                        !pair.AsArray()[1].IsNumber()) {
+                        outError = "Wall points must be [x, z] number pairs.";
+                        return false;
+                    }
+                    read.push_back(WallPoint{static_cast<float>(pair.AsArray()[0].AsNumber()),
+                                             static_cast<float>(pair.AsArray()[1].AsNumber())});
+                }
+                shape.wall.points = std::move(read);
+            }
         } else if (shape.recipe == Recipe::Stairs) {
             ReadFloat(*params, "width", shape.box.width);
             ReadFloat(*params, "height", shape.box.height);
@@ -318,6 +364,9 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
             ReadFloat(*params, "sill", o.sill);
             ReadFloat(*params, "width", o.width);
             ReadFloat(*params, "height", o.height);
+            float segment = static_cast<float>(o.segment);
+            ReadFloat(*params, "segment", segment);
+            o.segment = static_cast<int>(std::lround(segment));
         }
     }
     shape.evaluatorVersion = kEvaluatorVersion;
@@ -331,12 +380,14 @@ void Sanitize(ConstructionShapeComponent& shape)
     b.width = std::max(b.width, kMinSize);
     b.height = std::max(b.height, kMinSize);
     b.depth = std::max(b.depth, kMinSize);
-    const float thinnest = std::min({b.width, b.height, b.depth});
+    const float thinnest = shape.recipe == Recipe::Wall ? 20.0f : std::min({b.width, b.height, b.depth});
     b.wallThickness = std::clamp(b.wallThickness, kMinSize, std::max(kMinSize, thinnest * 0.5f - kMinSize));
     OpeningParams& o = shape.opening;
     o.width = std::max(o.width, kMinSize);
     o.height = std::max(o.height, kMinSize);
     o.sill = std::max(o.sill, 0.0f);
+    o.segment = std::max(o.segment, 0);
+    shape.wall.closed = shape.wall.closed && shape.wall.points.size() >= 3;
     shape.stairs.steps = std::clamp(shape.stairs.steps, 0, 500);
     shape.stairs.maxRise = std::max(shape.stairs.maxRise, 0.05f);
     shape.segments = std::clamp(shape.segments, 3, 128);
@@ -350,6 +401,7 @@ const char* DisplayName(const ConstructionShapeComponent& shape)
     case Recipe::Plane: return "Plane";
     case Recipe::Cylinder: return "Cylinder";
     case Recipe::Sphere: return "Sphere";
+    case Recipe::Wall: return shape.wall.closed ? "Room" : "Wall";
     case Recipe::Box: break;
     }
     return shape.operation == Operation::Subtract ? "Subtract" : shape.box.hollow ? "Room" : "Block";
@@ -358,6 +410,21 @@ const char* DisplayName(const ConstructionShapeComponent& shape)
 bool IsCutter(const ConstructionShapeComponent& shape)
 {
     return shape.source == SourceKind::Recipe && shape.recipe == Recipe::Box && shape.operation == Operation::Subtract;
+}
+
+bool CanHostOpenings(const ConstructionShapeComponent& shape)
+{
+    return shape.source == SourceKind::Recipe &&
+           ((shape.recipe == Recipe::Box && !IsCutter(shape)) || shape.recipe == Recipe::Wall);
+}
+
+int WallSegmentCount(const ConstructionShapeComponent& shape)
+{
+    const int points = static_cast<int>(shape.wall.points.size());
+    if (shape.recipe != Recipe::Wall || points < 2) {
+        return 0;
+    }
+    return shape.wall.closed ? points : points - 1;
 }
 
 bool HasOwnGeometry(const ConstructionShapeComponent& shape)

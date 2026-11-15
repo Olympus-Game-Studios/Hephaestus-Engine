@@ -83,16 +83,36 @@ bool Overlaps(const AABB& a, const AABB& b)
            a.max.z > b.min.z;
 }
 
+// The space a box or wall host can occupy, in its own frame.
+LocalBox HostLocalBounds(const ConstructionShapeComponent& shape)
+{
+    if (shape.recipe != Recipe::Wall || shape.wall.points.empty()) {
+        return LocalBox{BoxMin(shape.box), BoxMax(shape.box)};
+    }
+    // Mitred corners reach at most two thicknesses past a path point.
+    const float reach = shape.box.wallThickness * 2.0f;
+    LocalBox bounds{Vec3(shape.wall.points[0].x, 0.0f, shape.wall.points[0].z), Vec3(shape.wall.points[0].x, 0.0f, shape.wall.points[0].z)};
+    for (const WallPoint& point : shape.wall.points) {
+        bounds.min = Vec3(std::min(bounds.min.x, point.x), 0.0f, std::min(bounds.min.z, point.z));
+        bounds.max = Vec3(std::max(bounds.max.x, point.x), 0.0f, std::max(bounds.max.z, point.z));
+    }
+    bounds.min = Vec3(bounds.min.x - reach, 0.0f, bounds.min.z - reach);
+    bounds.max = Vec3(bounds.max.x + reach, shape.box.height, bounds.max.z + reach);
+    return bounds;
+}
+
 // Cutters overlapping a host, as boxes in the host's frame. A cutter turned relative to the host cuts its bounding
 // box in that frame.
-std::vector<LocalBox> CutsFor(Scene& scene, entt::entity host, const BoxParams& box, const std::vector<Cutter>& cutters)
+std::vector<LocalBox> CutsFor(Scene& scene, entt::entity host, const ConstructionShapeComponent& shape,
+                              const std::vector<Cutter>& cutters)
 {
     std::vector<LocalBox> cuts;
     if (cutters.empty()) {
         return cuts;
     }
     const Mat4 world = scene.GetWorldTransform(Entity(host, &scene));
-    const AABB hostBounds = BoundsOf(world, BoxMin(box), BoxMax(box));
+    const LocalBox local = HostLocalBounds(shape);
+    const AABB hostBounds = BoundsOf(world, local.min, local.max);
     const Mat4 inverse = Mat4::Invert(world);
     for (const Cutter& cutter : cutters) {
         if (!Overlaps(hostBounds, cutter.worldBounds)) {
@@ -151,11 +171,12 @@ void ConstructionSystem::SetOperation(Scene& scene, entt::entity entity, Operati
 {
     entt::registry& registry = scene.GetRegistry();
     auto* shape = registry.try_get<ConstructionShapeComponent>(entity);
-    if (!shape || shape->recipe != Recipe::Box) {
+    if (!shape) {
         return;
     }
     const bool wasCutter = IsCutter(*shape);
-    shape->operation = operation;
+    // Only blocks can subtract; other shapes stay additive and still get the blockout look.
+    shape->operation = shape->recipe == Recipe::Box ? operation : Operation::Add;
     if (wasCutter == IsCutter(*shape) && registry.all_of<MaterialComponent>(entity)) {
         return;
     }
@@ -246,8 +267,8 @@ int ConstructionSystem::Update(Scene& scene)
             renderer.hideInGame = true;
             renderer.castShadows = false;
         }
-        const std::vector<LocalBox> cuts = shape.recipe == Recipe::Box && !IsCutter(shape)
-            ? CutsFor(scene, entity, shape.box, cutters) : std::vector<LocalBox>{};
+        const std::vector<LocalBox> cuts = CanHostOpenings(shape)
+            ? CutsFor(scene, entity, shape, cutters) : std::vector<LocalBox>{};
         const std::uint64_t hash = HashInputs(shape, CollectOpenings(scene, entity), cuts);
         auto found = m_shapes.find(entity);
         if (found == m_shapes.end()) {
@@ -336,7 +357,7 @@ bool ConstructionSystem::CollidersIntact(Scene& scene, entt::entity owner, const
     const entt::registry& registry = scene.GetRegistry();
     const auto& shape = registry.get<ConstructionShapeComponent>(owner);
     const size_t wanted = shape.collision == CollisionMode::Solid && !IsCutter(shape)
-        ? state.geometry.solids.size() + state.geometry.rounds.size() : 0;
+        ? state.geometry.solids.size() + state.geometry.rounds.size() + state.geometry.hulls.size() : 0;
     if (state.colliders.size() != wanted) {
         return false;
     }
@@ -374,6 +395,32 @@ void ConstructionSystem::RebuildColliders(Scene& scene, entt::entity owner, Shap
         body.mass = 0.0f;
         body.useGravity = false;
         body.layer = 1;  // World, the built-in layer for static level geometry
+        collider.AddComponent<EditorOnlyComponent>();
+        collider.AddComponent<ConstructionGeneratedComponent>().ownerEntity = static_cast<std::uint32_t>(owner);
+        scene.SetParent(collider, ownerEntity, false);
+        state.colliders.push_back(static_cast<entt::entity>(collider));
+        ++m_stats.collidersBuilt;
+    }
+    for (const std::vector<Vec3>& hull : state.geometry.hulls) {
+        Vec3 center(0.0f, 0.0f, 0.0f);
+        for (const Vec3& p : hull) {
+            center = vadd(center, p);
+        }
+        center = vscale(center, 1.0f / static_cast<float>(hull.size()));
+        Entity collider = scene.CreateEntity("Construction Collision");
+        collider.GetComponent<TransformComponent>().position = center;
+        PhysicsShapeComponent physicsShape;
+        physicsShape.type = PhysicsShapeType::ConvexHull;
+        for (const Vec3& p : hull) {
+            physicsShape.points.push_back(vsub(p, center));
+        }
+        collider.AddComponent<PhysicsShapeComponent>(physicsShape);
+        auto& body = collider.AddComponent<RigidBodyComponent>();
+        body.isStatic = true;
+        body.motion = RigidBodyMotion::Static;
+        body.mass = 0.0f;
+        body.useGravity = false;
+        body.layer = 1;
         collider.AddComponent<EditorOnlyComponent>();
         collider.AddComponent<ConstructionGeneratedComponent>().ownerEntity = static_cast<std::uint32_t>(owner);
         scene.SetParent(collider, ownerEntity, false);
