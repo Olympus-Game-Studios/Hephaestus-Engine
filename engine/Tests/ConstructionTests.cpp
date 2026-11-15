@@ -529,6 +529,15 @@ void TestSubtract()
     }
     Check(holeColliders == 0 && hole.GetComponent<MeshRendererComponent>().hideInGame,
           "a subtract box has no collision and is hidden in the game");
+    {
+        ConstructionSystem::SetOperation(scene, hole, Operation::Subtract);
+        Scene reopened("Reopened");
+        SceneSerializer::DeserializeFromString(reopened, SceneSerializer(scene).SerializeToString());
+        Entity reloadedHole = reopened.FindEntityByName("Hole");
+        const auto* material = reloadedHole ? reopened.GetRegistry().try_get<MaterialComponent>(reloadedHole) : nullptr;
+        Check(material && material->blendMode == MaterialBlendMode::AlphaBlend && std::fabs(material->opacity - 0.3f) < 1e-4f,
+              "a reopened subtract box keeps its see-through material");
+    }
 
     hole.GetComponent<TransformComponent>().position = Vec3(-2.0f, 1.0f, 0.0f);
     Check(system.Update(scene) == 1, "moving the subtract box re-evaluates only the wall it cuts");

@@ -221,6 +221,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
 
 ### Fixed
+- 2026-11-15: Scenes and prefabs now save a material's blend mode and opacity mask (scenes also its opacity and specular), so see-through materials, including subtract blocks, stay see-through after reopening instead of coming back solid.
 - 2026-11-15: World-aligned textures (the blockout grid, and materials or graph nodes using World Aligned) were sheared into diagonal stripes on angled walls and slopes, because the projection blended the X and Z wall coordinates instead of following the face. They now run along each face and up its slope at the same world scale. Walls facing X now use horizontal U and vertical V like walls facing Z, so a non-square texture on them turns a quarter turn from before; compiled material graphs pick this up the next time they are compiled.
 - 2026-11-15: Plane, Cylinder and Sphere primitives, and shapes made with `construction.create` other than blocks, had no material and rendered flat grey; they now get the blockout grid like blocks (`ConstructionSystem::SetOperation`).
 - 2026-11-14: glTF meshes whose primitives share one vertex buffer (one primitive per material, as most exporters write) no longer load those vertices once per material.

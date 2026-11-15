@@ -1025,6 +1025,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
             oss << "          \"reflectionStrength\": " << FormatFloat(material->reflectionStrength) << ",\n";
+            oss << "          \"specular\": " << FormatFloat(material->specular) << ",\n";
+            oss << "          \"opacity\": " << FormatFloat(material->opacity) << ",\n";
+            oss << "          \"opacityMask\": " << FormatFloat(material->opacityMask) << ",\n";
+            oss << "          \"blendMode\": \"" << MaterialBlendModeName(material->blendMode) << "\",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
             oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
@@ -1678,6 +1682,15 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 if (reflectionStrengthValue->IsNumber()) {
                     material.reflectionStrength = static_cast<float>(reflectionStrengthValue->AsNumber());
                 }
+            }
+            for (auto [key, field] : {std::pair{"specular", &material.specular}, std::pair{"opacity", &material.opacity},
+                                      std::pair{"opacityMask", &material.opacityMask}}) {
+                if (const JsonValue* value = materialObj->Find(key); value && value->IsNumber()) {
+                    *field = static_cast<float>(value->AsNumber());
+                }
+            }
+            if (const JsonValue* blendValue = materialObj->Find("blendMode"); blendValue && blendValue->IsString()) {
+                material.blendMode = MaterialBlendModeFromName(blendValue->AsString());
             }
             if (const JsonValue* useTexValue = materialObj->Find("useAlbedoTexture")) {
                 material.useAlbedoTexture = ParseBoolLike(*useTexValue, material.useAlbedoTexture);
@@ -2715,6 +2728,10 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
             oss << "          \"reflectionStrength\": " << FormatFloat(material->reflectionStrength) << ",\n";
+            oss << "          \"specular\": " << FormatFloat(material->specular) << ",\n";
+            oss << "          \"opacity\": " << FormatFloat(material->opacity) << ",\n";
+            oss << "          \"opacityMask\": " << FormatFloat(material->opacityMask) << ",\n";
+            oss << "          \"blendMode\": \"" << MaterialBlendModeName(material->blendMode) << "\",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
             oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";

@@ -338,6 +338,8 @@ void CaptureMaterial(const MaterialComponent& material, JsonValue& data) {
     data.objectValue["reflectionStrength"] = MakeNumber(material.reflectionStrength);
     data.objectValue["specular"] = MakeNumber(material.specular);
     data.objectValue["opacity"] = MakeNumber(material.opacity);
+    data.objectValue["opacityMask"] = MakeNumber(material.opacityMask);
+    data.objectValue["blendMode"] = MakeString(MaterialBlendModeName(material.blendMode));
     data.objectValue["albedoTexturePath"] = MakeString(material.albedoTexturePath);
     data.objectValue["useAlbedoTexture"] = MakeBool(material.useAlbedoTexture);
     data.objectValue["normalTexturePath"] = MakeString(material.normalTexturePath);
@@ -394,6 +396,12 @@ void ApplyMaterial(MaterialComponent& material, const JsonValue& data) {
         if (specularValue->IsNumber()) {
             material.specular = static_cast<float>(specularValue->AsNumber());
         }
+    }
+    if (const JsonValue* maskValue = data.Find("opacityMask"); maskValue && maskValue->IsNumber()) {
+        material.opacityMask = static_cast<float>(maskValue->AsNumber());
+    }
+    if (const JsonValue* blendValue = data.Find("blendMode"); blendValue && blendValue->IsString()) {
+        material.blendMode = MaterialBlendModeFromName(blendValue->AsString());
     }
     if (const JsonValue* opacityValue = data.Find("opacity")) {
         if (opacityValue->IsNumber()) {
