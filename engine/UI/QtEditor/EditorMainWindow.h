@@ -361,6 +361,11 @@ private:
     QButtonGroup* m_modeButtons = nullptr;
     EditorMode m_mode = EditorMode::Default;
     QAction* m_playAction = nullptr;
+    bool m_playFromHereNext = false;
+    QAction* m_drawBlockAction = nullptr;
+    QAction* m_drawRoomAction = nullptr;
+    QAction* m_drawOpeningAction = nullptr;
+    QAction* m_drawStairsAction = nullptr;
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;
     QAction* m_stepAction = nullptr;

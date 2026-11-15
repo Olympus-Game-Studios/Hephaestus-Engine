@@ -315,6 +315,16 @@ public:
     /** Destroy GPU mesh data keyed by source/alias so the next upload recreates it. */
     void InvalidateMesh(const std::string& sourceKey);
 
+    /**
+     * @brief Upload a mesh that is replaced often (construction shapes) into host-visible buffers.
+     * Replacing never waits on the GPU: the previous buffers are released once no frame in flight reads them.
+     * @param handle Slot to replace, or MeshRendererComponent::InvalidMesh for a new slot
+     * @return The slot holding the mesh, or InvalidMesh when there is no geometry
+     */
+    size_t UploadDynamicMesh(size_t handle, const std::string& name, const MeshData& data);
+    /** Free a slot from UploadDynamicMesh; its buffers are released after the frames in flight. */
+    void ReleaseDynamicMesh(size_t handle);
+
     /** Wait until in-flight frames finish. Required before destroying GPU meshes. */
     void WaitGpuIdle();
 
@@ -563,6 +573,14 @@ private:
         uint64_t lastUsedFrame = 0;
     };
     std::unordered_map<uint32_t, CharacterBoneGpu> m_characterBonePalettes;
+    struct RetiredMesh {
+        MeshGPU mesh;
+        uint64_t lastUsedFrame = 0;
+    };
+    std::unordered_map<uint64_t, RetiredMesh> m_retiredMeshes;
+    uint64_t m_nextRetiredMesh = 0;
+    std::vector<size_t> m_freeDynamicMeshSlots;
+    void retireMesh(MeshGPU&& mesh);
     uint64_t m_frameSerial = 0;
     std::chrono::steady_clock::time_point m_lastPacedTime{};
     bool m_hasPacedTime = false;
@@ -807,8 +825,10 @@ private:
         bool initialized = false;
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-        VulkanBuffer vertexBuffer;
-        uint32_t vertexCapacity = 0;
+        // One buffer per frame in flight: a frame still on the GPU keeps reading its own while the next is written
+        // or grown.
+        VulkanBuffer vertexBuffers[MAX_FRAMES_IN_FLIGHT];
+        uint32_t vertexCapacity[MAX_FRAMES_IN_FLIGHT] = {};
         uint32_t vertexCount = 0;
     };
     DebugOverlay m_debugOverlay;

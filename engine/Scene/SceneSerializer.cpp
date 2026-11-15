@@ -8,6 +8,7 @@
 #include "PrefabOverrideSystem.h"
 #include "PrefabComponentIO.h"
 #include "../Assets/AssetPathPolicy.h"
+#include "../Construction/ConstructionShape.h"
 #include "../Scripting/ScriptComponent.h"
 #include "../Scripting/ScriptRegistry.h"
 
@@ -871,6 +872,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
+        const ConstructionShapeComponent* construction = registry.try_get<ConstructionShapeComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -1161,6 +1163,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
 
         if (probeVolume) {
             componentBlocks.push_back(WriteProbeVolumeJson(*probeVolume));
+        }
+
+        if (construction) {
+            componentBlocks.push_back(Hephaestus::Construction::WriteShapeJson(*construction, "        "));
         }
 
         if (selection) {
@@ -2053,6 +2059,15 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
         }
 
+        if (const JsonValue* constructionObj = components->Find("ConstructionShape")) {
+            auto& construction = entity.HasComponent<ConstructionShapeComponent>()
+                ? entity.GetComponent<ConstructionShapeComponent>()
+                : entity.AddComponent<ConstructionShapeComponent>();
+            if (!Hephaestus::Construction::ApplyShapeJson(construction, *constructionObj, outError)) {
+                return false;
+            }
+        }
+
         if (const JsonValue* selectionObj = components->Find("Selection")) {
             if (!selectionObj->IsObject()) {
                 outError = "Selection component is not an object.";
@@ -2529,6 +2544,7 @@ std::string SceneSerializer::SerializeToString() const
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
+        const ConstructionShapeComponent* construction = registry.try_get<ConstructionShapeComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -2803,6 +2819,10 @@ std::string SceneSerializer::SerializeToString() const
 
         if (probeVolume) {
             componentBlocks.push_back(WriteProbeVolumeJson(*probeVolume));
+        }
+
+        if (construction) {
+            componentBlocks.push_back(Hephaestus::Construction::WriteShapeJson(*construction, "        "));
         }
 
         if (selection) {

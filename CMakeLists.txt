@@ -303,6 +303,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/PluginToolBridge.cpp
     engine/Automation/UIAutomation.cpp
     engine/Automation/PhysicsAutomation.cpp
+    engine/Automation/ConstructionAutomation.cpp
     engine/Automation/ViewportAutomation.cpp
     engine/Automation/BuildAutomation.cpp
     engine/Automation/TestAutomation.cpp
@@ -409,6 +410,9 @@ add_library(HephaestusRuntime STATIC
     engine/Scene/PrefabComponentIO.cpp
     engine/Scene/ParticleSimulation.cpp
     engine/Navigation/NavMesh.cpp
+    engine/Construction/ConstructionShape.cpp
+    engine/Construction/ConstructionGeometry.cpp
+    engine/Construction/ConstructionSystem.cpp
     engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scripting/ScriptBase.cpp
@@ -477,6 +481,7 @@ endif()
 # Qt-free editor services and documents. Editor-only, but never Qt: Qt code
 # lives in engine/UI/QtEditor and is compiled into HephaestusEngine.
 add_library(HephaestusEditorCore STATIC
+    engine/Construction/ConstructionTool.cpp
     engine/Core/EditorContext.cpp
     engine/Core/EditorCameraController.cpp
     engine/Core/PlayModeManager.cpp
@@ -733,6 +738,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/CharacterControllerInspector.h
             engine/UI/QtEditor/ProbeVolumeInspector.cpp
             engine/UI/QtEditor/ProbeVolumeInspector.h
+            engine/UI/QtEditor/ConstructionShapeInspector.cpp
+            engine/UI/QtEditor/ConstructionShapeInspector.h
             engine/UI/QtEditor/CharacterImportDialog.cpp
             engine/UI/QtEditor/CharacterImportDialog.h
             engine/UI/QtEditor/PhysicsInspectors.cpp
@@ -1694,6 +1701,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME NavMesh
         COMMAND NavMeshTests
+    )
+
+    add_executable(ConstructionTests
+        engine/Tests/ConstructionTests.cpp
+    )
+    target_link_libraries(ConstructionTests PRIVATE HephaestusEditorCore)
+    target_include_directories(ConstructionTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME Construction
+        COMMAND ConstructionTests
     )
 
     add_executable(ParticleSimulationTests

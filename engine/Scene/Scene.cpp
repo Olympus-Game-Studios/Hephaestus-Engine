@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include "../Construction/ConstructionShape.h"
 #include "PrefabComponentIO.h"
 #include "PrefabInstantiator.h"
 #include "PrefabOverrideSystem.h"
@@ -671,7 +672,9 @@ std::vector<Entity> Scene::DuplicateEntities(const std::vector<entt::entity>& en
         }
 
         for (Entity child : GetChildren(source)) {
-            duplicateOne(child, duplicate);
+            if (!child.HasComponent<ConstructionGeneratedComponent>()) {
+                duplicateOne(child, duplicate);
+            }
         }
         return duplicate;
     };

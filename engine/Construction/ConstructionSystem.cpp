@@ -1,0 +1,504 @@
+#include "ConstructionSystem.h"
+#include "ConstructionGeometry.h"
+
+#include "../Scene/Components.h"
+#include "../Scene/Entity.h"
+#include "../Scene/Scene.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <tuple>
+#include <unordered_set>
+
+namespace Hephaestus::Construction {
+
+struct ConstructionSystem::ShapeState {
+    std::uint64_t inputHash = 0;
+    size_t meshHandle = MeshRendererComponent::InvalidMesh;
+    EvaluatedGeometry geometry;
+    std::vector<entt::entity> colliders;
+};
+
+ConstructionSystem::ConstructionSystem() = default;
+ConstructionSystem::~ConstructionSystem() = default;
+
+namespace {
+
+constexpr size_t kNoMesh = MeshRendererComponent::InvalidMesh;
+
+double MillisecondsSince(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+// Moller-Trumbore; returns the ray parameter of the hit.
+bool IntersectTriangle(const Vec3& origin, const Vec3& dir, const Vec3& a, const Vec3& b, const Vec3& c, float& t)
+{
+    const Vec3 e1 = vsub(b, a);
+    const Vec3 e2 = vsub(c, a);
+    const Vec3 p = vcross(dir, e2);
+    const float det = vdot(e1, p);
+    if (std::fabs(det) < 1e-9f) {
+        return false;
+    }
+    const float inv = 1.0f / det;
+    const Vec3 s = vsub(origin, a);
+    const float u = vdot(s, p) * inv;
+    if (u < 0.0f || u > 1.0f) {
+        return false;
+    }
+    const Vec3 q = vcross(s, e1);
+    const float v = vdot(dir, q) * inv;
+    if (v < 0.0f || u + v > 1.0f) {
+        return false;
+    }
+    t = vdot(e2, q) * inv;
+    return t > 0.0f;
+}
+
+struct Cutter {
+    Mat4 world;
+    AABB worldBounds;
+    BoxParams box;
+};
+
+AABB BoundsOf(const Mat4& matrix, const Vec3& mn, const Vec3& mx)
+{
+    AABB bounds(Mat4::TransformPoint(matrix, mn), Mat4::TransformPoint(matrix, mn));
+    for (int n = 1; n < 8; ++n) {
+        const Vec3 p = Mat4::TransformPoint(matrix, Vec3(n & 1 ? mx.x : mn.x, n & 2 ? mx.y : mn.y, n & 4 ? mx.z : mn.z));
+        bounds.min = Vec3(std::min(bounds.min.x, p.x), std::min(bounds.min.y, p.y), std::min(bounds.min.z, p.z));
+        bounds.max = Vec3(std::max(bounds.max.x, p.x), std::max(bounds.max.y, p.y), std::max(bounds.max.z, p.z));
+    }
+    return bounds;
+}
+
+Vec3 BoxMin(const BoxParams& box) { return Vec3(-box.width * 0.5f, 0.0f, -box.depth * 0.5f); }
+Vec3 BoxMax(const BoxParams& box) { return Vec3(box.width * 0.5f, box.height, box.depth * 0.5f); }
+
+bool Overlaps(const AABB& a, const AABB& b)
+{
+    return a.min.x < b.max.x && a.max.x > b.min.x && a.min.y < b.max.y && a.max.y > b.min.y && a.min.z < b.max.z &&
+           a.max.z > b.min.z;
+}
+
+// Cutters overlapping a host, as boxes in the host's frame. A cutter turned relative to the host cuts its bounding
+// box in that frame.
+std::vector<LocalBox> CutsFor(Scene& scene, entt::entity host, const BoxParams& box, const std::vector<Cutter>& cutters)
+{
+    std::vector<LocalBox> cuts;
+    if (cutters.empty()) {
+        return cuts;
+    }
+    const Mat4 world = scene.GetWorldTransform(Entity(host, &scene));
+    const AABB hostBounds = BoundsOf(world, BoxMin(box), BoxMax(box));
+    const Mat4 inverse = Mat4::Invert(world);
+    for (const Cutter& cutter : cutters) {
+        if (!Overlaps(hostBounds, cutter.worldBounds)) {
+            continue;
+        }
+        const AABB local = BoundsOf(Mat4::Multiply(inverse, cutter.world), BoxMin(cutter.box), BoxMax(cutter.box));
+        cuts.push_back(LocalBox{local.min, local.max});
+    }
+    std::sort(cuts.begin(), cuts.end(), [](const LocalBox& a, const LocalBox& b) {
+        return std::make_tuple(a.min.x, a.min.y, a.min.z, a.max.x, a.max.y, a.max.z) <
+               std::make_tuple(b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z);
+    });
+    return cuts;
+}
+
+Vec3 TransformNormal(const Mat4& inverse, const Vec3& n)
+{
+    // Inverse transpose, so normals stay perpendicular under non-uniform scale.
+    return vnorm(Vec3(inverse.m[0] * n.x + inverse.m[1] * n.y + inverse.m[2] * n.z,
+                      inverse.m[4] * n.x + inverse.m[5] * n.y + inverse.m[6] * n.z,
+                      inverse.m[8] * n.x + inverse.m[9] * n.y + inverse.m[10] * n.z));
+}
+
+} // namespace
+
+void ConstructionSystem::AddBlockoutMaterial(Scene& scene, entt::entity entity)
+{
+    entt::registry& registry = scene.GetRegistry();
+    if (!registry.valid(entity) || registry.all_of<MaterialComponent>(entity)) {
+        return;
+    }
+    MaterialComponent grid(Vec3(0.82f, 0.82f, 0.8f));
+    grid.roughness = 0.9f;
+    // Copied into every project by ProjectContext::SyncEngineAssets.
+    grid.albedoTexturePath = ".engine/textures/construction_grid.png";
+    grid.useAlbedoTexture = true;
+    grid.useWorldAlignedTexture = true;
+    grid.worldTextureScale = 1.0f;
+    registry.emplace<MaterialComponent>(entity, grid);
+}
+
+void ConstructionSystem::AddCutterMaterial(Scene& scene, entt::entity entity)
+{
+    entt::registry& registry = scene.GetRegistry();
+    if (!registry.valid(entity) || registry.all_of<MaterialComponent>(entity)) {
+        return;
+    }
+    MaterialComponent cutter(Vec3(0.95f, 0.25f, 0.2f));
+    cutter.blendMode = MaterialBlendMode::AlphaBlend;
+    cutter.opacity = 0.3f;
+    cutter.roughness = 1.0f;
+    registry.emplace<MaterialComponent>(entity, cutter);
+}
+
+void ConstructionSystem::SetOperation(Scene& scene, entt::entity entity, Operation operation)
+{
+    entt::registry& registry = scene.GetRegistry();
+    auto* shape = registry.try_get<ConstructionShapeComponent>(entity);
+    if (!shape || shape->recipe != Recipe::Box) {
+        return;
+    }
+    const bool wasCutter = IsCutter(*shape);
+    shape->operation = operation;
+    if (wasCutter == IsCutter(*shape) && registry.all_of<MaterialComponent>(entity)) {
+        return;
+    }
+    registry.remove<MaterialComponent>(entity);
+    if (IsCutter(*shape)) {
+        AddCutterMaterial(scene, entity);
+    } else {
+        AddBlockoutMaterial(scene, entity);
+        if (auto* renderer = registry.try_get<MeshRendererComponent>(entity)) {
+            renderer->hideInGame = false;
+            renderer->castShadows = true;
+        }
+    }
+}
+
+bool ConstructionSystem::IsBox(Scene& scene, entt::entity entity)
+{
+    const auto* shape = scene.GetRegistry().try_get<ConstructionShapeComponent>(entity);
+    return shape && shape->source == SourceKind::Recipe && shape->recipe == Recipe::Box;
+}
+
+std::vector<OpeningParams> ConstructionSystem::CollectOpenings(Scene& scene, entt::entity host)
+{
+    std::vector<OpeningParams> openings;
+    const auto* transform = scene.GetRegistry().try_get<TransformComponent>(host);
+    if (!transform) {
+        return openings;
+    }
+    for (entt::entity child : transform->children) {
+        const auto* shape = scene.GetRegistry().try_get<ConstructionShapeComponent>(child);
+        if (shape && shape->recipe == Recipe::Opening) {
+            openings.push_back(shape->opening);
+        }
+    }
+    SortOpenings(openings);
+    return openings;
+}
+
+int ConstructionSystem::Update(Scene& scene)
+{
+    const auto start = std::chrono::steady_clock::now();
+    entt::registry& registry = scene.GetRegistry();
+    int evaluated = 0;
+    double evaluateMs = 0.0;
+    std::unordered_set<entt::entity> live;
+
+    auto view = registry.view<ConstructionShapeComponent>();
+    std::vector<entt::entity> boxes;
+    for (entt::entity entity : view) {
+        if (HasOwnGeometry(registry.get<ConstructionShapeComponent>(entity))) {
+            boxes.push_back(entity);
+        }
+    }
+    for (entt::entity entity : boxes) {
+        live.insert(entity);
+    }
+    // States of shapes that are gone. A shape rebuilt from a file or an undo snapshot is a new entity with the same
+    // inputs, so it adopts the old evaluation and mesh slot instead of evaluating again.
+    std::unordered_multimap<std::uint64_t, std::unique_ptr<ShapeState>> spares;
+    for (auto it = m_shapes.begin(); it != m_shapes.end();) {
+        if (live.count(it->first)) {
+            ++it;
+            continue;
+        }
+        DestroyColliders(scene, *it->second);
+        const std::uint64_t key = it->second->inputHash;
+        spares.emplace(key, std::move(it->second));
+        it = m_shapes.erase(it);
+    }
+
+    std::vector<Cutter> cutters;
+    for (entt::entity entity : boxes) {
+        const auto& shape = registry.get<ConstructionShapeComponent>(entity);
+        if (IsCutter(shape)) {
+            const Mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
+            cutters.push_back(Cutter{world, BoundsOf(world, BoxMin(shape.box), BoxMax(shape.box)), shape.box});
+        }
+    }
+
+    for (entt::entity entity : boxes) {
+        auto& shape = registry.get<ConstructionShapeComponent>(entity);
+        Sanitize(shape);
+        if (!registry.all_of<MeshRendererComponent>(entity)) {
+            registry.emplace<MeshRendererComponent>(entity);
+        }
+        if (IsCutter(shape)) {
+            auto& renderer = registry.get<MeshRendererComponent>(entity);
+            renderer.hideInGame = true;
+            renderer.castShadows = false;
+        }
+        const std::vector<LocalBox> cuts = shape.recipe == Recipe::Box && !IsCutter(shape)
+            ? CutsFor(scene, entity, shape.box, cutters) : std::vector<LocalBox>{};
+        const std::uint64_t hash = HashInputs(shape, CollectOpenings(scene, entity), cuts);
+        auto found = m_shapes.find(entity);
+        if (found == m_shapes.end()) {
+            auto spare = spares.find(hash);
+            if (spare != spares.end()) {
+                found = m_shapes.emplace(entity, std::move(spare->second)).first;
+                spares.erase(spare);
+                ++m_stats.adopted;
+            }
+        }
+        if (found == m_shapes.end() || found->second->inputHash != hash) {
+            std::unique_ptr<ShapeState>& slot = m_shapes[entity];
+            if (!slot) slot = std::make_unique<ShapeState>();
+            ShapeState& state = *slot;
+            const auto evalStart = std::chrono::steady_clock::now();
+            Evaluate(scene, entity, state, hash, cuts);
+            evaluateMs += MillisecondsSince(evalStart);
+            ++evaluated;
+            continue;
+        }
+        ShapeState& state = *found->second;
+        auto& renderer = registry.get<MeshRendererComponent>(entity);
+        if (renderer.meshHandle != state.meshHandle) {
+            renderer.SetMesh(state.meshHandle, state.geometry.mesh.bounds, {}, false, 1);
+        }
+        if (!CollidersIntact(scene, entity, state)) {
+            RebuildColliders(scene, entity, state);
+        }
+    }
+
+    for (auto& spare : spares) {
+        Release(*spare.second);
+    }
+
+    // Generated entities copied, pasted or left behind by an owner that is gone.
+    std::vector<entt::entity> strays;
+    for (entt::entity entity : registry.view<ConstructionGeneratedComponent>()) {
+        const auto owner = static_cast<entt::entity>(registry.get<ConstructionGeneratedComponent>(entity).ownerEntity);
+        auto state = m_shapes.find(owner);
+        const bool owned = state != m_shapes.end() &&
+            std::find(state->second->colliders.begin(), state->second->colliders.end(), entity) !=
+                state->second->colliders.end();
+        if (!owned) {
+            strays.push_back(entity);
+        }
+    }
+    for (entt::entity stray : strays) {
+        scene.DestroyEntity(Entity(stray, &scene));
+    }
+
+    ++m_stats.updates;
+    m_stats.lastEvaluations = evaluated;
+    m_stats.lastEvaluateMs = evaluateMs;
+    m_stats.lastUpdateMs = MillisecondsSince(start);
+    return evaluated;
+}
+
+void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState& state, std::uint64_t hash,
+                                  const std::vector<LocalBox>& cuts)
+{
+    entt::registry& registry = scene.GetRegistry();
+    const auto& shape = registry.get<ConstructionShapeComponent>(entity);
+    state.inputHash = hash;
+    ++m_stats.evaluations;
+    const bool hasGeometry = EvaluateShape(shape, CollectOpenings(scene, entity), state.geometry, cuts);
+
+    auto& renderer = registry.get<MeshRendererComponent>(entity);
+    if (hasGeometry && m_sink.upload) {
+        const std::string name = registry.all_of<TagComponent>(entity)
+            ? registry.get<TagComponent>(entity).tag : std::string("Construction");
+        const size_t handle = m_sink.upload(state.meshHandle, name, state.geometry.mesh);
+        if (handle != state.meshHandle && state.meshHandle != kNoMesh && m_sink.release) {
+            m_sink.release(state.meshHandle);
+        }
+        state.meshHandle = handle;
+        ++m_stats.meshUploads;
+    } else if (!hasGeometry) {
+        Release(state);
+    }
+    renderer.SetMesh(state.meshHandle, state.geometry.mesh.bounds, {}, false, 1);
+    RebuildColliders(scene, entity, state);
+}
+
+bool ConstructionSystem::CollidersIntact(Scene& scene, entt::entity owner, const ShapeState& state) const
+{
+    const entt::registry& registry = scene.GetRegistry();
+    const auto& shape = registry.get<ConstructionShapeComponent>(owner);
+    const size_t wanted = shape.collision == CollisionMode::Solid && !IsCutter(shape)
+        ? state.geometry.solids.size() + state.geometry.rounds.size() : 0;
+    if (state.colliders.size() != wanted) {
+        return false;
+    }
+    for (entt::entity collider : state.colliders) {
+        if (!registry.valid(collider)) {
+            return false;
+        }
+        const auto* generated = registry.try_get<ConstructionGeneratedComponent>(collider);
+        const auto* transform = registry.try_get<TransformComponent>(collider);
+        if (!generated || generated->ownerEntity != static_cast<std::uint32_t>(owner) || !transform ||
+            transform->parent != owner) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void ConstructionSystem::RebuildColliders(Scene& scene, entt::entity owner, ShapeState& state)
+{
+    DestroyColliders(scene, state);
+    const auto& shape = scene.GetRegistry().get<ConstructionShapeComponent>(owner);
+    if (shape.collision != CollisionMode::Solid || IsCutter(shape)) {
+        return;
+    }
+    Entity ownerEntity(owner, &scene);
+    for (const LocalBox& box : state.geometry.solids) {
+        Entity collider = scene.CreateEntity("Construction Collision");
+        auto& transform = collider.GetComponent<TransformComponent>();
+        transform.position = vscale(vadd(box.min, box.max), 0.5f);
+        collider.AddComponent<PhysicsShapeComponent>(
+            PhysicsShapeComponent::CreateBox(vscale(vsub(box.max, box.min), 0.5f)));
+        auto& body = collider.AddComponent<RigidBodyComponent>();
+        body.isStatic = true;
+        body.motion = RigidBodyMotion::Static;
+        body.mass = 0.0f;
+        body.useGravity = false;
+        body.layer = 1;  // World, the built-in layer for static level geometry
+        collider.AddComponent<EditorOnlyComponent>();
+        collider.AddComponent<ConstructionGeneratedComponent>().ownerEntity = static_cast<std::uint32_t>(owner);
+        scene.SetParent(collider, ownerEntity, false);
+        state.colliders.push_back(static_cast<entt::entity>(collider));
+        ++m_stats.collidersBuilt;
+    }
+    for (const RoundCollider& round : state.geometry.rounds) {
+        Entity collider = scene.CreateEntity("Construction Collision");
+        collider.GetComponent<TransformComponent>().position = round.center;
+        PhysicsShapeComponent physicsShape = PhysicsShapeComponent::CreateSphere(round.radius);
+        if (round.kind == RoundCollider::Kind::Cylinder) {
+            physicsShape.type = PhysicsShapeType::Cylinder;
+            physicsShape.height = round.height;
+        }
+        collider.AddComponent<PhysicsShapeComponent>(physicsShape);
+        auto& body = collider.AddComponent<RigidBodyComponent>();
+        body.isStatic = true;
+        body.motion = RigidBodyMotion::Static;
+        body.mass = 0.0f;
+        body.useGravity = false;
+        body.layer = 1;
+        collider.AddComponent<EditorOnlyComponent>();
+        collider.AddComponent<ConstructionGeneratedComponent>().ownerEntity = static_cast<std::uint32_t>(owner);
+        scene.SetParent(collider, ownerEntity, false);
+        state.colliders.push_back(static_cast<entt::entity>(collider));
+        ++m_stats.collidersBuilt;
+    }
+}
+
+void ConstructionSystem::DestroyColliders(Scene& scene, ShapeState& state)
+{
+    for (entt::entity collider : state.colliders) {
+        if (scene.GetRegistry().valid(collider) &&
+            scene.GetRegistry().all_of<ConstructionGeneratedComponent>(collider)) {
+            scene.DestroyEntity(Entity(collider, &scene));
+        }
+    }
+    state.colliders.clear();
+}
+
+void ConstructionSystem::Release(ShapeState& state)
+{
+    if (state.meshHandle != kNoMesh && m_sink.release) {
+        m_sink.release(state.meshHandle);
+    }
+    state.meshHandle = kNoMesh;
+}
+
+void ConstructionSystem::Reset()
+{
+    for (auto& entry : m_shapes) {
+        Release(*entry.second);
+    }
+    m_shapes.clear();
+}
+
+const EvaluatedGeometry* ConstructionSystem::Geometry(entt::entity entity) const
+{
+    auto found = m_shapes.find(entity);
+    return found != m_shapes.end() ? &found->second->geometry : nullptr;
+}
+
+std::uint64_t ConstructionSystem::InputHash(entt::entity entity) const
+{
+    auto found = m_shapes.find(entity);
+    return found != m_shapes.end() ? found->second->inputHash : 0;
+}
+
+bool ConstructionSystem::Summary(entt::entity entity, GeometrySummary& out) const
+{
+    auto found = m_shapes.find(entity);
+    if (found == m_shapes.end()) {
+        return false;
+    }
+    const ShapeState& state = *found->second;
+    out.triangles = state.geometry.mesh.indices.size() / 3;
+    out.collisionBoxes = state.geometry.solids.size();
+    out.inputHash = state.inputHash;
+    out.geometryHash = HashGeometry(state.geometry);
+    return true;
+}
+
+bool ConstructionSystem::Raycast(Scene& scene, const Ray& ray, ConstructionHit& out, entt::entity ignore) const
+{
+    bool hitAny = false;
+    float best = 0.0f;
+    for (const auto& [entity, statePtr] : m_shapes) {
+        const ShapeState& state = *statePtr;
+        if (entity == ignore || !scene.GetRegistry().valid(entity) ||
+            IsCutter(scene.GetRegistry().get<ConstructionShapeComponent>(entity))) {
+            continue;
+        }
+        const Mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
+        const Mat4 inverse = Mat4::Invert(world);
+        const Vec3 localOrigin = Mat4::TransformPoint(inverse, ray.origin);
+        const Vec3 localDir = vsub(Mat4::TransformPoint(inverse, vadd(ray.origin, ray.direction)), localOrigin);
+        const MeshData& mesh = state.geometry.mesh;
+        for (size_t tri = 0; tri * 3 + 2 < mesh.indices.size(); ++tri) {
+            const Vertex& va = mesh.vertices[mesh.indices[tri * 3]];
+            const Vertex& vb = mesh.vertices[mesh.indices[tri * 3 + 1]];
+            const Vertex& vc = mesh.vertices[mesh.indices[tri * 3 + 2]];
+            float t = 0.0f;
+            if (!IntersectTriangle(localOrigin, localDir, Vec3(va.pos[0], va.pos[1], va.pos[2]),
+                                   Vec3(vb.pos[0], vb.pos[1], vb.pos[2]), Vec3(vc.pos[0], vc.pos[1], vc.pos[2]), t)) {
+                continue;
+            }
+            const Vec3 localPoint = vadd(localOrigin, vscale(localDir, t));
+            const Vec3 worldPoint = Mat4::TransformPoint(world, localPoint);
+            const float distance = vlen(vsub(worldPoint, ray.origin));
+            if (hitAny && distance >= best) {
+                continue;
+            }
+            const Vec3 localNormal(va.normal[0], va.normal[1], va.normal[2]);
+            hitAny = true;
+            best = distance;
+            out.entity = entity;
+            out.localPoint = localPoint;
+            out.localNormal = localNormal;
+            out.worldPoint = worldPoint;
+            out.worldNormal = TransformNormal(inverse, localNormal);
+            out.tag = tri < state.geometry.triangleTags.size() ? state.geometry.triangleTags[tri] : FaceTag{};
+            out.distance = distance;
+        }
+    }
+    return hitAny;
+}
+
+} // namespace Hephaestus::Construction

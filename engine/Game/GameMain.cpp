@@ -78,6 +78,7 @@
 #endif
 
 // Scene
+#include "../Construction/ConstructionSystem.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
 #include "../Scene/ActiveCameraSync.h"
@@ -671,6 +672,20 @@ int main(int argc, char* argv[]) {
     }
 
     HP_LOG(Info, "Scene loaded successfully: " + scene.GetName());
+
+    // Construction shapes are saved as sizes; build their meshes and collision before anything uses the scene.
+    Hephaestus::Construction::ConstructionSystem construction;
+    {
+        Hephaestus::Construction::MeshSink sink;
+        sink.upload = [&frameRenderer](size_t existing, const std::string& name, const MeshData& mesh) {
+            return frameRenderer.UploadDynamicMesh(existing, name, mesh);
+        };
+        sink.release = [&frameRenderer](size_t handle) { frameRenderer.ReleaseDynamicMesh(handle); };
+        construction.SetMeshSink(std::move(sink));
+    }
+    if (const int built = construction.Update(scene); built > 0) {
+        HP_LOG(Info, "Built " + std::to_string(built) + " construction shapes");
+    }
     
     // Detect project root from the scene file so mesh/asset paths resolve
     // correctly even when the game runs from a different directory.
@@ -1335,6 +1350,7 @@ int main(int argc, char* argv[]) {
             return true;
         }
 
+        construction.Update(scene);
         loadSceneMeshes();
         const fs::path characterRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
         Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);

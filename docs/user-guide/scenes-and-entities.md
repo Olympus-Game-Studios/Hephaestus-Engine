@@ -93,6 +93,30 @@ Scripts can spawn prefabs while the game runs with `Scene.instantiate`, which is
 
 **Not supported yet:** prefabs inside prefabs, and prefab variants. Don't parent one prefab copy inside another and expect it to behave like a nested prefab.
 
+## Blocking out levels
+
+You can sketch a playable level straight in the viewport with construction shapes, no modelling program needed. They're described by their sizes rather than stored as meshes, so you can keep reshaping them and the walls, doors and collision follow.
+
+- **Draw Block** (`B`) draws a solid block, good for cover, platforms and floors. Drag its footprint on the ground or on top of anything else, let go, move the mouse up to set the height and click. A plain click drops a 1 m block.
+- **Draw Room** (`Shift+B`) draws a room: four walls and a floor, open at the top so you can see in. A plain click drops a 6 by 4 m room, 3 m high.
+- **Draw Stairs** (`T`) draws a flight of stairs. Drag the footprint and they climb along its longer side, away from where you started dragging, then move up to set the height. Steps are just under the player's step height, so the player and bots can always walk up them; the Inspector shows how many steps you got and lets you pick a number instead.
+- **Draw Opening** (`O`) cuts a doorway or window. Drag a rectangle on a wall, or just click: low on the wall gives a 1.2 by 2.1 m door standing on the floor, higher up gives a window. Drag an existing opening to slide it along the wall.
+- **Resize** a block or room by selecting it and dragging the handles in the middle of its faces. The opposite side stays put; hold `Shift` to grow both sides at once.
+
+While you draw, sizes snap to a 25 cm grid (or the gizmo's snap value when snapping is on). Hold `Ctrl` to turn snapping off, type sizes such as `4,3` then `Enter` for the footprint and `2.5` then `Enter` for the height, and press `Esc` to cancel. The status bar tells you what each tool is waiting for. `Q`, `W`, `E` or `R` takes you back to selecting.
+
+The Inspector's **Construction** card has the exact numbers: width, height and depth, whether it's a hollow room, wall thickness, floor and ceiling, and for openings which wall they're on, how far from its middle, their sill height and size. New shapes get a 1 m grid texture so you can judge distances at a glance; give them any material you like.
+
+Collision is built for you, so players and bots can walk through doorways straight away. To try a space, use **Play > Play From Here** (`Ctrl+Shift+P`): the player starts where the viewport camera is, facing the same way, and goes back to where you placed them when you stop.
+
+To cut a hole of any size anywhere (a window through two rooms at once, a gap in a floor), use a **subtract** block: press the Cube button in the tool row, or select any block, and set **Mode** to **Subtract** in its Construction settings. A Cube dropped onto a wall or floor is centred on the surface, so it cuts into it straight away. A subtract block shows as a see-through red box, cuts every block and room it overlaps, moves the hole wherever you move it, has no collision and is hidden in the game. Set Mode back to Add to make it a solid block again.
+
+The Plane, Cylinder and Sphere buttons make construction shapes too. Their size, segments and collision are in the same Construction settings, and their face handles resize them. They can't subtract yet.
+
+Construction shapes work in packaged games too: they're built from their sizes when the level loads.
+
+**Not there yet:** ramps, walls drawn as lines, rooms with other footprints and materials per face.
+
 ## Undo
 
 Almost everything in a scene can be undone with `Ctrl+Z` and redone with `Ctrl+Y`, including gizmo drags, component edits, renames and creating or deleting things.

@@ -18,6 +18,9 @@ namespace Hephaestus {
 class AssetManager;
 class AssetOperationService;
 class AssetReferenceIndex;
+namespace Construction {
+class ConstructionSystem;
+}
 }
 
 namespace Hephaestus::Automation {
@@ -104,6 +107,11 @@ public:
         outError = "Play Mode control is unavailable for this host";
         return false;
     }
+    virtual bool StartPlayModeFromHere(std::string& outError)
+    {
+        outError = "Play From Here is unavailable for this host";
+        return false;
+    }
     virtual bool StopPlayMode(std::string& outError)
     {
         outError = "Play Mode control is unavailable for this host";
@@ -163,6 +171,8 @@ public:
     virtual IAssetImportService* AssetImport() noexcept { return nullptr; }
     virtual AssetDatabase* ImportDatabase() noexcept { return nullptr; }
     virtual AudioEngine* Audio() noexcept { return nullptr; }
+    /** Construction shapes of the active scene; evaluated on demand by construction tools. */
+    virtual Hephaestus::Construction::ConstructionSystem* Construction() noexcept { return nullptr; }
 
     /** Refresh editor views after an asset file operation. */
     virtual void NotifyAssetChanged() {}

@@ -2,6 +2,7 @@
 
 #include "Scene.h"
 #include "../Assets/AssetPathPolicy.h"
+#include "../Construction/ConstructionShape.h"
 #include "../Scripting/LuaScriptComponent.h"
 #include "../Scripting/ScriptComponent.h"
 
@@ -1302,6 +1303,10 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         CaptureParticleEmitter(entity.GetComponent<ParticleEmitterComponent>(), out.data);
         return true;
     }
+    if (type == "ConstructionShape" && entity.HasComponent<ConstructionShapeComponent>()) {
+        out.data = Hephaestus::Construction::ShapeToJson(entity.GetComponent<ConstructionShapeComponent>());
+        return true;
+    }
     if (type == "AudioSource" && entity.HasComponent<AudioSourceComponent>()) {
         const auto& audio = entity.GetComponent<AudioSourceComponent>();
         out.enabled = audio.enabled;
@@ -1448,6 +1453,13 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
         ApplyParticleEmitter(emitter, data);
         return true;
     }
+    if (type == "ConstructionShape") {
+        auto& shape = entity.HasComponent<ConstructionShapeComponent>()
+            ? entity.GetComponent<ConstructionShapeComponent>()
+            : entity.AddComponent<ConstructionShapeComponent>();
+        std::string error;
+        return Hephaestus::Construction::ApplyShapeJson(shape, data, error);
+    }
     if (type == "AudioSource") {
         auto& audio = entity.HasComponent<AudioSourceComponent>()
             ? entity.GetComponent<AudioSourceComponent>()
@@ -1498,6 +1510,7 @@ bool HasComponent(Entity entity, const std::string& type) {
     if (type == "ScriptComponent") return entity.HasComponent<ScriptComponent>();
     if (type == "AudioSource") return entity.HasComponent<AudioSourceComponent>();
     if (type == "ParticleEmitter") return entity.HasComponent<ParticleEmitterComponent>();
+    if (type == "ConstructionShape") return entity.HasComponent<ConstructionShapeComponent>();
     if (type == "Character") return entity.HasComponent<CharacterComponent>();
     if (type == "CharacterController") return entity.HasComponent<CharacterControllerComponent>();
     return false;
@@ -1529,6 +1542,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
     else if (type == "ScriptComponent") entity.RemoveComponent<ScriptComponent>();
     else if (type == "AudioSource") entity.RemoveComponent<AudioSourceComponent>();
     else if (type == "ParticleEmitter") entity.RemoveComponent<ParticleEmitterComponent>();
+    else if (type == "ConstructionShape") entity.RemoveComponent<ConstructionShapeComponent>();
     else if (type == "Character") entity.RemoveComponent<CharacterComponent>();
     else if (type == "CharacterController") entity.RemoveComponent<CharacterControllerComponent>();
     else return false;
@@ -1539,7 +1553,7 @@ const std::vector<std::string>& SupportedTypes() {
     static const std::vector<std::string> kTypes = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
         "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character",
-        "CharacterController", "ParticleEmitter"
+        "CharacterController", "ParticleEmitter", "ConstructionShape"
     };
     return kTypes;
 }

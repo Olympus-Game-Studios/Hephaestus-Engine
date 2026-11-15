@@ -21,6 +21,8 @@
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
 #include "ProbeVolumeInspector.h"
+#include "ConstructionShapeInspector.h"
+#include "../../Construction/ConstructionShape.h"
 #include "../../Gfx/ProbeBake.h"
 #include "ComponentInspector.h"
 #include "MeshRendererInspector.h"
@@ -99,6 +101,7 @@
 #include "../../Automation/LogAutomation.h"
 #include "../../Automation/ScriptAutomation.h"
 #include "../../Automation/PhysicsAutomation.h"
+#include "../../Automation/ConstructionAutomation.h"
 #include "../../Automation/UIAutomation.h"
 #include "../../Automation/BuildAutomation.h"
 #include "../../Automation/TestAutomation.h"
@@ -276,6 +279,7 @@ QString OutlinerIconName(const entt::registry& registry, entt::entity entity)
     if (registry.all_of<CameraComponent>(entity)) return QStringLiteral("camera");
     if (registry.any_of<CharacterComponent, CharacterControllerComponent>(entity)) return QStringLiteral("character");
     if (registry.all_of<ProbeVolumeComponent>(entity)) return QStringLiteral("volume");
+    if (registry.all_of<ConstructionShapeComponent>(entity)) return QStringLiteral("cube");
     if (registry.all_of<AudioSourceComponent>(entity)) return QStringLiteral("audio");
     if (registry.all_of<MeshRendererComponent>(entity)) return QStringLiteral("cube");
     return QStringLiteral("dot");
@@ -847,6 +851,25 @@ public:
         return true;
     }
 
+    bool StartPlayModeFromHere(std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->StartPlayModeFromHere();
+        if (!m_owner->m_engine->IsPlaying()) {
+            outError = "Play Mode did not start";
+            return false;
+        }
+        return true;
+    }
+
+    Hephaestus::Construction::ConstructionSystem* Construction() noexcept override
+    {
+        return m_owner->m_engine ? &m_owner->m_engine->GetConstruction() : nullptr;
+    }
+
     bool StopPlayMode(std::string& outError) override
     {
         if (!m_owner->m_engine) {
@@ -1264,6 +1287,7 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterScriptAutomation(*m_automationService);
     Automation::RegisterUIAutomation(*m_automationService);
     Automation::RegisterPhysicsAutomation(*m_automationService);
+    Automation::RegisterConstructionAutomation(*m_automationService);
     Automation::RegisterRuntimeCapture(*m_automationService);
     Automation::RegisterBuildAutomation(*m_automationService);
     Automation::RegisterTestAutomation(*m_automationService);
@@ -1631,7 +1655,12 @@ void EditorMainWindow::setupTopToolbar()
             }
             if (checked) {
                 // Start play mode
-                m_engine->StartPlayMode();
+                if (m_playFromHereNext) {
+                    m_engine->StartPlayModeFromHere();
+                } else {
+                    m_engine->StartPlayMode();
+                }
+                m_playFromHereNext = false;
                 m_pauseAction->setChecked(false);
                 m_pauseAction->setEnabled(true);
                 m_stopAction->setEnabled(true);
@@ -1732,8 +1761,21 @@ void EditorMainWindow::setupTopToolbar()
     };
 
     m_playAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
+    auto* playFromHereAction = new QAction(Theme::Icon(QStringLiteral("play")), tr("Play From Here"), this);
+    playFromHereAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
+    playFromHereAction->setToolTip(tr("Play with the player standing where the viewport camera is, facing the same way"));
+    connect(playFromHereAction, &QAction::triggered, this, [this]() {
+        if (!m_engine || m_engine->IsPlaying() || !m_playAction) return;
+        if (m_playInWindowAction && m_playInWindowAction->isChecked()) {
+            statusBar()->showMessage(tr("Play From Here plays in the viewport. Choose Play in Viewport to use it."), 4000);
+            return;
+        }
+        m_playFromHereNext = true;
+        m_playAction->trigger();
+    });
     auto* playMenuBarMenu = new QMenu(tr("&Play"), m_menuBar);
     playMenuBarMenu->addAction(m_playAction);
+    playMenuBarMenu->addAction(playFromHereAction);
     playMenuBarMenu->addAction(m_pauseAction);
     playMenuBarMenu->addAction(m_stopAction);
     playMenuBarMenu->addAction(m_stepAction);
@@ -1940,6 +1982,36 @@ void EditorMainWindow::setupTopToolbar()
     m_translateAction->setChecked(true);
     m_topToolbar->addSeparator();
 
+    using Hephaestus::Construction::ToolMode;
+    m_drawBlockAction = new QAction(Theme::Icon(QStringLiteral("draw-block")), tr("Draw Block (B)"), this);
+    m_drawRoomAction = new QAction(Theme::Icon(QStringLiteral("draw-room")), tr("Draw Room (Shift+B)"), this);
+    m_drawOpeningAction = new QAction(Theme::Icon(QStringLiteral("draw-opening")), tr("Draw Opening (O)"), this);
+    m_drawStairsAction = new QAction(Theme::Icon(QStringLiteral("draw-stairs")), tr("Draw Stairs (T)"), this);
+    const auto setToolTip = [](QAction* action, const QString& description) {
+        action->setToolTip(QStringLiteral("<b>%1</b><br>%2").arg(action->text().toHtmlEscaped(), description.toHtmlEscaped()));
+    };
+    setToolTip(m_drawStairsAction, tr("Drag a footprint, then move up for the height; steps follow the player's step height"));
+    setToolTip(m_drawBlockAction, tr("Drag a footprint on the ground or any surface, then move up for the height"));
+    setToolTip(m_drawRoomAction, tr("Drag a footprint for a room with walls and a floor, then move up for the height"));
+    setToolTip(m_drawOpeningAction, tr("Drag on a wall to cut a doorway or window, or drag an existing one to move it"));
+    const std::pair<QAction*, ToolMode> constructionActions[] = {
+        {m_drawBlockAction, ToolMode::DrawBox}, {m_drawRoomAction, ToolMode::DrawRoom},
+        {m_drawStairsAction, ToolMode::DrawStairs}, {m_drawOpeningAction, ToolMode::DrawOpening}};
+    for (const auto& [action, mode] : constructionActions) {
+        action->setCheckable(true);
+        transformGroup->addAction(action);
+        m_topToolbar->addAction(action);
+        connect(action, &QAction::triggered, this, [this, mode = mode]() {
+            if (m_engine) m_engine->SetConstructionToolMode(mode);
+        });
+    }
+    for (QAction* action : { m_selectAction, m_translateAction, m_rotateAction, m_scaleAction }) {
+        connect(action, &QAction::triggered, this, [this]() {
+            if (m_engine) m_engine->SetConstructionToolMode(ToolMode::Select);
+        });
+    }
+    m_topToolbar->addSeparator();
+
     m_artistToolRail = new QToolBar(tr("Tool Rail"), this);
     m_artistToolRail->setObjectName(QStringLiteral("ArtistToolRail"));
     m_artistToolRail->setMovable(false);
@@ -1948,7 +2020,8 @@ void EditorMainWindow::setupTopToolbar()
     m_artistToolRail->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     m_artistToolRail->setIconSize(QSize(16, 16));
     m_artistToolRail->toggleViewAction()->setEnabled(false);
-    for (QAction* action : { m_selectAction, m_translateAction, m_rotateAction, m_scaleAction }) {
+    for (QAction* action : { m_selectAction, m_translateAction, m_rotateAction, m_scaleAction,
+                             m_drawBlockAction, m_drawRoomAction, m_drawStairsAction, m_drawOpeningAction }) {
         m_artistToolRail->addAction(action);
     }
     addToolBar(Qt::LeftToolBarArea, m_artistToolRail);
@@ -3676,6 +3749,33 @@ void EditorMainWindow::setupEditorCallbacks()
     connect(m_engine.get(), &QtEditorEngine::deleteSelectionRequested,
             this, &EditorMainWindow::deleteSelectedEntities,
             Qt::UniqueConnection);
+    connect(m_engine.get(), &QtEditorEngine::constructionStatusChanged,
+            this, [this](const QString& status) {
+                using Hephaestus::Construction::ToolMode;
+                const ToolMode mode = m_engine->GetConstructionToolMode();
+                QAction* active = mode == ToolMode::DrawBox ? m_drawBlockAction
+                    : mode == ToolMode::DrawRoom ? m_drawRoomAction
+                    : mode == ToolMode::DrawStairs ? m_drawStairsAction
+                    : mode == ToolMode::DrawOpening ? m_drawOpeningAction : nullptr;
+                if (active && !active->isChecked()) {
+                    active->setChecked(true);
+                } else if (!active && m_drawBlockAction && (m_drawBlockAction->isChecked() ||
+                           m_drawRoomAction->isChecked() || m_drawStairsAction->isChecked() ||
+                           m_drawOpeningAction->isChecked())) {
+                    const auto* ctx = m_engine->GetEditorContext();
+                    const GizmoMode gizmo = ctx ? ctx->GetGizmoMode() : GizmoMode::Translate;
+                    QAction* gizmoAction = gizmo == GizmoMode::None ? m_selectAction
+                        : gizmo == GizmoMode::Rotate ? m_rotateAction
+                        : gizmo == GizmoMode::Scale ? m_scaleAction : m_translateAction;
+                    gizmoAction->setChecked(true);
+                }
+                if (status.isEmpty()) {
+                    statusBar()->clearMessage();
+                } else {
+                    statusBar()->showMessage(status);
+                }
+            },
+            Qt::UniqueConnection);
     connect(m_engine.get(), &QtEditorEngine::viewportContextMenuRequested,
             this, &EditorMainWindow::showViewportContextMenu,
             Qt::UniqueConnection);
@@ -4104,6 +4204,9 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
         name = registry.get<TagComponent>(entity).tag;
     }
     
+    if (registry.all_of<ConstructionGeneratedComponent>(entity)) {
+        return;
+    }
     QTreeWidgetItem* item = new QTreeWidgetItem(parent);
     item->setText(0, QString::fromStdString(name));
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
@@ -4814,6 +4917,15 @@ void EditorMainWindow::deleteSelectedEntities()
             if (entity.HasComponent<PrefabInstanceComponent>()) {
                 PrefabInstantiator::DestroyInstance(*scene, entity);
             } else {
+                // Openings only exist as cuts in their host, so they go with it.
+                if (entity.HasComponent<ConstructionShapeComponent>()) {
+                    for (Entity child : scene->GetChildren(entity)) {
+                        const auto* shape = scene->GetRegistry().try_get<ConstructionShapeComponent>(child);
+                        if (shape && shape->recipe == Hephaestus::Construction::Recipe::Opening) {
+                            scene->DestroyEntity(child);
+                        }
+                    }
+                }
                 scene->DestroyEntity(entity);
             }
         }
@@ -7738,6 +7850,14 @@ void EditorMainWindow::registerComponentInspectors()
         },
         [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
             return new EnvironmentInspector(ctx, e, parent);
+        });
+
+    reg.Register("ConstructionShape", 3,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<ConstructionShapeComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new ConstructionShapeInspector(ctx, e, parent);
         });
 
     reg.Register("ProbeVolume", 11,

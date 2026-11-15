@@ -13,8 +13,10 @@
 #include "../../Core/ProjectContext.h"
 #include "../MaterialEditor/MaterialNodeDefinitions.h"
 #include "../../Plugins/PluginSystem.h"
+#include "../../Construction/ConstructionSystem.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Scene.h"
+#include "../../Scene/SceneAuthoring.h"
 #include <QAction>
 #include <QDockWidget>
 #include <QFileInfo>
@@ -119,11 +121,13 @@ public:
  bool RegisterContextAction(const Plugins::ContextActionDescriptor&d)override{return host.RegisterContext(manifest.id,d);}
  bool ShowPanel(const char*id)override{return host.ShowPanel(id?id:"");}
  bool RegisterHeaderButton(const Plugins::HeaderButtonDescriptor&d)override{return host.RegisterHeaderButton(manifest,d);}
+ bool RegisterToolbarButton(const Plugins::ToolbarButtonDescriptor&d)override{return host.RegisterToolbarButton(manifest,d);}
  bool RegisterAssetType(const Plugins::AssetTypeDescriptor&d)override{return host.RegisterAssetType(manifest.id,d);}
  bool RegisterImporter(const Plugins::ImporterDescriptor&d)override{return host.RegisterImporter(manifest.id,d);}
  bool ImportAssetPack(const Plugins::AssetPackImportRequest&r,Plugins::AssetPackImportResult&out)override{return host.ImportAssetPack(r,out);}
  bool HasScene()const override{auto*c=host.editorContext_();return c&&c->HasActiveScene();}
  std::uint64_t CreatePrimitive(Plugins::PrimitiveKind k,const char*n)override{return host.CreatePrimitive(k,n);}
+ std::uint64_t CreatePrimitiveEx(const Plugins::PrimitiveRequest&r)override{return host.CreatePrimitiveEx(r);}
  bool DeleteEntity(std::uint64_t id)override{auto*c=host.editorContext_();if(!c||!c->HasActiveScene()||id==0)return false;auto&e=c->GetActiveScene()->GetRegistry();auto h=static_cast<entt::entity>(id-1);if(!e.valid(h))return false;c->GetActiveScene()->DestroyEntity(Entity(h,c->GetActiveScene()));c->MarkDirty();host.sceneChanged_();return true;}
  bool SelectEntity(std::uint64_t id)override{auto*c=host.editorContext_();if(!c||id==0)return false;c->SelectEntity(static_cast<entt::entity>(id-1));return true;}
  std::uint64_t Begin(const char*l)override{auto*c=host.editorContext_();if(!c||!c->HasActiveScene())return 0;EditorUndoManager::PushSnapshot(c,l?l:"Plugin edit");auto t=host.nextTransaction_++;host.transactions_.push_back({t,c});return t;}
@@ -287,6 +291,105 @@ QString EditorPluginHost::CustomAssetDisplayName(const QString&p)const{auto id=C
 QIcon EditorPluginHost::CustomAssetIcon(const QString&p)const{auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&!a->icon.empty()){auto*m=system_->FindManifest(a->owner);if(m)return QIcon(QString::fromStdString((m->root/a->icon).string()));}return{};}
 bool EditorPluginHost::OpenCustomAsset(const QString&p){auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&a->open){bool ok=a->open(p.toUtf8().constData(),a->userData);if(ok)EditorAssetServices::Instance().Documents().Register(DocumentKind::Plugin,p.toStdString(),a->dirty&&a->dirty(p.toUtf8().constData(),a->userData));return ok;}return false;}
 std::uint64_t EditorPluginHost::CreatePrimitive(Plugins::PrimitiveKind k,const char*n){auto*c=editorContext_();if(!c||!c->HasActiveScene())return 0;Entity e=c->GetActiveScene()->CreateEntity(n&&*n?n:"Plugin Entity");if(k==Plugins::PrimitiveKind::Cube||k==Plugins::PrimitiveKind::Sphere||k==Plugins::PrimitiveKind::Plane){auto&m=e.AddComponent<MeshRendererComponent>();m.meshAssetPath=k==Plugins::PrimitiveKind::Cube?"builtin://Cube":k==Plugins::PrimitiveKind::Sphere?"builtin://Sphere":"builtin://Plane";}else if(k==Plugins::PrimitiveKind::PointLight)e.AddComponent<LightComponent>();c->SelectEntity(static_cast<entt::entity>(e));c->MarkDirty();sceneChanged_();return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e))+1;}
+bool EditorPluginHost::RegisterToolbarButton(const Plugins::PluginManifest& manifest,
+                                             const Plugins::ToolbarButtonDescriptor& d)
+{
+    if (d.structSize < sizeof(Plugins::ToolbarButtonDescriptor) || !d.commandId) {
+        return false;
+    }
+    QAction* action = FindCommand(d.commandId);
+    if (!action) {
+        return false;
+    }
+    if (d.iconPath && *d.iconPath) {
+        std::filesystem::path icon = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(d.iconPath)));
+        if (icon.is_relative()) {
+            icon = manifest.root / icon;
+        }
+        action->setIcon(Theme::IconFromFile(QString::fromStdU16String(icon.u16string())));
+    }
+    const QString description = QString::fromUtf8(d.toolTip ? d.toolTip : "");
+    action->setToolTip(description.isEmpty()
+        ? action->text()
+        : QStringLiteral("<b>%1</b><br>%2").arg(action->text().toHtmlEscaped(), description.toHtmlEscaped()));
+    Plugins::ToolbarActionDescriptor row;
+    row.commandId = d.commandId;
+    return RegisterToolbar(manifest.id, row);
+}
+
+std::uint64_t EditorPluginHost::CreatePrimitiveEx(const Plugins::PrimitiveRequest& r)
+{
+    using Plugins::PrimitiveKind;
+    auto* c = editorContext_();
+    if (r.structSize < sizeof(Plugins::PrimitiveRequest) || !c || !c->HasActiveScene()) {
+        return 0;
+    }
+    Scene& scene = *c->GetActiveScene();
+    const Vec3 size(std::max(r.size[0], 0.01f), std::max(r.size[1], 0.01f), std::max(r.size[2], 0.01f));
+
+    // On whatever is under the middle of the view, or the ground, or a few metres ahead.
+    Vec3 base(0.0f, 0.0f, 0.0f);
+    if (r.placeInView) {
+        const EditorCamera& cam = c->GetCamera();
+        const float yaw = cam.yawDeg * 3.14159265f / 180.0f;
+        const float pitch = cam.pitchDeg * 3.14159265f / 180.0f;
+        const Vec3 eye(cam.positionX, cam.positionY, cam.positionZ);
+        const Vec3 forward = vnorm(Vec3(std::cos(pitch) * std::cos(yaw), std::sin(pitch), std::cos(pitch) * std::sin(yaw)));
+        SceneAuthoring::SceneRaycastHit hit;
+        if (SceneAuthoring::RaycastBounds(scene, Ray(eye, forward), hit) && hit.distance < 200.0f) {
+            base = hit.point;
+        } else if (forward.y < -0.01f && -eye.y / forward.y < 200.0f) {
+            base = vadd(eye, vscale(forward, -eye.y / forward.y));
+        } else {
+            base = vadd(eye, vscale(forward, 6.0f));
+            base.y = 0.0f;
+        }
+        const auto& snap = c->GetSnapSettings();
+        const float step = snap.enableSnap && snap.translateSnap > 0.0f ? snap.translateSnap : 0.25f;
+        base.x = std::round(base.x / step) * step;
+        base.z = std::round(base.z / step) * step;
+    }
+
+    if (r.kind == PrimitiveKind::PointLight || r.kind == PrimitiveKind::Empty) {
+        Entity e = scene.CreateEntity(r.name && *r.name ? r.name : r.kind == PrimitiveKind::PointLight ? "Point Light" : "Entity");
+        e.GetComponent<TransformComponent>().position = base;
+        if (r.kind == PrimitiveKind::PointLight) {
+            e.AddComponent<LightComponent>();
+        }
+        c->SelectEntity(static_cast<entt::entity>(e));
+        c->MarkDirty();
+        sceneChanged_();
+        return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e)) + 1;
+    }
+
+    // Every primitive is a construction shape, so its size, segments, collision and mode live on the entity.
+    ConstructionShapeComponent shape;
+    shape.recipe = r.kind == PrimitiveKind::Sphere ? Construction::Recipe::Sphere
+        : r.kind == PrimitiveKind::Plane ? Construction::Recipe::Plane
+        : r.kind == PrimitiveKind::Cylinder ? Construction::Recipe::Cylinder : Construction::Recipe::Box;
+    shape.box.width = size.x;
+    shape.box.height = size.y;
+    shape.box.depth = size.z;
+    shape.collision = r.collision ? Construction::CollisionMode::Solid : Construction::CollisionMode::None;
+    const bool subtract = shape.recipe == Construction::Recipe::Box && r.operation == Plugins::PrimitiveOperation::Subtract;
+    shape.role = subtract ? "cutter" : shape.recipe == Construction::Recipe::Box ? "block" : Construction::RecipeName(shape.recipe);
+    if (subtract) {
+        // Centred on the surface under the view, so it cuts into what it lands on.
+        base.y -= size.y * 0.5f;
+    }
+    shape.operation = Construction::Operation::Add;
+    const std::string fallbackName = subtract ? "Subtract" : Construction::DisplayName(shape);
+    Entity e = scene.CreateEntity(r.name && *r.name ? std::string(r.name) : fallbackName);
+    e.GetComponent<TransformComponent>().position = base;
+    e.AddComponent<ConstructionShapeComponent>(shape);
+    Construction::ConstructionSystem::SetOperation(scene, e,
+        subtract ? Construction::Operation::Subtract : Construction::Operation::Add);
+    c->SelectEntity(static_cast<entt::entity>(e));
+    c->MarkDirty();
+    sceneChanged_();
+    return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e)) + 1;
+}
+
 bool EditorPluginHost::RegisterMaterialNode(const std::string& owner, const Plugins::MaterialNodeDescriptor& descriptor) {
     if (descriptor.structSize < sizeof(Plugins::MaterialNodeDescriptor) || !descriptor.typeName ||
         (descriptor.inputCount > 0 && !descriptor.inputs) || (descriptor.outputCount > 0 && !descriptor.outputs)) {

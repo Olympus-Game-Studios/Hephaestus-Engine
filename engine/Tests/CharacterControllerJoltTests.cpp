@@ -1,3 +1,4 @@
+#include "Construction/ConstructionSystem.h"
 #include "Physics/CharacterControllerSystem.h"
 #include "Physics/JoltPhysicsEngine.h"
 #include "Physics/JoltPhysicsSystem.h"
@@ -191,6 +192,49 @@ CrateMeasure PushCrate(float mass, float pushStrength)
 
 int main()
 {
+    {
+        // Construction stairs (generated box colliders) are climbable with the default controller settings.
+        Session session("ConstructionStairs");
+        AddFloor(session);
+        Entity stairs = session.scene.CreateEntity("Stairs");
+        auto& shape = stairs.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Hephaestus::Construction::Recipe::Stairs;
+        shape.box.width = 1.6f;
+        shape.box.depth = 4.0f;
+        shape.box.height = 2.0f;
+        shape.stairs.maxRise = CharacterControllerComponent{}.stepHeight * 0.95f;
+        Entity landing = session.scene.CreateEntity("Landing");
+        landing.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 4.0f);
+        auto& landingShape = landing.AddComponent<ConstructionShapeComponent>();
+        landingShape.box.width = 4.0f;
+        landingShape.box.depth = 4.0f;
+        landingShape.box.height = 2.0f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, -4.0f));
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(10);
+        Physics::RaycastHit stepHit;
+        const bool tread = session.system.Raycast(entt::null, Vec3(0.0f, 5.0f, -1.25f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, stepHit);
+        Check(tread && std::fabs(stepHit.point.y - 0.5f) < 0.01f,
+              "Construction stairs collide at their treads (hit y " + std::to_string(stepHit.point.y) + ")");
+        session.controllers.SetMoveInput(id, 0.0f, 1.0f);
+        float topY = -100.0f;
+        float furthest = -100.0f;
+        for (int frame = 0; frame < 240; ++frame) {
+            session.Step(1);
+            const auto state = StateOf(session, id);
+            topY = std::max(topY, state.position.y);
+            furthest = std::max(furthest, state.position.z);
+            if (state.position.z > 3.5f) {
+                session.controllers.ClearMoveInput(id);
+            }
+        }
+        const Vec3 feet(0.0f, topY, furthest);
+        Check(feet.y > 1.9f && feet.z > 2.5f,
+              "A character walks up construction stairs onto the landing (feet at " + std::to_string(feet.y) + ", z " +
+                  std::to_string(feet.z) + ")");
+    }
     {
         Session session("Lifecycle");
         AddFloor(session);

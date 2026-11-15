@@ -39,6 +39,8 @@
 #include "../../Scene/SceneAuthoring.h"
 #include "../../Automation/AutomationBackend.h"
 #include "../../Core/PlayModeManager.h"
+#include "../../Construction/ConstructionSystem.h"
+#include "../../Construction/ConstructionTool.h"
 #include "../../Input/InputSystem.h"
 
 // Forward declarations (avoid including heavy engine headers)
@@ -212,12 +214,26 @@ public:
         m_debugPoints = std::move(points);
     }
 
+    // Construction shapes: their evaluation and the viewport tools that draw and edit them.
+    Hephaestus::Construction::ConstructionSystem& GetConstruction() { return m_construction; }
+    void SetConstructionToolMode(Hephaestus::Construction::ToolMode mode);
+    Hephaestus::Construction::ToolMode GetConstructionToolMode() const { return m_constructionTool.Mode(); }
+    std::string ConstructionStatusText() const { return m_constructionTool.StatusText(); }
+    /// Evaluate construction shapes now, so automation sees up-to-date geometry and collision.
+    void UpdateConstruction();
+
     // ── Play Mode API ─────────────────────────────────────────────────────
 
     /**
      * @brief Start play mode – snapshots scene, inits scripts, transitions camera.
      */
     void StartPlayMode();
+
+    /**
+     * @brief Start play mode with the player standing where the editor camera is, facing the same way.
+     * The scene snapshot is taken first, so Stop puts the player back where it was authored.
+     */
+    void StartPlayModeFromHere();
 
     /**
      * @brief Stop play mode – tears down scripts, restores scene + editor camera.
@@ -364,6 +380,9 @@ signals:
     /** @brief Rendering moved to this window (the editor viewport, or a Play window). */
     void presentationTargetChanged(QtViewportWindow* window);
 
+    /** @brief The construction tool changed mode or what it is asking for. */
+    void constructionStatusChanged(const QString& status);
+
 private slots:
     /**
      * @brief Called by QTimer to tick the engine.
@@ -371,6 +390,8 @@ private slots:
     void onTick();
 
 private:
+    void placePlayerAtEditorCamera(Scene& scene);
+    void ensureConstructionSink();
     bool createVulkanInstance();
     bool initializeVulkanDevice();
     void applyPresentationTarget();
@@ -516,6 +537,14 @@ private:
     float m_rmbPressY = 0.0f;
     bool m_rmbMoved = false;
     entt::entity m_placementPreview = entt::null;
+    Hephaestus::Construction::ConstructionSystem m_construction;
+    Hephaestus::Construction::ConstructionTool m_constructionTool;
+    std::uint64_t m_constructionSceneIdentity = 0;
+    std::string m_lastConstructionStatus;
+    bool m_constructionOwnsClick = false;
+    std::function<void(Scene&)> m_playAfterSnapshot;
+    Vec3 m_playerSpawnEye;
+    float m_playerSpawnYaw = 0.0f;
 };
 
 } // namespace QtEditor

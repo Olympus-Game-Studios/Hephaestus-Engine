@@ -62,6 +62,15 @@ struct HeaderButtonDescriptor {
     const char* toolTip = nullptr;
 };
 
+/// A button for one of this plugin's commands in the editor's tool row (next to the transform and construction
+/// tools). The icon is tinted like the editor's own icons when it is an SVG drawn with currentColor.
+struct ToolbarButtonDescriptor {
+    std::uint32_t structSize = sizeof(ToolbarButtonDescriptor);
+    const char* commandId = nullptr; // a command this plugin registered
+    const char* iconPath = nullptr;  // .svg or .png, relative to the plugin folder or absolute
+    const char* toolTip = nullptr;   // shown under the command's name
+};
+
 struct ContextActionDescriptor {
     const char* location = nullptr; // assetBrowser, sceneHierarchy, viewport, inspector
     const char* commandId = nullptr;
@@ -167,7 +176,20 @@ struct SettingDescriptor {
     SettingScope scope = SettingScope::Project;
 };
 
-enum class PrimitiveKind : std::uint32_t { Empty, Cube, Sphere, Plane, PointLight };
+enum class PrimitiveKind : std::uint32_t { Empty, Cube, Sphere, Plane, PointLight, Cylinder };
+
+/// Subtract only applies to Cube: it makes a cutter that carves the construction blocks and rooms it overlaps.
+enum class PrimitiveOperation : std::uint32_t { Add, Subtract };
+
+struct PrimitiveRequest {
+    std::uint32_t structSize = sizeof(PrimitiveRequest);
+    PrimitiveKind kind = PrimitiveKind::Cube;
+    const char* name = nullptr;
+    float size[3] = {1.0f, 1.0f, 1.0f}; // metres; sphere uses size[0] as diameter, cylinder size[0] and size[1]
+    PrimitiveOperation operation = PrimitiveOperation::Add;
+    bool collision = true;               // a static collider players and the navmesh use
+    bool placeInView = true;             // on the surface in front of the editor camera, else at the origin
+};
 
 class ICommandService {
 public:
@@ -185,6 +207,9 @@ public:
     virtual bool RegisterContextAction(const ContextActionDescriptor& descriptor) = 0;
     virtual bool ShowPanel(const char* panelId) = 0;
     virtual bool RegisterHeaderButton(const HeaderButtonDescriptor&) { return false; }
+    /// Appended to API 1; an older editor's vtable has no such entry, so plugins that call it need a matching
+    /// "engineVersion" in their manifest.
+    virtual bool RegisterToolbarButton(const ToolbarButtonDescriptor&) { return false; }
 };
 
 class IAssetService {
@@ -205,6 +230,8 @@ public:
     virtual std::uint64_t CreatePrimitive(PrimitiveKind kind, const char* name) = 0;
     virtual bool DeleteEntity(std::uint64_t entityId) = 0;
     virtual bool SelectEntity(std::uint64_t entityId) = 0;
+    /// Creates, selects and returns a primitive, or 0. Appended to API 1 (see RegisterToolbarButton).
+    virtual std::uint64_t CreatePrimitiveEx(const PrimitiveRequest&) { return 0; }
 };
 
 class IUndoService {

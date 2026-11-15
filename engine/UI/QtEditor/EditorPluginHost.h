@@ -65,6 +65,8 @@ private:
     bool RegisterSetting(const std::string&, const Plugins::SettingDescriptor&);
     bool RegisterMaterialNode(const std::string& owner, const Plugins::MaterialNodeDescriptor& descriptor);
     std::uint64_t CreatePrimitive(Plugins::PrimitiveKind, const char*);
+    std::uint64_t CreatePrimitiveEx(const Plugins::PrimitiveRequest&);
+    bool RegisterToolbarButton(const Plugins::PluginManifest&, const Plugins::ToolbarButtonDescriptor&);
 
     QMainWindow* window_ = nullptr;
     Plugins::PluginSystem* system_ = nullptr;
