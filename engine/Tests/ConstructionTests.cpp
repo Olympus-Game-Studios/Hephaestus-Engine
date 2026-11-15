@@ -875,6 +875,114 @@ void TestWallTool()
           "typing 4 then Enter places a corner 4 m along, and Enter again finishes an open wall");
 }
 
+void TestRampsAndTurns()
+{
+    ConstructionShapeComponent ramp;
+    ramp.recipe = Recipe::Ramp;
+    ramp.box.width = 2.0f;
+    ramp.box.height = 1.5f;
+    ramp.box.depth = 4.0f;
+    EvaluatedGeometry slope;
+    Check(EvaluateShape(ramp, {}, slope) && slope.hulls.size() == 1 && slope.hulls[0].size() == 6 &&
+              slope.mesh.indices.size() == 8 * 3 && WindingMatchesNormals(slope),
+          "a ramp is a closed wedge that collides as one convex hull");
+    Check(std::fabs(slope.mesh.bounds.max.y - 1.5f) < 1e-5f && std::fabs(slope.mesh.bounds.max.z - 2.0f) < 1e-5f,
+          "a ramp rises to its height at +Z");
+
+    auto turning = [](StairTurn turn) {
+        ConstructionShapeComponent stairs;
+        stairs.recipe = Recipe::Stairs;
+        stairs.box.width = 3.0f;
+        stairs.box.depth = 4.0f;
+        stairs.box.height = 2.0f;
+        stairs.stairs.maxRise = 0.285f;
+        stairs.stairs.turn = turn;
+        stairs.stairs.flightWidth = 1.2f;
+        Sanitize(stairs);
+        return stairs;
+    };
+    EvaluatedGeometry left;
+    Check(EvaluateShape(turning(StairTurn::Left), {}, left) && WindingMatchesNormals(left), "quarter-turn stairs evaluate");
+    Check(InsideSolid(left, Vec3(-0.9f, 0.1f, -1.9f)) && !InsideSolid(left, Vec3(-0.9f, 0.4f, -1.9f)) &&
+              InsideSolid(left, Vec3(-0.9f, 1.2f, 1.4f)) && InsideSolid(left, Vec3(1.4f, 1.9f, 1.4f)) &&
+              !InsideSolid(left, Vec3(1.0f, 0.5f, -1.0f)),
+          "a left quarter turn climbs the -X side, lands in the far corner and climbs across towards +X");
+    EvaluatedGeometry right;
+    EvaluateShape(turning(StairTurn::Right), {}, right);
+    Check(InsideSolid(right, Vec3(0.9f, 0.1f, -1.9f)) && InsideSolid(right, Vec3(-1.4f, 1.9f, 1.4f)),
+          "a right quarter turn is its mirror image");
+    EvaluatedGeometry uTurn;
+    EvaluateShape(turning(StairTurn::UTurnLeft), {}, uTurn);
+    Check(InsideSolid(uTurn, Vec3(0.0f, 1.2f, 1.4f)) && InsideSolid(uTurn, Vec3(0.9f, 1.9f, -1.9f)) &&
+              !InsideSolid(uTurn, Vec3(0.9f, 1.9f, 0.0f)) && !InsideSolid(uTurn, Vec3(0.0f, 0.5f, -1.0f)),
+          "a U-turn lands across the far side and climbs back along the +X side");
+    Check(StairCount(turning(StairTurn::Left)) == 8, "turning stairs keep every step under Max Step");
+
+    // Bots can walk up a ramp and round a quarter turn.
+    Scene scene("Ramps");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity ground = scene.CreateEntity("Ground");
+    ground.GetComponent<TransformComponent>().position = Vec3(0.0f, -0.5f, 0.0f);
+    ground.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(20.0f, 0.5f, 20.0f)));
+    auto& body = ground.AddComponent<RigidBodyComponent>();
+    body.isStatic = true;
+    body.motion = RigidBodyMotion::Static;
+    Entity stairs = scene.CreateEntity("Stairs");
+    stairs.AddComponent<ConstructionShapeComponent>(turning(StairTurn::Left));
+    BoxParams top;
+    top.width = 4.0f;
+    top.depth = 4.0f;
+    top.height = 2.0f;
+    AddBox(scene, "Top", top, Vec3(3.5f, 0.0f, 1.4f));
+    Entity rampEntity = scene.CreateEntity("Ramp");
+    rampEntity.GetComponent<TransformComponent>().position = Vec3(-8.0f, 0.0f, 0.0f);
+    rampEntity.AddComponent<ConstructionShapeComponent>(ramp);
+    BoxParams rampTop;
+    rampTop.width = 4.0f;
+    rampTop.depth = 4.0f;
+    rampTop.height = 1.5f;
+    AddBox(scene, "Ramp Top", rampTop, Vec3(-8.0f, 0.0f, 4.0f));
+    system.Update(scene);
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::SettingsForScene(scene), error);
+    Check(built && nav.FindPath(Vec3(-0.9f, 0.0f, -6.0f), Vec3(4.0f, 2.0f, 1.4f), path) && !path.empty() &&
+              std::fabs(path.back().y - 2.0f) < 0.3f && std::fabs(path.back().x - 4.0f) < 0.5f,
+          "a navmesh path climbs quarter-turn stairs onto the landing beyond them");
+    Check(built && nav.FindPath(Vec3(-8.0f, 0.0f, -6.0f), Vec3(-8.0f, 1.5f, 4.5f), path) && !path.empty() &&
+              std::fabs(path.back().y - 1.5f) < 0.3f && std::fabs(path.back().z - 4.5f) < 0.5f,
+          "a navmesh path walks up the ramp");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    Entity loadedStairs = loaded.FindEntityByName("Stairs");
+    Entity loadedRamp = loaded.FindEntityByName("Ramp");
+    Check(loadedStairs && loadedStairs.GetComponent<ConstructionShapeComponent>().stairs.turn == StairTurn::Left &&
+              std::fabs(loadedStairs.GetComponent<ConstructionShapeComponent>().stairs.flightWidth - 1.2f) < 1e-5f &&
+              loadedRamp && loadedRamp.GetComponent<ConstructionShapeComponent>().recipe == Recipe::Ramp,
+          "turning stairs and ramps save and load");
+
+    ConstructionTool tool;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    tool.SetHost(host);
+    const ToolCamera camera;
+    tool.SetMode(ToolMode::DrawRamp);
+    tool.OnPress(scene, system, camera.At(Vec3(6.0f, 0.0f, -6.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(6.0f, 0.0f, -6.0f)));
+    const auto* drawn = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(drawn && drawn->recipe == Recipe::Ramp && std::fabs(drawn->box.depth - 4.0f) < 1e-4f &&
+              std::fabs(drawn->box.height - 1.0f) < 1e-4f,
+          "clicking with Draw Ramp drops a 2 x 4 m ramp 1 m high");
+}
+
 void TestScale()
 {
     Scene scene("Scale");
@@ -930,6 +1038,7 @@ int main()
     TestSetOperation();
     TestWalls();
     TestWallTool();
+    TestRampsAndTurns();
     TestScale();
     if (!g_pass) {
         return 1;

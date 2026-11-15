@@ -1515,9 +1515,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                         SetConstructionToolMode(m_inputState.shiftDown ? ToolMode::DrawRoom : ToolMode::DrawBox);
                     }
                     break;
-                case 0x54: // Qt::Key_T - Draw Stairs
+                case 0x54: // Qt::Key_T - Draw Stairs, Shift+T Draw Ramp
                     if (!m_inputState.ctrlDown) {
-                        SetConstructionToolMode(ToolMode::DrawStairs);
+                        SetConstructionToolMode(m_inputState.shiftDown ? ToolMode::DrawRamp : ToolMode::DrawStairs);
                     }
                     break;
                 case 0x4C: // Qt::Key_L - Draw Wall

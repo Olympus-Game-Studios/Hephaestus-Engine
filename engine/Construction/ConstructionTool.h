@@ -15,7 +15,7 @@ class Scene;
 
 namespace Hephaestus::Construction {
 
-enum class ToolMode { Select, DrawBox, DrawRoom, DrawStairs, DrawOpening, DrawWall };
+enum class ToolMode { Select, DrawBox, DrawRoom, DrawStairs, DrawOpening, DrawWall, DrawRamp };
 
 struct ToolInput {
     Ray ray;

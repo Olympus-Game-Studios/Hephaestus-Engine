@@ -236,6 +236,43 @@ int main()
                   std::to_string(feet.z) + ")");
     }
     {
+        // A construction ramp (a convex hull collider) can be walked up with the default controller.
+        Session session("ConstructionRamp");
+        AddFloor(session);
+        Entity ramp = session.scene.CreateEntity("Ramp");
+        auto& shape = ramp.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Hephaestus::Construction::Recipe::Ramp;
+        shape.box.width = 2.0f;
+        shape.box.depth = 4.0f;
+        shape.box.height = 1.5f;
+        Entity landing = session.scene.CreateEntity("Landing");
+        landing.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 4.0f);
+        auto& landingShape = landing.AddComponent<ConstructionShapeComponent>();
+        landingShape.box.width = 4.0f;
+        landingShape.box.depth = 4.0f;
+        landingShape.box.height = 1.5f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, -4.0f));
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(10);
+        session.controllers.SetMoveInput(id, 0.0f, 1.0f);
+        float topY = -100.0f;
+        float furthest = -100.0f;
+        for (int frame = 0; frame < 240; ++frame) {
+            session.Step(1);
+            const auto state = StateOf(session, id);
+            topY = std::max(topY, state.position.y);
+            furthest = std::max(furthest, state.position.z);
+            if (state.position.z > 3.5f) {
+                session.controllers.ClearMoveInput(id);
+            }
+        }
+        Check(topY > 1.4f && furthest > 2.5f,
+              "A character walks up a construction ramp onto the landing (feet at " + std::to_string(topY) + ", z " +
+                  std::to_string(furthest) + ")");
+    }
+    {
         // A triangular construction room: its sloped wall and floor are convex hull colliders.
         Session session("ConstructionHulls");
         Entity room = session.scene.CreateEntity("Triangle Room");

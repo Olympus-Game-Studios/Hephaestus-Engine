@@ -493,7 +493,7 @@ bool EvaluateBox(const BoxParams& box, std::vector<OpeningParams> openings, Eval
     return !out.mesh.indices.empty();
 }
 
-bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out)
+bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out, const StairsParams& params)
 {
     out = EvaluatedGeometry{};
     if (!(size.width > 0.0f) || !(size.height > 0.0f) || !(size.depth > 0.0f) || steps < 1) {
@@ -501,18 +501,46 @@ bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out)
     }
     const float hw = size.width * 0.5f;
     const float hd = size.depth * 0.5f;
-    const float run = size.depth / static_cast<float>(steps);
     const float rise = size.height / static_cast<float>(steps);
     std::vector<Prism> columns;
-    for (int step = 0; step < steps; ++step) {
-        Prism column{};
-        column.min[0] = -hw;
-        column.max[0] = hw;
-        column.min[1] = 0.0f;
-        column.max[1] = rise * static_cast<float>(step + 1);
-        column.min[2] = -hd + run * static_cast<float>(step);
-        column.max[2] = step + 1 == steps ? hd : -hd + run * static_cast<float>(step + 1);
-        columns.push_back(column);
+    // A column of the stairs from the ground up to step `step` (1-based), between x0..x1 and z0..z1.
+    auto column = [&](float x0, float x1, float z0, float z1, int step) {
+        columns.push_back(Prism{{std::min(x0, x1), 0.0f, std::min(z0, z1)},
+                                {std::max(x0, x1), rise * static_cast<float>(step), std::max(z0, z1)}});
+    };
+    if (params.turn == StairTurn::Straight || steps < 3) {
+        const float run = size.depth / static_cast<float>(steps);
+        for (int step = 0; step < steps; ++step) {
+            column(-hw, hw, -hd + run * static_cast<float>(step),
+                   step + 1 == steps ? hd : -hd + run * static_cast<float>(step + 1), step + 1);
+        }
+    } else {
+        // Built for a left turn (first flight on the -X side, turning towards +X) and mirrored for a right one.
+        const bool uTurn = params.turn == StairTurn::UTurnLeft || params.turn == StairTurn::UTurnRight;
+        const float mirror = params.turn == StairTurn::Right || params.turn == StairTurn::UTurnRight ? -1.0f : 1.0f;
+        const float fw = params.flightWidth;
+        const int first = steps / 2;
+        const int second = steps - first - 1;
+        const float landingZ = hd - fw;
+        const float run1 = (landingZ + hd) / static_cast<float>(first);
+        for (int k = 0; k < first; ++k) {
+            column(mirror * -hw, mirror * (-hw + fw), -hd + run1 * static_cast<float>(k),
+                   -hd + run1 * static_cast<float>(k + 1), k + 1);
+        }
+        column(mirror * -hw, mirror * (uTurn ? hw : -hw + fw), landingZ, hd, first + 1);
+        if (uTurn) {
+            const float run2 = (landingZ + hd) / static_cast<float>(std::max(second, 1));
+            for (int k = 0; k < second; ++k) {
+                column(mirror * (hw - fw), mirror * hw, landingZ - run2 * static_cast<float>(k + 1),
+                       landingZ - run2 * static_cast<float>(k), first + 2 + k);
+            }
+        } else {
+            const float run2 = (2.0f * hw - fw) / static_cast<float>(std::max(second, 1));
+            for (int k = 0; k < second; ++k) {
+                column(mirror * (-hw + fw + run2 * static_cast<float>(k)),
+                       mirror * (-hw + fw + run2 * static_cast<float>(k + 1)), landingZ, hd, first + 2 + k);
+            }
+        }
     }
     const CellGrid grid(columns);
     EmitFaces(grid, out);
@@ -1038,6 +1066,38 @@ bool EvaluateWall(const ConstructionShapeComponent& shape, const std::vector<Ope
     return true;
 }
 
+bool EvaluateRamp(const BoxParams& size, EvaluatedGeometry& out)
+{
+    out = EvaluatedGeometry{};
+    if (!(size.width > 0.0f) || !(size.height > 0.0f) || !(size.depth > 0.0f)) {
+        return false;
+    }
+    const float hw = size.width * 0.5f;
+    const float hd = size.depth * 0.5f;
+    const float h = size.height;
+    const Vec3 a(-hw, 0.0f, -hd), b(hw, 0.0f, -hd), c(hw, 0.0f, hd), d(-hw, 0.0f, hd);
+    const Vec3 e(-hw, h, hd), f(hw, h, hd);
+    const Vec3 slope = vnorm(Vec3(0.0f, size.depth, -h));
+    const FaceTag top{FaceGroup::Top, -1, -1};
+    const FaceTag reveal{FaceGroup::Reveal, -1, -1};
+    PushFacing(out, a, b, f, slope, top);
+    PushFacing(out, a, f, e, slope, top);
+    PushFacing(out, a, b, c, Vec3(0.0f, -1.0f, 0.0f), FaceTag{FaceGroup::Bottom, -1, -1});
+    PushFacing(out, a, c, d, Vec3(0.0f, -1.0f, 0.0f), FaceTag{FaceGroup::Bottom, -1, -1});
+    PushFacing(out, d, c, f, Vec3(0.0f, 0.0f, 1.0f), FaceTag{FaceGroup::PosZ, -1, -1});
+    PushFacing(out, d, f, e, Vec3(0.0f, 0.0f, 1.0f), FaceTag{FaceGroup::PosZ, -1, -1});
+    PushFacing(out, b, c, f, Vec3(1.0f, 0.0f, 0.0f), reveal);
+    PushFacing(out, a, d, e, Vec3(-1.0f, 0.0f, 0.0f), reveal);
+    out.hulls.push_back({a, b, c, d, e, f});
+    out.mesh.bounds = AABB(Vec3(-hw, 0.0f, -hd), Vec3(hw, h, hd));
+    MeshData::Submesh all;
+    all.indexCount = static_cast<uint32_t>(out.mesh.indices.size());
+    all.name = "Construction";
+    all.bounds = out.mesh.bounds;
+    out.mesh.submeshes.push_back(all);
+    return true;
+}
+
 bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningParams> openings,
                    EvaluatedGeometry& out, const std::vector<LocalBox>& cuts)
 {
@@ -1055,7 +1115,10 @@ bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningP
         return EvaluateSphere(shape.box, shape.segments, out);
     }
     if (shape.recipe == Recipe::Stairs) {
-        return EvaluateStairs(shape.box, StairCount(shape), out);
+        return EvaluateStairs(shape.box, StairCount(shape), out, shape.stairs);
+    }
+    if (shape.recipe == Recipe::Ramp) {
+        return EvaluateRamp(shape.box, out);
     }
     if (IsCutter(shape)) {
         BoxParams solid = shape.box;
@@ -1091,6 +1154,8 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
         h.Float(point.z);
     }
     h.Float(shape.stairs.maxRise);
+    h.Int(static_cast<int>(shape.stairs.turn));
+    h.Float(shape.stairs.flightWidth);
     SortOpenings(openings);
     h.Int(static_cast<std::int64_t>(openings.size()));
     for (const OpeningParams& o : openings) {

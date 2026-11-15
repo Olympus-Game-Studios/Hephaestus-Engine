@@ -9,6 +9,7 @@
 #include "../../Scene/Scene.h"
 
 #include <QFormLayout>
+#include <cmath>
 #include <QVBoxLayout>
 
 namespace Hephaestus {
@@ -111,6 +112,7 @@ void ConstructionShapeInspector::buildUI()
 
     m_stairsGroup = new QGroupBox(tr("Steps"), this);
     auto* stairs = new QFormLayout(m_stairsGroup);
+    m_stairsForm = stairs;
     layout->addWidget(m_stairsGroup);
     m_steps = new QDoubleSpinBox();
     ConfigureMixedSpin(m_steps, 0, 500, 1, 0);
@@ -120,8 +122,23 @@ void ConstructionShapeInspector::buildUI()
     m_maxRise = makeSpin(0.05, 5.0, 0.01);
     m_maxRise->setToolTip(tr("Tallest step Auto may make. New stairs use just under the player's step height."));
     stairs->addRow(tr("Max Step"), m_maxRise);
+    m_turn = new QComboBox();
+    m_turn->addItem(tr("Straight"), static_cast<int>(Construction::StairTurn::Straight));
+    m_turn->addItem(tr("Quarter turn left"), static_cast<int>(Construction::StairTurn::Left));
+    m_turn->addItem(tr("Quarter turn right"), static_cast<int>(Construction::StairTurn::Right));
+    m_turn->addItem(tr("U-turn left"), static_cast<int>(Construction::StairTurn::UTurnLeft));
+    m_turn->addItem(tr("U-turn right"), static_cast<int>(Construction::StairTurn::UTurnRight));
+    m_turn->setToolTip(tr("Turning stairs climb half their steps along one side, cross a landing and climb the rest "
+                          "across the far side, or back along the other side for a U-turn."));
+    stairs->addRow(tr("Turn"), m_turn);
+    m_flightWidth = makeSpin(0.05, kMaxSize, 0.1);
+    m_flightWidth->setToolTip(tr("Width of each flight and of the landing."));
+    stairs->addRow(tr("Flight Width"), m_flightWidth);
     m_stairsInfo = new QLabel();
     stairs->addRow(QString(), m_stairsInfo);
+    m_rampInfo = new QLabel();
+    m_rampInfo->setWordWrap(true);
+    box->addRow(QString(), m_rampInfo);
 
     m_openingGroup = new QGroupBox(tr("Opening"), this);
     auto* opening = new QFormLayout(m_openingGroup);
@@ -162,7 +179,7 @@ void ConstructionShapeInspector::connectSignals()
         Refresh();
     };
     for (QDoubleSpinBox* spin : {m_width, m_height, m_depth, m_wallThickness, m_offset, m_sill, m_openingWidth,
-                                 m_openingHeight, m_steps, m_maxRise, m_segments, m_openingSegment}) {
+                                 m_openingHeight, m_steps, m_maxRise, m_segments, m_openingSegment, m_flightWidth}) {
         connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
     }
     for (QCheckBox* check : {m_hollow, m_floor, m_ceiling, m_solid, m_closed}) {
@@ -170,6 +187,7 @@ void ConstructionShapeInspector::connectSignals()
     }
     connect(m_side, qOverload<int>(&QComboBox::currentIndexChanged), this, edited);
     connect(m_operation, qOverload<int>(&QComboBox::currentIndexChanged), this, edited);
+    connect(m_turn, qOverload<int>(&QComboBox::currentIndexChanged), this, edited);
     connect(m_role, &QLineEdit::editingFinished, this, edited);
     connect(m_remove, &QPushButton::clicked, this, [this]() {
         BeginEdit("Remove construction shape");
@@ -210,6 +228,9 @@ void ConstructionShapeInspector::applyToComponent()
             }
             if (TryReadSpin(m_steps, value)) shape.stairs.steps = static_cast<int>(value);
             if (TryReadSpin(m_maxRise, value)) shape.stairs.maxRise = static_cast<float>(value);
+            if (TryReadSpin(m_flightWidth, value)) shape.stairs.flightWidth = static_cast<float>(value);
+            int turn = 0;
+            if (TryReadCombo(m_turn, turn)) shape.stairs.turn = static_cast<Construction::StairTurn>(turn);
         } else {
             int side = 0;
             if (TryReadCombo(m_side, side)) shape.opening.side = static_cast<WallSide>(side);
@@ -235,7 +256,7 @@ void ConstructionShapeInspector::Refresh()
     const Recipe recipe = PrimaryRecipe(m_ctx, GetEntity());
     MixedScalar width, height, depth, thickness, offset, sill, openingWidth, openingHeight;
     MixedBool hollow, floor, ceiling, solid, closed;
-    MixedScalar openingSegment, corners;
+    MixedScalar openingSegment, corners, turn, flightWidth, slope;
     MixedString role;
     MixedScalar side, steps, maxRise, stepCount, rise, segments, operation;
     QString kind;
@@ -264,6 +285,9 @@ void ConstructionShapeInspector::Refresh()
         AccumulateScalar(openingHeight, shape.opening.height);
         AccumulateScalar(steps, shape.stairs.steps);
         AccumulateScalar(maxRise, shape.stairs.maxRise);
+        AccumulateScalar(turn, static_cast<int>(shape.stairs.turn));
+        AccumulateScalar(flightWidth, shape.stairs.flightWidth);
+        AccumulateScalar(slope, std::atan2(shape.box.height, shape.box.depth) * 57.2957795);
         AccumulateScalar(stepCount, Construction::StairCount(shape));
         AccumulateScalar(rise, shape.box.height / std::max(1, Construction::StairCount(shape)));
     });
@@ -292,6 +316,14 @@ void ConstructionShapeInspector::Refresh()
     m_boxForm->setRowVisible(m_segments, recipe == Recipe::Cylinder || recipe == Recipe::Sphere);
     SetSpinFromMixed(m_segments, segments);
     m_stairsGroup->setVisible(recipe == Recipe::Stairs);
+    SetComboFromMixed(m_turn, turn.mixed, static_cast<int>(turn.value));
+    SetSpinFromMixed(m_flightWidth, flightWidth);
+    m_stairsForm->setRowVisible(m_flightWidth, turn.mixed || turn.value != static_cast<int>(Construction::StairTurn::Straight));
+    m_boxForm->setRowVisible(m_rampInfo, recipe == Recipe::Ramp);
+    m_rampInfo->setText(slope.mixed ? QString()
+                        : slope.value > 45.0 ? tr("%1 degree slope: steeper than characters can walk up by default (45).")
+                                                  .arg(slope.value, 0, 'f', 1)
+                                             : tr("%1 degree slope.").arg(slope.value, 0, 'f', 1));
     const bool subtract = operation.value == static_cast<int>(Operation::Subtract) && !operation.mixed;
     for (QWidget* roomOnly : std::initializer_list<QWidget*>{m_hollow, m_wallThickness, m_floor, m_ceiling}) {
         m_boxForm->setRowVisible(roomOnly, recipe == Recipe::Box && !subtract);

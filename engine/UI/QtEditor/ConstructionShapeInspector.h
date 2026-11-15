@@ -52,6 +52,10 @@ private:
     QDoubleSpinBox* m_steps = nullptr;
     QDoubleSpinBox* m_maxRise = nullptr;
     QLabel* m_stairsInfo = nullptr;
+    QFormLayout* m_stairsForm = nullptr;
+    QComboBox* m_turn = nullptr;
+    QDoubleSpinBox* m_flightWidth = nullptr;
+    QLabel* m_rampInfo = nullptr;
 
     QGroupBox* m_openingGroup = nullptr;
     QFormLayout* m_openingForm = nullptr;

@@ -193,7 +193,8 @@ std::vector<ConstructionTool::Handle> ConstructionTool::HandlesFor(const Constru
     return {
         {0, 1, Vec3(hw, mid, 0.0f)}, {0, -1, Vec3(-hw, mid, 0.0f)},
         {2, 1, Vec3(0.0f, mid, hd)}, {2, -1, Vec3(0.0f, mid, -hd)},
-        {1, 1, Vec3(0.0f, b.height, 0.0f)},
+        // A ramp's height handle sits on its high edge.
+        {1, 1, Vec3(0.0f, b.height, shape.recipe == Recipe::Ramp ? hd : 0.0f)},
     };
 }
 
@@ -247,7 +248,8 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
     if (m_phase != Phase::Idle) {
         return true;
     }
-    if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs) {
+    if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
+        m_mode == ToolMode::DrawRamp) {
         Vec3 point;
         if (!PlacementPoint(scene, system, input, point)) {
             return false;
@@ -347,6 +349,7 @@ void ConstructionTool::OnMove(Scene& scene, ConstructionSystem& system, const To
     }
     m_hoverValid = false;
     if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
+        m_mode == ToolMode::DrawRamp ||
         m_mode == ToolMode::DrawWall) {
         m_hoverValid = PlacementPoint(scene, system, input, m_hoverPoint);
     } else if (m_mode == ToolMode::DrawOpening) {
@@ -371,8 +374,10 @@ bool ConstructionTool::OnRelease(Scene& scene, ConstructionSystem&, const ToolIn
         const bool clicked = std::fabs(m_corner.x - m_anchor.x) < kMinDimension ||
                              std::fabs(m_corner.z - m_anchor.z) < kMinDimension;
         if (clicked) {
-            const float w = m_mode == ToolMode::DrawRoom ? 6.0f : m_mode == ToolMode::DrawStairs ? 1.2f : 1.0f;
-            const float d = m_mode == ToolMode::DrawRoom ? 4.0f : m_mode == ToolMode::DrawStairs ? 3.0f : 1.0f;
+            const float w = m_mode == ToolMode::DrawRoom ? 6.0f : m_mode == ToolMode::DrawStairs ? 1.2f
+                : m_mode == ToolMode::DrawRamp ? 2.0f : 1.0f;
+            const float d = m_mode == ToolMode::DrawRoom ? 4.0f : m_mode == ToolMode::DrawStairs ? 3.0f
+                : m_mode == ToolMode::DrawRamp ? 4.0f : 1.0f;
             m_corner = vadd(m_anchor, Vec3(w * 0.5f, 0.0f, d * 0.5f));
             m_anchor = vsub(m_anchor, Vec3(w * 0.5f, 0.0f, d * 0.5f));
             m_height = DefaultHeight();
@@ -492,23 +497,26 @@ void ConstructionTool::CommitBox(Scene& scene)
 {
     const bool room = m_mode == ToolMode::DrawRoom;
     const bool stairs = m_mode == ToolMode::DrawStairs;
-    if (m_host.pushUndo) m_host.pushUndo(room ? "Draw room" : stairs ? "Draw stairs" : "Draw block");
-    Entity entity = scene.CreateEntity(room ? "Room" : stairs ? "Stairs" : "Block");
+    const bool ramp = m_mode == ToolMode::DrawRamp;
+    if (m_host.pushUndo) m_host.pushUndo(room ? "Draw room" : stairs ? "Draw stairs" : ramp ? "Draw ramp" : "Draw block");
+    Entity entity = scene.CreateEntity(room ? "Room" : stairs ? "Stairs" : ramp ? "Ramp" : "Block");
     auto& transform = entity.GetComponent<TransformComponent>();
     transform.position = Vec3((m_anchor.x + m_corner.x) * 0.5f, m_anchor.y, (m_anchor.z + m_corner.z) * 0.5f);
     auto& shape = entity.AddComponent<ConstructionShapeComponent>();
-    shape.recipe = stairs ? Recipe::Stairs : Recipe::Box;
-    shape.role = room ? "room" : stairs ? "stairs" : "block";
+    shape.recipe = stairs ? Recipe::Stairs : ramp ? Recipe::Ramp : Recipe::Box;
+    shape.role = room ? "room" : stairs ? "stairs" : ramp ? "ramp" : "block";
     float dx = std::max(std::fabs(m_corner.x - m_anchor.x), kMinDimension);
     float dz = std::max(std::fabs(m_corner.z - m_anchor.z), kMinDimension);
-    if (stairs) {
-        // Stairs climb along the longer side of the footprint, away from where the drag started.
+    if (stairs || ramp) {
+        // Stairs and ramps climb along the longer side of the footprint, away from where the drag started.
         if (dx > dz) {
             transform.rotation.y = m_corner.x > m_anchor.x ? kHalfPi : -kHalfPi;
             std::swap(dx, dz);
         } else if (m_corner.z < m_anchor.z) {
             transform.rotation.y = kPi;
         }
+    }
+    if (stairs) {
         const float stepHeight = m_host.stepHeight ? m_host.stepHeight() : 0.3f;
         shape.stairs.maxRise = std::max(0.05f, stepHeight * 0.95f);
     }
@@ -815,6 +823,7 @@ std::string ConstructionTool::StatusText() const
         if (m_mode == ToolMode::DrawBox) text = "Draw Block: drag on the ground or a surface. Click for a 1 m block.";
         else if (m_mode == ToolMode::DrawRoom) text = "Draw Room: drag on the ground or a surface. Click for a 6 x 4 m room.";
         else if (m_mode == ToolMode::DrawStairs) text = "Draw Stairs: drag the footprint (they climb along the longer side, away from where you start), then move up for the height.";
+        else if (m_mode == ToolMode::DrawRamp) text = "Draw Ramp: drag the footprint (it rises along the longer side, away from where you start), then move up for the height.";
         else if (m_mode == ToolMode::DrawWall) text = "Draw Wall: click on the ground or a surface to place the first corner.";
         else if (m_mode == ToolMode::DrawOpening) text = "Draw Opening: drag on a wall. Click for a door near the floor or a window higher up. Drag an opening to move it.";
         break;
@@ -838,6 +847,7 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
     }
     if (m_hoverValid && m_phase == Phase::Idle &&
         (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
+        m_mode == ToolMode::DrawRamp ||
          m_mode == ToolMode::DrawWall)) {
         points.push_back({m_hoverPoint, kPreviewColor, 0.15f});
     }

@@ -66,8 +66,12 @@ float HostFloorTop(const ConstructionShapeComponent& host);
 bool EvaluateBox(const BoxParams& box, std::vector<OpeningParams> openings, EvaluatedGeometry& out,
                  const std::vector<LocalBox>& cuts = {});
 
-// Solid stairs climbing towards +Z, one step per column; the steps' tops and fronts are the walkable faces.
-bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out);
+// Solid stairs climbing towards +Z, one step per column; the steps' tops and fronts are the walkable faces. Turning
+// stairs (StairsParams::turn) put half the steps in each flight with a landing of one step between them.
+bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out, const StairsParams& params = {});
+
+// A solid slope from the ground at -Z up to height at +Z; it collides as one convex hull.
+bool EvaluateRamp(const BoxParams& size, EvaluatedGeometry& out);
 
 // A wall of BoxParams height and wallThickness along the shape's path. Each segment is a solid box, so its openings
 // (by OpeningParams::segment) and the cuts work as on blocks; corners are filled with mitred prisms, and a closed

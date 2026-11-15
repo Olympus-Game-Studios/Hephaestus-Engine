@@ -110,10 +110,11 @@ void RegisterConstructionAutomation(AutomationService& service)
     RegisterOrThrow(service, Definition(
         "construction.create",
         "Create a construction shape: 'box' (solid), 'room' (hollow with a floor), 'stairs' (climbing towards "
-        "+Z; params steps and maxRise), 'wall' (params points and closed; a closed wall is a room of any shape), 'plane', "
+        "+Z; params steps, maxRise, and turn ('straight', 'left', 'right', 'uturn-left', 'uturn-right') with flightWidth), "
+        "'ramp' (a slope rising towards +Z), 'wall' (params points and closed; a closed wall is a room of any shape), 'plane', "
         "'cylinder' or 'sphere' (params width, height, depth, segments). "
         "Its base sits on position. operation 'subtract' makes a box cut every box it overlaps.",
-        ObjectSchema({{"recipe", {{"type", "string"}, {"enum", Json::array({"box", "room", "stairs", "wall", "plane", "cylinder", "sphere"})}}},
+        ObjectSchema({{"recipe", {{"type", "string"}, {"enum", Json::array({"box", "room", "stairs", "ramp", "wall", "plane", "cylinder", "sphere"})}}},
                       {"operation", {{"type", "string"}, {"enum", Json::array({"add", "subtract"})}}},
                       {"name", {{"type", "string"}}},
                       {"role", {{"type", "string"}}},
@@ -127,7 +128,7 @@ void RegisterConstructionAutomation(AutomationService& service)
             ConstructionShapeComponent shape;
             shape.recipe = recipe == "stairs" ? Recipe::Stairs : recipe == "plane" ? Recipe::Plane
                 : recipe == "cylinder" ? Recipe::Cylinder : recipe == "sphere" ? Recipe::Sphere
-                : recipe == "wall" ? Recipe::Wall : Recipe::Box;
+                : recipe == "wall" ? Recipe::Wall : recipe == "ramp" ? Recipe::Ramp : Recipe::Box;
             shape.box.hollow = recipe == "room";
             shape.role = recipe == "box" ? "block" : recipe;
             std::string error;

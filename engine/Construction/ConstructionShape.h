@@ -10,8 +10,9 @@ namespace Hephaestus::Construction {
 
 enum class SourceKind : std::uint8_t { Recipe, Asset, EditableMesh };
 // Plane, Cylinder and Sphere use BoxParams width, height and depth as their size and stand on their origin.
-// Wall uses WallParams for its path and BoxParams height, wallThickness and floor.
-enum class Recipe : std::uint8_t { Box, Opening, Stairs, Plane, Cylinder, Sphere, Wall };
+// Wall uses WallParams for its path and BoxParams height, wallThickness and floor. Ramp is a solid slope over BoxParams
+// width and depth, rising to height towards +Z like stairs.
+enum class Recipe : std::uint8_t { Box, Opening, Stairs, Plane, Cylinder, Sphere, Wall, Ramp };
 // The four walls of a box an opening can cut, named by the wall's outward normal.
 enum class WallSide : std::uint8_t { PosX, NegX, PosZ, NegZ };
 enum class CollisionMode : std::uint8_t { Solid, None };
@@ -56,10 +57,17 @@ struct OpeningParams {
     int segment = 0;
 };
 
-// Stairs use BoxParams width, height and depth for their footprint and total rise, and climb towards +Z.
+// Where turning stairs go after their landing, seen climbing the first flight.
+enum class StairTurn : std::uint8_t { Straight, Left, Right, UTurnLeft, UTurnRight };
+
+// Stairs use BoxParams width, height and depth for their footprint and total rise, and climb towards +Z. Turning
+// stairs climb a first flight flightWidth wide along one side, cross a landing in the far corner (or along the whole
+// far side for a U-turn) and climb a second flight across the footprint (or back down its other side).
 struct StairsParams {
     int steps = 0;          // 0 picks the fewest steps whose rise is at most maxRise
     float maxRise = 0.28f;  // just under the default Character Controller step height (0.3 m)
+    StairTurn turn = StairTurn::Straight;
+    float flightWidth = 1.2f;
 };
 
 enum class FaceGroup : std::uint8_t { Top, Bottom, PosX, NegX, PosZ, NegZ, Inner, Reveal };
@@ -77,6 +85,8 @@ const char* RecipeName(Recipe recipe);
 const char* WallSideName(WallSide side);
 const char* CollisionModeName(CollisionMode mode);
 const char* OperationName(Operation operation);
+const char* StairTurnName(StairTurn turn);
+bool ParseStairTurn(const std::string& name, StairTurn& out);
 bool ParseRecipe(const std::string& name, Recipe& out);
 bool ParseWallSide(const std::string& name, WallSide& out);
 

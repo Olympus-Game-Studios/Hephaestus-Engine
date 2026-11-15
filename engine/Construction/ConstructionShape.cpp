@@ -81,6 +81,7 @@ const char* RecipeName(Recipe recipe)
     case Recipe::Cylinder: return "cylinder";
     case Recipe::Sphere: return "sphere";
     case Recipe::Wall: return "wall";
+    case Recipe::Ramp: return "ramp";
     case Recipe::Box: break;
     }
     return "box";
@@ -117,9 +118,33 @@ bool ParseRecipe(const std::string& name, Recipe& out)
         out = Recipe::Opening;
         return true;
     }
-    for (Recipe recipe : {Recipe::Stairs, Recipe::Plane, Recipe::Cylinder, Recipe::Sphere, Recipe::Wall}) {
+    for (Recipe recipe : {Recipe::Stairs, Recipe::Plane, Recipe::Cylinder, Recipe::Sphere, Recipe::Wall, Recipe::Ramp}) {
         if (name == RecipeName(recipe)) {
             out = recipe;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* StairTurnName(StairTurn turn)
+{
+    switch (turn) {
+    case StairTurn::Left: return "left";
+    case StairTurn::Right: return "right";
+    case StairTurn::UTurnLeft: return "uturn-left";
+    case StairTurn::UTurnRight: return "uturn-right";
+    case StairTurn::Straight: break;
+    }
+    return "straight";
+}
+
+bool ParseStairTurn(const std::string& name, StairTurn& out)
+{
+    for (StairTurn turn : {StairTurn::Straight, StairTurn::Left, StairTurn::Right, StairTurn::UTurnLeft,
+                           StairTurn::UTurnRight}) {
+        if (name == StairTurnName(turn)) {
+            out = turn;
             return true;
         }
     }
@@ -160,6 +185,11 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
         oss << in2 << "\"wallThickness\": " << Number(b.wallThickness) << ",\n";
         oss << in2 << "\"floor\": " << (b.floor ? "true" : "false") << ",\n";
         oss << in2 << "\"ceiling\": " << (b.ceiling ? "true" : "false") << "\n";
+    } else if (shape.recipe == Recipe::Ramp) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"width\": " << Number(b.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"depth\": " << Number(b.depth) << "\n";
     } else if (shape.recipe == Recipe::Plane || shape.recipe == Recipe::Cylinder || shape.recipe == Recipe::Sphere) {
         const BoxParams& b = shape.box;
         oss << in2 << "\"width\": " << Number(b.width) << ",\n";
@@ -183,7 +213,9 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
         oss << in2 << "\"height\": " << Number(b.height) << ",\n";
         oss << in2 << "\"depth\": " << Number(b.depth) << ",\n";
         oss << in2 << "\"steps\": " << shape.stairs.steps << ",\n";
-        oss << in2 << "\"maxRise\": " << Number(shape.stairs.maxRise) << "\n";
+        oss << in2 << "\"maxRise\": " << Number(shape.stairs.maxRise) << ",\n";
+        oss << in2 << "\"turn\": \"" << StairTurnName(shape.stairs.turn) << "\",\n";
+        oss << in2 << "\"flightWidth\": " << Number(shape.stairs.flightWidth) << "\n";
     } else {
         const OpeningParams& o = shape.opening;
         oss << in2 << "\"side\": \"" << WallSideName(o.side) << "\",\n";
@@ -229,6 +261,10 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
         params.objectValue["wallThickness"] = number(b.wallThickness);
         params.objectValue["floor"] = boolean(b.floor);
         params.objectValue["ceiling"] = boolean(b.ceiling);
+    } else if (shape.recipe == Recipe::Ramp) {
+        params.objectValue["width"] = number(shape.box.width);
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["depth"] = number(shape.box.depth);
     } else if (shape.recipe == Recipe::Plane || shape.recipe == Recipe::Cylinder || shape.recipe == Recipe::Sphere) {
         params.objectValue["width"] = number(shape.box.width);
         params.objectValue["height"] = number(shape.box.height);
@@ -254,6 +290,8 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
         params.objectValue["depth"] = number(shape.box.depth);
         params.objectValue["steps"] = number(shape.stairs.steps);
         params.objectValue["maxRise"] = number(shape.stairs.maxRise);
+        params.objectValue["turn"] = text(StairTurnName(shape.stairs.turn));
+        params.objectValue["flightWidth"] = number(shape.stairs.flightWidth);
     } else {
         const OpeningParams& o = shape.opening;
         params.objectValue["side"] = text(WallSideName(o.side));
@@ -319,6 +357,10 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
             ReadFloat(*params, "wallThickness", b.wallThickness);
             ReadBool(*params, "floor", b.floor);
             ReadBool(*params, "ceiling", b.ceiling);
+        } else if (shape.recipe == Recipe::Ramp) {
+            ReadFloat(*params, "width", shape.box.width);
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "depth", shape.box.depth);
         } else if (shape.recipe == Recipe::Plane || shape.recipe == Recipe::Cylinder || shape.recipe == Recipe::Sphere) {
             ReadFloat(*params, "width", shape.box.width);
             ReadFloat(*params, "height", shape.box.height);
@@ -352,6 +394,12 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
             ReadFloat(*params, "steps", steps);
             shape.stairs.steps = static_cast<int>(std::lround(steps));
             ReadFloat(*params, "maxRise", shape.stairs.maxRise);
+            ReadFloat(*params, "flightWidth", shape.stairs.flightWidth);
+            if (const JsonValue* turn = params->Find("turn"); turn && turn->IsString() &&
+                !ParseStairTurn(turn->AsString(), shape.stairs.turn)) {
+                outError = "Unknown stairs turn '" + turn->AsString() + "'.";
+                return false;
+            }
         } else {
             OpeningParams& o = shape.opening;
             if (const JsonValue* side = params->Find("side"); side && side->IsString()) {
@@ -390,6 +438,9 @@ void Sanitize(ConstructionShapeComponent& shape)
     shape.wall.closed = shape.wall.closed && shape.wall.points.size() >= 3;
     shape.stairs.steps = std::clamp(shape.stairs.steps, 0, 500);
     shape.stairs.maxRise = std::max(shape.stairs.maxRise, 0.05f);
+    const bool uTurn = shape.stairs.turn == StairTurn::UTurnLeft || shape.stairs.turn == StairTurn::UTurnRight;
+    shape.stairs.flightWidth = std::clamp(shape.stairs.flightWidth, kMinSize,
+                                          std::max(kMinSize, std::min(uTurn ? b.width * 0.5f : b.width, b.depth * 0.9f)));
     shape.segments = std::clamp(shape.segments, 3, 128);
 }
 
@@ -402,6 +453,7 @@ const char* DisplayName(const ConstructionShapeComponent& shape)
     case Recipe::Cylinder: return "Cylinder";
     case Recipe::Sphere: return "Sphere";
     case Recipe::Wall: return shape.wall.closed ? "Room" : "Wall";
+    case Recipe::Ramp: return "Ramp";
     case Recipe::Box: break;
     }
     return shape.operation == Operation::Subtract ? "Subtract" : shape.box.hollow ? "Room" : "Block";
