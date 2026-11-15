@@ -9251,7 +9251,7 @@ Hephaestus::Navigation::NavMesh* LuaScriptEngine::EnsureNavMesh() {
         m_NavBuildAttempted = true;
         int skipped = 0;
         auto geometry = Hephaestus::Navigation::CollectSceneGeometry(*m_Scene, &skipped);
-        const Hephaestus::Navigation::NavBuildSettings settings;
+        const Hephaestus::Navigation::NavBuildSettings settings = Hephaestus::Navigation::SettingsForScene(*m_Scene);
         const int links = Hephaestus::Navigation::AddVaultLinks(*m_Scene, settings, geometry);
         auto mesh = std::make_unique<Hephaestus::Navigation::NavMesh>();
         std::string error;
@@ -9260,8 +9260,9 @@ Hephaestus::Navigation::NavMesh* LuaScriptEngine::EnsureNavMesh() {
                 Hephaestus::EngineLogLevel::Info,
                 "Navmesh built: " + std::to_string(mesh->PolygonCount()) + " polygons from " +
                     std::to_string(geometry.triangles.size() / 3) + " triangles, " + std::to_string(links) +
-                    " vault links" +
-                    (skipped ? ", " + std::to_string(skipped) + " non-box static shapes left out" : ""),
+                    " vault links, agent radius " + std::to_string(settings.agentRadius) +
+                    " m, step " + std::to_string(settings.agentMaxClimb) + " m" +
+                    (skipped ? ", " + std::to_string(skipped) + " mesh collision shapes left out" : ""),
                 "Navigation");
             m_NavMesh = std::move(mesh);
         } else {

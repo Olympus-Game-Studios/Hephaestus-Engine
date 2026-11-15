@@ -12,12 +12,13 @@ class dtNavMeshQuery;
 
 namespace Hephaestus::Navigation {
 
+// Agent values default to CharacterControllerComponent's defaults; SettingsForScene fits them to the scene's characters.
 struct NavBuildSettings {
-    float cellSize = 0.2f;
+    float cellSize = 0.15f;  // half the agent radius, so erosion is exactly the radius
     float cellHeight = 0.1f;
     float agentHeight = 1.8f;
-    float agentRadius = 0.35f;
-    float agentMaxClimb = 0.4f;
+    float agentRadius = 0.3f;
+    float agentMaxClimb = 0.3f;
     float agentMaxSlopeDegrees = 45.0f;
     float regionMinSize = 8.0f;
     float regionMergeSize = 20.0f;
@@ -45,13 +46,27 @@ struct NavGeometry {
     std::vector<float> vertices;
     std::vector<int> triangles;
     std::vector<NavLink> links;  // both ways
+    // First triangle of each closed convex solid added by the Add functions, in order. A solid's triangles run to the
+    // next one's start; the navmesh fills its whole volume, so the inside of a block is never walkable.
+    std::vector<int> solidStarts;
 
     void AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3& offset);
+    // Upright around local Y through offset, with flat ends; height is the whole length.
+    void AddCylinder(const Mat4& world, float radius, float height, const Vec3& offset);
+    void AddSphere(const Mat4& world, float radius, const Vec3& offset);
+    // The convex hull of the points (local space, plus offset). More than 64 points fall back to their bounding box.
+    void AddConvexHull(const Mat4& world, const std::vector<Vec3>& points, const Vec3& offset);
     bool Empty() const { return triangles.empty(); }
 };
 
-// Walkable geometry of a scene: static, solid rigid bodies with box collision shapes.
+// Walkable geometry of a scene: static, solid rigid bodies, shaped and placed as the physics system builds them (box,
+// sphere, capsule, cylinder and convex hull shapes, or the mesh bounds when there is no shape). Mesh collision shapes
+// are not read yet; skippedShapes counts them.
 NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes = nullptr);
+
+// Build settings fitted to the scene's character controllers: the widest radius, tallest height, lowest step and
+// shallowest slope, so every character fits where the navmesh says it can go. Defaults when there are none.
+NavBuildSettings SettingsForScene(Scene& scene);
 
 // Adds links across the scene's vaultable cover: upright static boxes from vaultMinHeight to vaultMaxHeight tall and
 // no deeper than vaultMaxDepth, every vaultLinkSpacing along their length, where no other box blocks a standing body

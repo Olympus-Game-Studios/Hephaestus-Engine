@@ -1,4 +1,5 @@
 #include "Navigation/NavMesh.h"
+#include "Scene/CharacterControllerComponent.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
 #include "Scene/Scene.h"
@@ -164,6 +165,89 @@ int main()
     NavGeometry lintelGeometry = Hephaestus::Navigation::CollectSceneGeometry(lintelScene);
     Check(Hephaestus::Navigation::AddVaultLinks(lintelScene, settings, lintelGeometry) == 0,
           "no vault links under a lintel or over cover too tall to vault");
+
+    // A 4 x 3 x 4 m block on the floor: Recast only sees surfaces, so its inside must be filled in.
+    {
+        NavGeometry blockGeometry;
+        blockGeometry.AddBox(Translation(Vec3(0.0f, -0.5f, 0.0f)), Vec3(10.0f, 0.5f, 10.0f), Vec3(0.0f, 0.0f, 0.0f));
+        blockGeometry.AddBox(Translation(Vec3(0.0f, 1.5f, 0.0f)), Vec3(2.0f, 1.5f, 2.0f), Vec3(0.0f, 0.0f, 0.0f));
+        NavMesh blockMesh;
+        Vec3 inside;
+        const bool built = blockMesh.Build(blockGeometry, NavBuildSettings{}, error);
+        const bool found = built && blockMesh.ClosestPoint(Vec3(0.0f, 0.1f, 0.0f), inside, Vec3(0.5f, 0.5f, 0.5f));
+        Check(built && !found, "the inside of a block taller than an agent is not walkable");
+        Vec3 top;
+        Check(blockMesh.ClosestPoint(Vec3(0.0f, 3.0f, 0.0f), top, Vec3(0.5f, 0.5f, 0.5f)) && std::fabs(top.y - 3.0f) < 0.2f,
+              "its top still is");
+    }
+
+    // Round and hull shapes are collected as the physics system builds them.
+    {
+        Scene shapes("Shapes");
+        auto addShape = [&](const char* name, const Vec3& position, const PhysicsShapeComponent& shape) {
+            Entity entity = shapes.CreateEntity(name);
+            entity.GetComponent<TransformComponent>().position = position;
+            auto& body = entity.AddComponent<RigidBodyComponent>();
+            body.SetMotion(RigidBodyMotion::Static);
+            body.mass = 0.0f;
+            entity.AddComponent<PhysicsShapeComponent>(shape);
+            return entity;
+        };
+        addShape("Floor", Vec3(0.0f, -0.5f, 0.0f), PhysicsShapeComponent::CreateBox(Vec3(10.0f, 0.5f, 10.0f)));
+        PhysicsShapeComponent pillar;
+        pillar.type = PhysicsShapeType::Cylinder;
+        pillar.radius = 1.0f;
+        pillar.height = 3.0f;
+        addShape("Pillar", Vec3(0.0f, 1.5f, 0.0f), pillar);
+        addShape("Ball", Vec3(5.0f, 1.0f, 5.0f), PhysicsShapeComponent::CreateSphere(1.0f));
+        PhysicsShapeComponent ramp;
+        ramp.type = PhysicsShapeType::ConvexHull;
+        ramp.points = {Vec3(-1, 0, -2), Vec3(1, 0, -2), Vec3(-1, 0, 2), Vec3(1, 0, 2), Vec3(-1, 1, 2), Vec3(1, 1, 2)};
+        addShape("Wedge", Vec3(-5.0f, 0.0f, -5.0f), ramp);
+        Entity mesh = addShape("Mesh", Vec3(5.0f, 0.0f, -5.0f), PhysicsShapeComponent::CreateBox(Vec3(1.5f, 0.5f, 1.5f)));
+        auto& renderer = mesh.AddComponent<MeshRendererComponent>();
+        renderer.localBounds = AABB(Vec3(-1.5f, 0.0f, -1.5f), Vec3(1.5f, 1.0f, 1.5f));
+        int skippedShapes = -1;
+        const NavGeometry shapeGeometry = Hephaestus::Navigation::CollectSceneGeometry(shapes, &skippedShapes);
+        Check(skippedShapes == 0 && shapeGeometry.solidStarts.size() == 5, "boxes, cylinders, spheres and hulls are all collected");
+        NavMesh shapeMesh;
+        Check(shapeMesh.Build(shapeGeometry, NavBuildSettings{}, error) &&
+                  shapeMesh.FindPath(Vec3(-3.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 0.0f), path),
+              "a path past a cylinder pillar is found");
+        bool around = false;
+        for (const Vec3& corner : path) {
+            around = around || std::fabs(corner.z) > 1.2f;
+        }
+        Check(around, "the path goes round the pillar");
+        Vec3 onWedge;
+        Check(shapeMesh.ClosestPoint(Vec3(-5.0f, 1.0f, -3.4f), onWedge, Vec3(0.3f, 1.0f, 0.3f)) &&
+                  std::fabs(onWedge.y - 0.9f) < 0.2f,
+              "the hull's 14 degree slope is walkable");
+        Vec3 onMesh;
+        Check(shapeMesh.ClosestPoint(Vec3(5.0f, 1.0f, -5.0f), onMesh, Vec3(0.3f, 0.3f, 0.3f)) &&
+                  std::fabs(onMesh.y - 1.0f) < 0.15f,
+              "a box collider is centred on its mesh's bounds, as the physics system places it");
+    }
+
+    // Build settings follow the scene's characters.
+    {
+        Scene characters("Characters");
+        const NavBuildSettings none = Hephaestus::Navigation::SettingsForScene(characters);
+        Check(std::fabs(none.agentRadius - CharacterControllerComponent{}.radius) < 1e-5f &&
+                  std::fabs(none.agentMaxClimb - CharacterControllerComponent{}.stepHeight) < 1e-5f,
+              "with no characters the navmesh uses the default controller's size");
+        auto& player = characters.CreateEntity("Player").AddComponent<CharacterControllerComponent>();
+        player.radius = 0.3f;
+        player.stepHeight = 0.35f;
+        auto& brute = characters.CreateEntity("Brute").AddComponent<CharacterControllerComponent>();
+        brute.radius = 0.5f;
+        brute.height = 2.2f;
+        brute.stepHeight = 0.25f;
+        const NavBuildSettings fitted = Hephaestus::Navigation::SettingsForScene(characters);
+        Check(std::fabs(fitted.agentRadius - 0.5f) < 1e-5f && std::fabs(fitted.agentHeight - 2.2f) < 1e-5f &&
+                  std::fabs(fitted.agentMaxClimb - 0.25f) < 1e-5f && std::fabs(fitted.cellSize - 0.25f) < 1e-5f,
+              "the widest, tallest and least able character sets the navmesh");
+    }
 
     if (!g_pass) {
         return 1;

@@ -1,5 +1,7 @@
 #include "NavMesh.h"
 
+#include "../Scene/CharacterComponent.h"
+#include "../Scene/CharacterControllerComponent.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
@@ -41,6 +43,7 @@ float NextRandom()
 
 void NavGeometry::AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3& offset)
 {
+    solidStarts.push_back(static_cast<int>(triangles.size() / 3));
     const int base = static_cast<int>(vertices.size() / 3);
     for (int i = 0; i < 8; ++i) {
         const Vec3 local(offset.x + ((i & 1) ? halfExtents.x : -halfExtents.x),
@@ -64,27 +67,177 @@ void NavGeometry::AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3&
     }
 }
 
+void NavGeometry::AddCylinder(const Mat4& world, float radius, float height, const Vec3& offset)
+{
+    constexpr int kSides = 12;
+    solidStarts.push_back(static_cast<int>(triangles.size() / 3));
+    const int base = static_cast<int>(vertices.size() / 3);
+    for (int i = 0; i < kSides; ++i) {
+        const float a = 6.28318531f * static_cast<float>(i) / static_cast<float>(kSides);
+        for (float y : {-0.5f * height, 0.5f * height}) {
+            const Vec3 p = Mat4::TransformPoint(world, Vec3(offset.x + radius * std::cos(a), offset.y + y,
+                                                            offset.z + radius * std::sin(a)));
+            vertices.insert(vertices.end(), {p.x, p.y, p.z});
+        }
+    }
+    // Vertex 2i is the bottom of side i, 2i + 1 its top; angles run from +x towards +z.
+    for (int i = 0; i < kSides; ++i) {
+        const int b0 = base + 2 * i;
+        const int b1 = base + 2 * ((i + 1) % kSides);
+        triangles.insert(triangles.end(), {b0, b0 + 1, b1 + 1, b0, b1 + 1, b1});
+        if (i >= 1 && i + 1 < kSides) {
+            triangles.insert(triangles.end(), {base + 1, b1 + 1, b0 + 1});  // top, facing +y
+            triangles.insert(triangles.end(), {base, b0, b1});              // bottom
+        }
+    }
+}
+
+void NavGeometry::AddSphere(const Mat4& world, float radius, const Vec3& offset)
+{
+    constexpr int kSegments = 12;
+    constexpr int kRings = 6;
+    std::vector<Vec3> points;
+    for (int r = 0; r <= kRings; ++r) {
+        const float phi = 3.14159265f * static_cast<float>(r) / static_cast<float>(kRings);
+        for (int s = 0; s < (r == 0 || r == kRings ? 1 : kSegments); ++s) {
+            const float theta = 6.28318531f * static_cast<float>(s) / static_cast<float>(kSegments);
+            points.push_back(Vec3(radius * std::sin(phi) * std::cos(theta), -radius * std::cos(phi),
+                                  radius * std::sin(phi) * std::sin(theta)));
+        }
+    }
+    AddConvexHull(world, points, offset);
+}
+
+void NavGeometry::AddConvexHull(const Mat4& world, const std::vector<Vec3>& points, const Vec3& offset)
+{
+    if (points.size() < 4) {
+        return;
+    }
+    if (points.size() > 64) {
+        Vec3 mn = points[0];
+        Vec3 mx = points[0];
+        for (const Vec3& p : points) {
+            mn = Vec3(std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z));
+            mx = Vec3(std::max(mx.x, p.x), std::max(mx.y, p.y), std::max(mx.z, p.z));
+        }
+        AddBox(world, vscale(vsub(mx, mn), 0.5f), vadd(offset, vscale(vadd(mn, mx), 0.5f)));
+        return;
+    }
+    solidStarts.push_back(static_cast<int>(triangles.size() / 3));
+    const int base = static_cast<int>(vertices.size() / 3);
+    std::vector<Vec3> worldPoints;
+    for (const Vec3& local : points) {
+        const Vec3 p = Mat4::TransformPoint(world, vadd(local, offset));
+        worldPoints.push_back(p);
+        vertices.insert(vertices.end(), {p.x, p.y, p.z});
+    }
+    // Every triangle of points with all the others on one side is part of the hull; it is wound so that
+    // cross(v1 - v0, v2 - v0) faces out, which is how Recast tells floors from ceilings.
+    const int n = static_cast<int>(worldPoints.size());
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            for (int k = j + 1; k < n; ++k) {
+                const Vec3 normal = vcross(vsub(worldPoints[j], worldPoints[i]), vsub(worldPoints[k], worldPoints[i]));
+                const float length = vlen(normal);
+                if (length < 1e-8f) {
+                    continue;
+                }
+                bool behind = true;
+                bool front = true;
+                for (int m = 0; m < n && (behind || front); ++m) {
+                    const float d = vdot(normal, vsub(worldPoints[m], worldPoints[i])) / length;
+                    behind = behind && d <= 1e-4f;
+                    front = front && d >= -1e-4f;
+                }
+                if (behind) {
+                    triangles.insert(triangles.end(), {base + i, base + j, base + k});
+                } else if (front) {
+                    triangles.insert(triangles.end(), {base + i, base + k, base + j});
+                }
+            }
+        }
+    }
+}
+
 NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes)
 {
     NavGeometry geometry;
     int skipped = 0;
-    auto view = scene.GetRegistry().view<TransformComponent, RigidBodyComponent, PhysicsShapeComponent>();
-    for (auto handle : view) {
-        const auto& body = view.get<RigidBodyComponent>(handle);
+    entt::registry& registry = scene.GetRegistry();
+    for (auto handle : registry.view<TransformComponent, RigidBodyComponent>()) {
+        const auto& body = registry.get<RigidBodyComponent>(handle);
         if (!body.IsStatic() || body.isTrigger) {
             continue;
         }
-        const auto& shape = view.get<PhysicsShapeComponent>(handle);
-        if (shape.type != PhysicsShapeType::Box) {
-            ++skipped;
+        const auto* shape = registry.try_get<PhysicsShapeComponent>(handle);
+        const auto* renderer = registry.try_get<MeshRendererComponent>(handle);
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        // JoltPhysicsSystem centres a shape on its entity's mesh bounds; characters excepted.
+        Vec3 meshCenter(0.0f, 0.0f, 0.0f);
+        if (renderer && !registry.all_of<CharacterComponent>(handle)) {
+            meshCenter = vscale(vadd(renderer->localBounds.min, renderer->localBounds.max), 0.5f);
+        }
+        if (!shape) {
+            if (renderer) {
+                const Vec3 half = vscale(vsub(renderer->localBounds.max, renderer->localBounds.min), 0.5f);
+                geometry.AddBox(world, Vec3(std::max(half.x, 0.001f), std::max(half.y, 0.001f), std::max(half.z, 0.001f)),
+                                meshCenter);
+            }
             continue;
         }
-        geometry.AddBox(scene.GetWorldTransform(Entity(handle, &scene)), shape.extents, shape.offset);
+        const Vec3 offset = vadd(shape->offset, meshCenter);
+        switch (shape->type) {
+        case PhysicsShapeType::Box:
+            geometry.AddBox(world, shape->extents, offset);
+            break;
+        case PhysicsShapeType::Sphere:
+            geometry.AddSphere(world, shape->radius, offset);
+            break;
+        case PhysicsShapeType::Capsule:
+            geometry.AddCylinder(world, shape->radius, shape->height + 2.0f * shape->radius, offset);
+            break;
+        case PhysicsShapeType::Cylinder:
+            geometry.AddCylinder(world, shape->radius, shape->height, offset);
+            break;
+        case PhysicsShapeType::ConvexHull:
+            geometry.AddConvexHull(world, shape->points, offset);
+            break;
+        case PhysicsShapeType::Mesh:
+            ++skipped;
+            break;
+        }
     }
     if (skippedShapes) {
         *skippedShapes = skipped;
     }
     return geometry;
+}
+
+NavBuildSettings SettingsForScene(Scene& scene)
+{
+    NavBuildSettings settings;
+    bool any = false;
+    for (auto handle : scene.GetRegistry().view<CharacterControllerComponent>()) {
+        const auto& controller = scene.GetRegistry().get<CharacterControllerComponent>(handle);
+        if (!controller.enabled) {
+            continue;
+        }
+        if (!any) {
+            settings.agentRadius = controller.radius;
+            settings.agentHeight = controller.height;
+            settings.agentMaxClimb = controller.stepHeight;
+            settings.agentMaxSlopeDegrees = controller.maxSlopeAngleDegrees;
+            any = true;
+            continue;
+        }
+        settings.agentRadius = std::max(settings.agentRadius, controller.radius);
+        settings.agentHeight = std::max(settings.agentHeight, controller.height);
+        settings.agentMaxClimb = std::min(settings.agentMaxClimb, controller.stepHeight);
+        settings.agentMaxSlopeDegrees = std::min(settings.agentMaxSlopeDegrees, controller.maxSlopeAngleDegrees);
+    }
+    settings.agentRadius = std::max(settings.agentRadius, 0.05f);
+    settings.cellSize = settings.agentRadius * 0.5f;
+    return settings;
 }
 
 namespace {
@@ -120,11 +273,15 @@ int AddVaultLinks(Scene& scene, const NavBuildSettings& s, NavGeometry& geometry
             continue;
         }
         const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        Vec3 offset = shape.offset;
+        if (const auto* renderer = scene.GetRegistry().try_get<MeshRendererComponent>(handle);
+            renderer && !scene.GetRegistry().all_of<CharacterComponent>(handle)) {
+            offset = vadd(offset, vscale(vadd(renderer->localBounds.min, renderer->localBounds.max), 0.5f));
+        }
         Box box;
-        box.centre = Mat4::TransformPoint(world, shape.offset);
+        box.centre = Mat4::TransformPoint(world, offset);
         auto axis = [&](const Vec3& local) {
-            const Vec3 p = Mat4::TransformPoint(world, Vec3(shape.offset.x + local.x, shape.offset.y + local.y,
-                                                             shape.offset.z + local.z));
+            const Vec3 p = Mat4::TransformPoint(world, vadd(offset, local));
             return Vec3(p.x - box.centre.x, p.y - box.centre.y, p.z - box.centre.z);
         };
         box.axisX = axis(Vec3(shape.extents.x, 0.0f, 0.0f));
@@ -228,7 +385,7 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
 {
     Clear();
     if (geometry.Empty()) {
-        error = "no walkable geometry (static box colliders) in the scene";
+        error = "no walkable geometry (static colliders) in the scene";
         return false;
     }
     const float* verts = geometry.vertices.data();
@@ -261,9 +418,68 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     }
     std::vector<unsigned char> areas(static_cast<size_t>(triCount), 0);
     rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, vertCount, tris, triCount, areas.data());
-    if (!rcRasterizeTriangles(&ctx, verts, vertCount, tris, areas.data(), triCount, *solid, cfg.walkableClimb)) {
+    // Recast rasterizes surfaces only, so a block taller than an agent would have walkable floor inside it. Each
+    // solid is rasterized on its own and its columns are filled from its lowest to its highest point instead.
+    const int firstSolid = geometry.solidStarts.empty() ? triCount : geometry.solidStarts.front();
+    if (firstSolid > 0 &&
+        !rcRasterizeTriangles(&ctx, verts, vertCount, tris, areas.data(), firstSolid, *solid, cfg.walkableClimb)) {
         error = "could not rasterize the geometry";
         return false;
+    }
+    for (size_t n = 0; n < geometry.solidStarts.size(); ++n) {
+        const int t0 = geometry.solidStarts[n];
+        const int t1 = n + 1 < geometry.solidStarts.size() ? geometry.solidStarts[n + 1] : triCount;
+        if (t1 <= t0) {
+            continue;
+        }
+        float mn[3] = {verts[tris[t0 * 3] * 3], 0.0f, verts[tris[t0 * 3] * 3 + 2]};
+        float mx[3] = {mn[0], 0.0f, mn[2]};
+        for (int i = t0 * 3; i < t1 * 3; ++i) {
+            const float* v = &verts[tris[i] * 3];
+            mn[0] = std::min(mn[0], v[0]);
+            mn[2] = std::min(mn[2], v[2]);
+            mx[0] = std::max(mx[0], v[0]);
+            mx[2] = std::max(mx[2], v[2]);
+        }
+        const int ox = std::max(0, static_cast<int>(std::floor((mn[0] - cfg.bmin[0]) / cfg.cs)));
+        const int oz = std::max(0, static_cast<int>(std::floor((mn[2] - cfg.bmin[2]) / cfg.cs)));
+        const int w = std::min(cfg.width - ox, static_cast<int>(std::ceil((mx[0] - cfg.bmin[0]) / cfg.cs)) - ox + 1);
+        const int h = std::min(cfg.height - oz, static_cast<int>(std::ceil((mx[2] - cfg.bmin[2]) / cfg.cs)) - oz + 1);
+        if (w <= 0 || h <= 0) {
+            continue;
+        }
+        const float tbmin[3] = {cfg.bmin[0] + ox * cfg.cs, cfg.bmin[1], cfg.bmin[2] + oz * cfg.cs};
+        const float tbmax[3] = {tbmin[0] + w * cfg.cs, cfg.bmax[1], tbmin[2] + h * cfg.cs};
+        std::unique_ptr<rcHeightfield, HeightfieldDeleter> piece(rcAllocHeightfield());
+        if (!piece || !rcCreateHeightfield(&ctx, *piece, w, h, tbmin, tbmax, cfg.cs, cfg.ch) ||
+            !rcRasterizeTriangles(&ctx, verts, vertCount, tris + t0 * 3, areas.data() + t0, t1 - t0, *piece,
+                                  cfg.walkableClimb)) {
+            error = "could not rasterize the geometry";
+            return false;
+        }
+        for (int z = 0; z < h; ++z) {
+            for (int x = 0; x < w; ++x) {
+                const rcSpan* span = piece->spans[x + z * w];
+                if (!span) {
+                    continue;
+                }
+                unsigned int lo = span->smin;
+                unsigned int hi = span->smax;
+                unsigned char area = static_cast<unsigned char>(span->area);
+                for (; span; span = span->next) {
+                    lo = std::min(lo, static_cast<unsigned int>(span->smin));
+                    if (span->smax >= hi) {
+                        hi = span->smax;
+                        area = static_cast<unsigned char>(span->area);
+                    }
+                }
+                if (!rcAddSpan(&ctx, *solid, x + ox, z + oz, static_cast<unsigned short>(lo),
+                               static_cast<unsigned short>(hi), area, cfg.walkableClimb)) {
+                    error = "could not rasterize the geometry";
+                    return false;
+                }
+            }
+        }
     }
     rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *solid);
     rcFilterLedgeSpans(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid);

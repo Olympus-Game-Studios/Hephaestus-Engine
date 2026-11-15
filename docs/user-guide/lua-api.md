@@ -182,12 +182,12 @@ For entities with a [Character Controller](physics.md#character-controller).
 
 ## Navigation
 
-A navmesh lets AI find paths round obstacles. It is built the first time a script asks for it in each Play session, from every static, solid Rigid Body with a **Box** collision shape (other shapes are skipped). It fits a character 1.8 m tall with a 0.35 m radius that can step 0.4 m and walk up 45 degree slopes. Points are tables with `x`, `y` and `z`.
+A navmesh lets AI find paths round obstacles. It is built the first time a script asks for it in each Play session, from every static, solid Rigid Body: Box, Sphere, Capsule and Cylinder shapes, blockout walls, rooms and stairs, and static meshes with no shape (as the box around them). Mesh collision shapes are not included yet. It is sized for the characters in the scene at that moment: the widest radius, the tallest height, the lowest step height and the shallowest slope of any Character Controller, so every character fits wherever it says they can go. With no characters it uses the Character Controller defaults (1.8 m tall, 0.3 m radius, 0.3 m step, 45 degree slopes). Points are tables with `x`, `y` and `z`.
 
 | Function | Does |
 | --- | --- |
 | `Nav.isReady()` | True once the navmesh is built; builds it if it hasn't been tried yet. The log says how many polygons it has, or why it could not be built. |
-| `Nav.rebuild()` | Build it again, after moving or adding static boxes. Returns whether it worked. |
+| `Nav.rebuild()` | Build it again, after moving or adding static colliders or characters of a new size. Returns whether it worked. |
 | `Nav.findPath(from, to)` | A list of points from `from` to `to` along the navmesh, corners only, or `nil`. When `to` can't be reached the path ends at the nearest reachable point. A point with `link = true` is where the path vaults low cover: the next point is on the far side, and a walker has to jump or climb between them. |
 | `Nav.closestPoint(point[, extents])` | The nearest point on the navmesh, searching `extents` (default 2, 4, 2 metres) around `point`, or `nil`. |
 | `Nav.randomPoint(center, radius)` | A random reachable point within `radius` metres of `center`, or `nil`. |

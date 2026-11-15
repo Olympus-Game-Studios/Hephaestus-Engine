@@ -779,6 +779,24 @@ void TestWalls()
     Check(loadedWall && loadedWall.GetComponent<ConstructionShapeComponent>().wall.points.size() == 6 &&
               HashGeometry(*loadedSystem.Geometry(loadedWall)) == HashGeometry(*system.Geometry(lWall)),
           "a saved and reloaded wall rebuilds the same geometry, openings and cuts included");
+
+    // Bots can use angled rooms: the triangular room's hull floor and walls are in the navmesh.
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    Vec3 floorPoint;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::SettingsForScene(scene), error);
+    Check(built && nav.ClosestPoint(Vec3(21.5f, 0.5f, 1.5f), floorPoint, Vec3(0.3f, 1.0f, 0.3f)) &&
+              std::fabs(floorPoint.y - 0.2f) < 0.15f,
+          "the triangular room's floor is on the navmesh");
+    Check(built && nav.FindPath(Vec3(21.0f, 0.2f, 1.0f), Vec3(22.5f, 0.2f, 2.5f), path) && !path.empty() &&
+              std::fabs(path.back().x - 22.5f) < 0.3f && std::fabs(path.back().z - 2.5f) < 0.3f,
+          "a path crosses the triangular room towards its sloped wall");
+    const bool nearWall = built && nav.ClosestPoint(Vec3(23.0f, 0.5f, 3.0f), floorPoint, Vec3(0.1f, 1.0f, 0.1f));
+    const float fromWall = std::fabs(floorPoint.x - 20.0f + floorPoint.z - 6.0f) / std::sqrt(2.0f);
+    Check(built && (!nearWall || fromWall >= 0.35f),
+          "nothing walkable lies within the sloped wall or an agent's radius of it");
 }
 
 void TestWallTool()
@@ -888,6 +906,14 @@ void TestScale()
     // Timings are reported, not asserted: they depend on the machine and build configuration.
     std::cout << "[INFO] 1,000 rooms: first update " << fullMs << " ms, idle update " << idleMs
               << " ms, one door edit " << editMs << " ms (evaluation " << evalMs << " ms)\n";
+    const auto navStart = std::chrono::steady_clock::now();
+    Hephaestus::Navigation::NavMesh nav;
+    std::string navError;
+    const bool navBuilt = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                    Hephaestus::Navigation::SettingsForScene(scene), navError);
+    const double navMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - navStart).count();
+    std::cout << "[INFO] 1,000 rooms: navmesh " << (navBuilt ? std::string("built") : "failed: " + navError) << " in "
+              << navMs << " ms, " << nav.PolygonCount() << " polygons\n";
 }
 
 } // namespace
