@@ -355,6 +355,8 @@ public:
 signals:
     void sceneHierarchyChanged();
     void deleteSelectionRequested();
+    // A kit piece was clicked in the viewport; its shape is selected and ConstructionSystem::PickedPiece names it.
+    void kitPiecePicked();
     void viewportContextMenuRequested(float x, float y);
     void cameraSpeedChanged(float speed);
 

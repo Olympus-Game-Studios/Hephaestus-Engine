@@ -131,7 +131,11 @@ Construction shapes work in packaged games too: they're built from their sizes w
 
 A kit turns a blockout into finished walls made from your own art. It's a `.hpkit` file in your project's `assets` folder that lists prefabs (wall panels, a filler, a corner post, door and window frames) with the width of each. Select a wall or a room and pick the kit in the **Kit** section of its Construction settings: the panels are laid along every wall, corner posts go at the corners and frames go over doors and windows. Each stretch gets the mix of panels that needs the least stretching, and anything the kit can't fill shows as a red box in the editor, so you can tell at a glance where you need another piece. The Kit section says how many pieces were placed, how far they stretched and how many gaps there are.
 
-The blockout is still there underneath: it gives the level its collision and navmesh, so dressing a room never changes how it plays, and its floor and ceiling stay visible. Move a corner, resize the room or cut a new door and the pieces are laid out again; so are they when you save the kit file. Pick **None** to go back to the blockout.
+The blockout is still there underneath: it gives the level its collision and navmesh, so dressing a room never changes how it plays, and its floor and ceiling stay visible. Move a corner, resize the room or cut a new door and the pieces are laid out again; so are they when you save the kit file. Pick **None** to go back to the blockout. You can also drag a kit from the Assets panel straight onto a wall or room in the viewport.
+
+To **swap a single piece**, click it in the viewport: its wall or room is selected and the Kit section names the piece you clicked, with a list of the kit's other pieces that have the same role and width. Pick one to put it in that spot, or pick the one marked "kit's choice" to go back. A swap stays in its spot when you resize the room or move a corner. If the spot disappears, for example because a door now covers it, the Kit section tells you how many swaps no longer match, and **Clear Swaps** puts the kit's own choice back everywhere. Swaps are undone with `Ctrl+Z` like any other change.
+
+Pieces you only want by hand, such as a damaged panel or one with a vent, are **variants**: tick **Variant** for them in the kit editor (`"variant": true` in the file). The kit never places a variant by itself; it only shows up in the swap list of spots holding a piece of the same role and width.
 
 To make a kit, right-click in the Assets panel and pick **New Kit**, then double-click it to open the kit editor. **Add Pieces** picks prefabs from your project and measures each one's width from its meshes; set each piece's role (wall panel, filler, corner, door frame or window frame), and for frames the range of opening widths they fit. **Try a wall** shows which pieces the kit would use for a wall of any length and how far they'd stretch, and anything wrong with the kit is listed underneath. Saving updates every wall and room that uses the kit straight away.
 
@@ -153,7 +157,7 @@ Kits are plain text, and a kit file looks like this:
 
 Build each piece standing on its origin, with its width along X and centred on it, and the wall's thickness centred on Z; +Z faces into the room. `stretch` is how far a piece may be stretched or squashed to fit, as a fraction of its width (0.08 is 8 percent). A run uses at most one filler. Door and window frames are used for openings whose width is between their `openingMin` and `openingMax`.
 
-**Not there yet:** swapping single pieces by hand. Pieces don't have their own collision.
+**Not there yet:** swapping a piece for one of another width. Pieces don't have their own collision.
 
 ## Undo
 

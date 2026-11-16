@@ -288,6 +288,14 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
     if (!shape.kit.empty()) {
         oss << ",\n" << in << "\"kit\": \"" << Escape(shape.kit) << "\"";
     }
+    if (!shape.kitSwaps.empty()) {
+        oss << ",\n" << in << "\"kitSwaps\": [";
+        for (size_t n = 0; n < shape.kitSwaps.size(); ++n) {
+            oss << (n ? ", " : "") << "{\"slot\": \"" << Escape(shape.kitSwaps[n].slot) << "\", \"prefab\": \""
+                << Escape(shape.kitSwaps[n].prefab) << "\"}";
+        }
+        oss << "]";
+    }
     if (!shape.faceMaterials.empty()) {
         oss << ",\n" << in << "\"faces\": [";
         for (size_t n = 0; n < shape.faceMaterials.size(); ++n) {
@@ -389,6 +397,18 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
     out.objectValue["params"] = std::move(params);
     if (!shape.kit.empty()) {
         out.objectValue["kit"] = text(shape.kit);
+    }
+    if (!shape.kitSwaps.empty()) {
+        JsonValue swaps;
+        swaps.type = JsonValue::Type::Array;
+        for (const KitSwap& swap : shape.kitSwaps) {
+            JsonValue entry;
+            entry.type = JsonValue::Type::Object;
+            entry.objectValue["slot"] = text(swap.slot);
+            entry.objectValue["prefab"] = text(swap.prefab);
+            swaps.arrayValue.push_back(std::move(entry));
+        }
+        out.objectValue["kitSwaps"] = std::move(swaps);
     }
     if (!shape.faceMaterials.empty()) {
         JsonValue faces;
@@ -517,6 +537,20 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
     }
     if (const JsonValue* kit = data.Find("kit"); kit && kit->IsString()) {
         shape.kit = kit->AsString();
+    }
+    if (const JsonValue* swaps = data.Find("kitSwaps"); swaps && swaps->IsArray()) {
+        std::vector<KitSwap> read;
+        for (const JsonValue& entry : swaps->AsArray()) {
+            const JsonValue* slot = entry.IsObject() ? entry.Find("slot") : nullptr;
+            const JsonValue* prefab = entry.IsObject() ? entry.Find("prefab") : nullptr;
+            if (!slot || !slot->IsString() || slot->AsString().empty() || !prefab || !prefab->IsString() ||
+                prefab->AsString().empty()) {
+                outError = "ConstructionShape kitSwaps need a slot and a prefab.";
+                return false;
+            }
+            read.push_back({slot->AsString(), prefab->AsString()});
+        }
+        shape.kitSwaps = std::move(read);
     }
     if (const JsonValue* faces = data.Find("faces"); faces && faces->IsArray()) {
         std::vector<FaceMaterial> read;

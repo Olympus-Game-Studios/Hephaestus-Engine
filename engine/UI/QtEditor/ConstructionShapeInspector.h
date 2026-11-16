@@ -40,6 +40,8 @@ private:
     void applyToComponent();
     void rebuildFaceList();
     void refreshKit(Hephaestus::Construction::Recipe recipe, bool hollow);
+    void refreshPickedPiece(const ConstructionShapeComponent& shape);
+    void swapPickedPiece(int index);
 
     QLabel* m_kind = nullptr;
     QLineEdit* m_role = nullptr;
@@ -85,6 +87,10 @@ private:
     QGroupBox* m_kitGroup = nullptr;
     QComboBox* m_kit = nullptr;
     QLabel* m_kitInfo = nullptr;
+    QLabel* m_piece = nullptr;
+    QComboBox* m_pieceSwap = nullptr;
+    QPushButton* m_clearSwaps = nullptr;
+    std::string m_pickedSlot;
     Hephaestus::Construction::ConstructionSystem* m_system = nullptr;
 
     QPushButton* m_remove = nullptr;

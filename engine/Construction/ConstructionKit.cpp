@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <locale>
@@ -55,7 +56,7 @@ float YawFor(const Vec3& direction)
 const KitPiece* FirstOfRole(const KitDefinition& kit, const std::string& role)
 {
     for (const KitPiece& piece : kit.pieces) {
-        if (piece.role == role) return &piece;
+        if (piece.role == role && !piece.variant) return &piece;
     }
     return nullptr;
 }
@@ -63,7 +64,8 @@ const KitPiece* FirstOfRole(const KitDefinition& kit, const std::string& role)
 const KitPiece* FrameFor(const KitDefinition& kit, const std::string& role, float openingWidth)
 {
     for (const KitPiece& piece : kit.pieces) {
-        if (piece.role == role && openingWidth >= piece.openingMin - 1e-4f && openingWidth <= piece.openingMax + 1e-4f) {
+        if (piece.role == role && !piece.variant && openingWidth >= piece.openingMin - 1e-4f &&
+            openingWidth <= piece.openingMax + 1e-4f) {
             return &piece;
         }
     }
@@ -171,6 +173,7 @@ bool LoadKit(const std::filesystem::path& file, KitDefinition& out, std::string&
         number(entry, "stretch", piece.stretch);
         number(entry, "openingMin", piece.openingMin);
         number(entry, "openingMax", piece.openingMax);
+        if (const JsonValue* variant = entry.Find("variant"); variant && variant->IsBool()) piece.variant = variant->AsBool();
         kit.pieces.push_back(std::move(piece));
     }
     out = std::move(kit);
@@ -188,6 +191,9 @@ bool SaveKit(const std::filesystem::path& file, const KitDefinition& kit, std::s
             << "\", \"width\": " << piece.width << ", \"stretch\": " << piece.stretch;
         if (piece.role == "door" || piece.role == "window") {
             oss << ", \"openingMin\": " << piece.openingMin << ", \"openingMax\": " << piece.openingMax;
+        }
+        if (piece.variant) {
+            oss << ", \"variant\": true";
         }
         oss << "}" << (n + 1 < kit.pieces.size() ? "," : "") << "\n";
     }
@@ -224,7 +230,10 @@ std::vector<std::string> ValidateKit(const KitDefinition& kit)
             !(piece.openingMax > 0.0f && piece.openingMin <= piece.openingMax)) {
             problems.push_back(label + ": give the opening widths it frames (openingMin to openingMax).");
         }
-        hasWall = hasWall || piece.role == "wall";
+        if (piece.variant && SwapChoices(kit, piece).size() < 2) {
+            problems.push_back(label + ": a variant needs a piece of the same role and width to stand in for.");
+        }
+        hasWall = hasWall || (piece.role == "wall" && !piece.variant);
     }
     if (!hasWall) {
         problems.push_back("The kit has no wall pieces.");
@@ -242,6 +251,7 @@ RunFill SolveRun(const KitDefinition& kit, float length)
     std::vector<const KitPiece*> walls;
     std::vector<const KitPiece*> fillers{nullptr};
     for (const KitPiece& piece : kit.pieces) {
+        if (piece.variant) continue;
         if (piece.role == "wall") walls.push_back(&piece);
         if (piece.role == "filler") fillers.push_back(&piece);
     }
@@ -319,9 +329,24 @@ KitFillResult FillShape(const ConstructionShapeComponent& shape, const std::vect
     const KitPiece* corner = FirstOfRole(kit, "corner");
     const float inset = corner ? corner->width * 0.5f : 0.0f;
     const float floorTop = HostFloorTop(shape);
-    auto place = [&](const KitPiece* piece, const Face& face, float along, float width, float scale) {
+    auto place = [&](const KitPiece* piece, const Face& face, float along, float width, float scale, std::string slot) {
         KitPlacement placement;
+        placement.kitChoice = piece;
+        if (piece) {
+            for (const KitSwap& swap : shape.kitSwaps) {
+                if (swap.slot != slot) continue;
+                for (const KitPiece* choice : SwapChoices(kit, *piece)) {
+                    if (choice->prefab == swap.prefab) {
+                        piece = choice;
+                        ++result.swapped;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
         placement.piece = piece;
+        placement.slot = std::move(slot);
         placement.position = vadd(face.start, vscale(face.direction, along));
         placement.yaw = YawFor(face.direction);
         placement.scaleX = scale;
@@ -336,43 +361,82 @@ KitFillResult FillShape(const ConstructionShapeComponent& shape, const std::vect
         result.maxStretch = std::max(result.maxStretch, std::fabs(scale - 1.0f));
     };
     std::vector<Face> faces = FacesOf(shape, openings);
-    for (const Face& face : faces) {
+    for (size_t faceIndex = 0; faceIndex < faces.size(); ++faceIndex) {
+        const Face& face = faces[faceIndex];
+        const std::string prefix = std::to_string(faceIndex) + ":";
         if (corner && face.cornerAtStart) {
-            place(corner, face, 0.0f, corner->width, 1.0f);
+            place(corner, face, 0.0f, corner->width, 1.0f, prefix + "c");
         }
         // The stretches between corners and opening frames.
         std::vector<std::pair<float, float>> cuts;
         auto sorted = face.openings;
         std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-        for (const auto& [centre, opening] : sorted) {
+        for (size_t n = 0; n < sorted.size(); ++n) {
+            const auto& [centre, opening] = sorted[n];
             const bool door = opening->sill <= floorTop + 0.05f;
             const KitPiece* frame = FrameFor(kit, door ? "door" : "window", opening->width);
             const float width = frame ? frame->width : opening->width;
-            place(frame, face, centre, width, 1.0f);
+            place(frame, face, centre, width, 1.0f, prefix + "o" + std::to_string(n));
             cuts.push_back({centre - width * 0.5f, centre + width * 0.5f});
         }
         float from = face.cornerAtStart ? inset : 0.0f;
         const float to = face.length - (face.cornerAtEnd ? inset : 0.0f);
         cuts.push_back({to, to});
-        for (const auto& [cutStart, cutEnd] : cuts) {
+        for (size_t run = 0; run < cuts.size(); ++run) {
+            const auto& [cutStart, cutEnd] = cuts[run];
             const float runEnd = std::min(cutStart, to);
+            const std::string runSlot = prefix + "r" + std::to_string(run) + ".";
             if (runEnd - from > 1e-3f) {
                 const RunFill fill = SolveRun(kit, runEnd - from);
                 if (fill.filled) {
                     float at = from;
-                    for (const KitPiece* piece : fill.pieces) {
-                        const float width = piece->width * fill.scale;
-                        place(piece, face, at + width * 0.5f, width, fill.scale);
+                    for (size_t n = 0; n < fill.pieces.size(); ++n) {
+                        const float width = fill.pieces[n]->width * fill.scale;
+                        place(fill.pieces[n], face, at + width * 0.5f, width, fill.scale, runSlot + std::to_string(n));
                         at += width;
                     }
                 } else {
-                    place(nullptr, face, (from + runEnd) * 0.5f, runEnd - from, 1.0f);
+                    place(nullptr, face, (from + runEnd) * 0.5f, runEnd - from, 1.0f, runSlot + "gap");
                 }
             }
             from = std::max(from, cutEnd);
         }
     }
+    result.staleSwaps = static_cast<int>(shape.kitSwaps.size()) - result.swapped;
     return result;
+}
+
+std::vector<const KitPiece*> SwapChoices(const KitDefinition& kit, const KitPiece& piece)
+{
+    std::vector<const KitPiece*> choices;
+    for (const KitPiece& candidate : kit.pieces) {
+        if (candidate.role == piece.role && std::fabs(candidate.width - piece.width) < 0.005f) {
+            choices.push_back(&candidate);
+        }
+    }
+    return choices;
+}
+
+std::string DescribeSlot(const std::string& slot)
+{
+    const size_t colon = slot.find(':');
+    if (colon == std::string::npos || colon + 1 >= slot.size()) {
+        return slot;
+    }
+    const std::string wall = "Wall " + std::to_string(std::atoi(slot.substr(0, colon).c_str()) + 1);
+    const std::string rest = slot.substr(colon + 1);
+    if (rest == "c") {
+        return wall + ", corner";
+    }
+    if (rest[0] == 'o') {
+        return wall + ", opening " + std::to_string(std::atoi(rest.c_str() + 1) + 1);
+    }
+    const size_t dot = rest.find('.');
+    if (rest[0] == 'r' && dot != std::string::npos) {
+        return wall + ", run " + std::to_string(std::atoi(rest.c_str() + 1) + 1) + ", piece " +
+               std::to_string(std::atoi(rest.c_str() + dot + 1) + 1);
+    }
+    return slot;
 }
 
 bool MeasurePiece(const std::string& prefab, AABB& bounds, std::string& error)

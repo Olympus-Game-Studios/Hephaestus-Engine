@@ -1159,6 +1159,13 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
     }
     h.Bytes(shape.kit.data(), shape.kit.size());
     h.Int(0);
+    h.Int(static_cast<std::int64_t>(shape.kitSwaps.size()));
+    for (const KitSwap& swap : shape.kitSwaps) {
+        h.Bytes(swap.slot.data(), swap.slot.size());
+        h.Int(0);
+        h.Bytes(swap.prefab.data(), swap.prefab.size());
+        h.Int(0);
+    }
     h.Int(static_cast<std::int64_t>(shape.wall.points.size()));
     for (const WallPoint& point : shape.wall.points) {
         h.Float(point.x);

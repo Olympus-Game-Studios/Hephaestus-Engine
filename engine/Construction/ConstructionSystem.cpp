@@ -29,6 +29,7 @@ struct ConstructionSystem::ShapeState {
     // Kit dressing: every entity of every placed piece, children after their parents.
     std::vector<entt::entity> pieces;
     KitSummary kit;
+    std::vector<KitSlotInfo> slots;
 };
 
 ConstructionSystem::ConstructionSystem() = default;
@@ -451,6 +452,7 @@ void ConstructionSystem::RebuildPieces(Scene& scene, entt::entity owner, ShapeSt
 {
     DestroyPieces(scene, state);
     state.kit = KitSummary{};
+    state.slots.clear();
     entt::registry& registry = scene.GetRegistry();
     const auto& shape = registry.get<ConstructionShapeComponent>(owner);
     if (shape.kit.empty()) {
@@ -467,15 +469,23 @@ void ConstructionSystem::RebuildPieces(Scene& scene, entt::entity owner, ShapeSt
     state.kit.fillers = fill.fillers;
     state.kit.gaps = fill.gaps;
     state.kit.maxStretch = fill.maxStretch;
+    state.kit.swapped = fill.swapped;
+    state.kit.staleSwaps = fill.staleSwaps;
     Entity ownerEntity(owner, &scene);
-    auto adopt = [&](Entity entity) {
+    auto adopt = [&](Entity entity, const std::string& slot) {
         registry.emplace_or_replace<EditorOnlyComponent>(static_cast<entt::entity>(entity));
-        registry.emplace_or_replace<ConstructionGeneratedComponent>(static_cast<entt::entity>(entity)).ownerEntity =
-            static_cast<std::uint32_t>(owner);
+        auto& generated = registry.emplace_or_replace<ConstructionGeneratedComponent>(static_cast<entt::entity>(entity));
+        generated.ownerEntity = static_cast<std::uint32_t>(owner);
+        generated.kitSlot = slot;
         state.pieces.push_back(static_cast<entt::entity>(entity));
     };
     std::unordered_map<std::string, PrefabAsset> prefabs;
     for (const KitPlacement& placement : fill.placements) {
+        if (placement.piece) {
+            KitSlotInfo info{placement.slot, placement.piece->prefab, placement.kitChoice->prefab, {}};
+            for (const KitPiece* choice : SwapChoices(kit, *placement.kitChoice)) info.choices.push_back(choice->prefab);
+            state.slots.push_back(std::move(info));
+        }
         Entity root;
         if (placement.piece) {
             auto found = prefabs.find(placement.piece->prefab);
@@ -525,7 +535,7 @@ void ConstructionSystem::RebuildPieces(Scene& scene, entt::entity owner, ShapeSt
             Entity entity(member, &scene);
             // The construction shell keeps the collision, so kit art never changes how the level plays.
             registry.remove<RigidBodyComponent, PhysicsShapeComponent, MeshColliderComponent>(member);
-            adopt(entity);
+            adopt(entity, placement.slot);
             if (auto* renderer = registry.try_get<MeshRendererComponent>(member); renderer && m_sink.loadMesh) {
                 m_sink.loadMesh(*renderer);
             }
@@ -544,6 +554,32 @@ bool ConstructionSystem::Kit(entt::entity entity, KitSummary& out) const
     }
     out = found->second->kit;
     return true;
+}
+
+bool ConstructionSystem::KitSlot(entt::entity entity, const std::string& slot, KitSlotInfo& out) const
+{
+    auto found = m_shapes.find(entity);
+    if (found == m_shapes.end()) {
+        return false;
+    }
+    for (const KitSlotInfo& info : found->second->slots) {
+        if (info.slot == slot) {
+            out = info;
+            return true;
+        }
+    }
+    return false;
+}
+
+void ConstructionSystem::SetPickedPiece(entt::entity owner, std::string slot)
+{
+    m_pickedOwner = owner;
+    m_pickedSlot = std::move(slot);
+}
+
+std::string ConstructionSystem::PickedPiece(entt::entity owner) const
+{
+    return owner == m_pickedOwner ? m_pickedSlot : std::string();
 }
 
 void ConstructionSystem::ApplySlots(MeshRendererComponent& renderer, const ShapeState& state)

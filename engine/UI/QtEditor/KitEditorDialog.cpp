@@ -6,6 +6,7 @@
 #include "../../Assets/AssetPathPolicy.h"
 #include "../../Scene/PrefabOverrideSystem.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -30,7 +31,8 @@ namespace Hephaestus {
 namespace QtEditor {
 namespace {
 
-enum Column { PieceColumn, RoleColumn, WidthColumn, StretchColumn, OpeningMinColumn, OpeningMaxColumn, ColumnCount };
+enum Column { PieceColumn, RoleColumn, WidthColumn, StretchColumn, OpeningMinColumn, OpeningMaxColumn, VariantColumn,
+              ColumnCount };
 
 const char* const kRoles[] = {"wall", "filler", "corner", "door", "window"};
 
@@ -108,7 +110,10 @@ void KitEditorDialog::setupUi()
 
     m_table = new QTableWidget(0, ColumnCount);
     m_table->setHorizontalHeaderLabels(
-        {tr("Piece"), tr("Role"), tr("Width"), tr("Stretch"), tr("Opening from"), tr("Opening to")});
+        {tr("Piece"), tr("Role"), tr("Width"), tr("Stretch"), tr("Opening from"), tr("Opening to"), tr("Variant")});
+    m_table->horizontalHeaderItem(VariantColumn)->setToolTip(
+        tr("A variant is never placed by the kit itself. Swap it into a spot by clicking a piece of the same role "
+           "and width in the viewport."));
     m_table->horizontalHeader()->setSectionResizeMode(PieceColumn, QHeaderView::Stretch);
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -189,6 +194,9 @@ void KitEditorDialog::rebuildTable()
         openingMax->setEnabled(FramesOpenings(piece.role));
         m_table->setCellWidget(row, OpeningMinColumn, openingMin);
         m_table->setCellWidget(row, OpeningMaxColumn, openingMax);
+        auto* variant = new QCheckBox();
+        variant->setChecked(piece.variant);
+        m_table->setCellWidget(row, VariantColumn, variant);
 
         const size_t index = static_cast<size_t>(row);
         connect(role, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, role, index, openingMin, openingMax]() {
@@ -205,6 +213,11 @@ void KitEditorDialog::rebuildTable()
                 setDirty(true);
             });
         };
+        connect(variant, &QCheckBox::toggled, this, [this, index](bool checked) {
+            if (m_updating || index >= m_kit.pieces.size()) return;
+            m_kit.pieces[index].variant = checked;
+            setDirty(true);
+        });
         bind(width, &Construction::KitPiece::width, 1.0);
         bind(stretch, &Construction::KitPiece::stretch, 100.0);
         bind(openingMin, &Construction::KitPiece::openingMin, 1.0);

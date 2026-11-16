@@ -2501,7 +2501,20 @@ void QtEditorEngine::tryApplyCompletedViewportPick()
         picked = static_cast<entt::entity>(raw);
     }
     Scene* scene = m_editorContext.GetActiveScene();
-    if (!m_viewportPickAltHeld && scene && picked != entt::null &&
+    bool kitPiece = false;
+    if (scene && picked != entt::null && scene->GetRegistry().valid(picked)) {
+        const auto* generated = scene->GetRegistry().try_get<ConstructionGeneratedComponent>(picked);
+        const auto owner = generated ? static_cast<entt::entity>(generated->ownerEntity) : entt::null;
+        if (generated && !generated->kitSlot.empty() && scene->GetRegistry().valid(owner)) {
+            m_construction.SetPickedPiece(owner, generated->kitSlot);
+            picked = owner;
+            kitPiece = true;
+        }
+    }
+    if (!kitPiece) {
+        m_construction.SetPickedPiece(entt::null, {});
+    }
+    if (!kitPiece && !m_viewportPickAltHeld && scene && picked != entt::null &&
         scene->GetRegistry().valid(picked)) {
         Entity pickedEntity(picked, scene);
         if (pickedEntity.HasComponent<PrefabNodeComponent>()) {
@@ -2512,6 +2525,9 @@ void QtEditorEngine::tryApplyCompletedViewportPick()
     }
     m_editorContext.SelectFromViewportClick(picked, m_viewportPickCtrlHeld, m_viewportPickShiftHeld);
     m_viewportPickWaitingReadback = false;
+    if (kitPiece) {
+        emit kitPiecePicked();
+    }
 }
 
 void QtEditorEngine::createTestMesh()

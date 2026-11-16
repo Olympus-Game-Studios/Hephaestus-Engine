@@ -73,6 +73,7 @@ bool ApplyParams(ConstructionShapeComponent& shape, const Json& arguments, std::
         }
         data["kit"] = kit;
     }
+    if (arguments.contains("kitSwaps")) data["kitSwaps"] = arguments["kitSwaps"];
     if (arguments.contains("params")) {
         if (!arguments["params"].is_object()) {
             error = "params must be an object";
@@ -121,7 +122,8 @@ Json ShapeJson(ToolContext& context, Scene& scene, entt::entity entity)
         Construction::KitSummary kit;
         if (!shape.kit.empty() && system->Kit(entity, kit)) {
             value["kitResult"] = {{"pieces", kit.pieces}, {"fillers", kit.fillers}, {"gaps", kit.gaps},
-                                  {"maxStretch", kit.maxStretch}};
+                                  {"maxStretch", kit.maxStretch}, {"swapped", kit.swapped},
+                                  {"staleSwaps", kit.staleSwaps}};
             if (!kit.error.empty()) value["kitResult"]["error"] = kit.error;
         }
     }
@@ -229,6 +231,11 @@ void RegisterConstructionAutomation(AutomationService& service)
                       {"kit", {{"type", "string"},
                                {"description", "a .hpkit that dresses a wall or hollow room with prefab pieces; "
                                                "empty removes it"}}},
+                      {"kitSwaps", {{"type", "array"},
+                                    {"description", "pieces swapped by hand, replacing the list: [{slot, prefab}]. "
+                                                    "slot is a spot such as 0:r0.2 (face 0, run 0, piece 2), 1:c "
+                                                    "(corner) or 2:o0 (opening frame); prefab is a kit piece of the "
+                                                    "same role and width"}}},
                       {"params", ParamsSchema()}},
                      Json::array({"entity"})),
         [](ToolContext& context, const Json& arguments) -> ToolOutcome {

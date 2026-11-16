@@ -85,6 +85,12 @@ struct FaceMaterial {
     std::string material;  // project material asset path
 };
 
+// A kit piece picked by hand for one spot of a dressed shape, in place of the kit's own choice.
+struct KitSwap {
+    std::string slot;    // KitPlacement::slot
+    std::string prefab;  // a piece of the kit with the same role and width
+};
+
 bool SameFace(const FaceTag& a, const FaceTag& b);
 const char* FaceGroupName(FaceGroup group);
 bool ParseFaceGroup(const std::string& name, FaceGroup& out);
@@ -119,6 +125,7 @@ struct ConstructionShapeComponent {
     std::vector<Hephaestus::Construction::FaceMaterial> faceMaterials;
     // A .hpkit that dresses this wall or room with prefab pieces; the shape stays the collision and navmesh shell.
     std::string kit;
+    std::vector<Hephaestus::Construction::KitSwap> kitSwaps;
     int segments = 24;  // around a cylinder or sphere
     int evaluatorVersion = Hephaestus::Construction::kEvaluatorVersion;
 };
@@ -126,6 +133,7 @@ struct ConstructionShapeComponent {
 // Marks helper entities the construction system creates and owns (collision boxes). Never saved or shown.
 struct ConstructionGeneratedComponent {
     std::uint32_t ownerEntity = 0;
+    std::string kitSlot;  // kit pieces: the spot of the dressing this entity belongs to
 };
 
 namespace Hephaestus::Construction {

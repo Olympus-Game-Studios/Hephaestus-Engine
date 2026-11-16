@@ -4,6 +4,7 @@
 #include "PropertyEditors.h"
 
 #include "../../Assets/AssetManager.h"
+#include "../../Construction/ConstructionKit.h"
 #include "../../Construction/ConstructionShape.h"
 #include "../../Construction/ConstructionSystem.h"
 #include "../../Scene/Entity.h"
@@ -209,6 +210,15 @@ void ConstructionShapeInspector::buildUI()
     m_kitInfo = new QLabel();
     m_kitInfo->setWordWrap(true);
     kitLayout->addWidget(m_kitInfo);
+    m_piece = new QLabel();
+    m_piece->setWordWrap(true);
+    kitLayout->addWidget(m_piece);
+    m_pieceSwap = new QComboBox();
+    m_pieceSwap->setToolTip(tr("Pieces of the kit with the same role and width that can stand in this spot."));
+    kitLayout->addWidget(m_pieceSwap);
+    m_clearSwaps = new QPushButton();
+    m_clearSwaps->setToolTip(tr("Put the kit's own choice back in every swapped spot."));
+    kitLayout->addWidget(m_clearSwaps);
     layout->addWidget(m_kitGroup);
 
     m_remove = new QPushButton(tr("Remove Component"));
@@ -241,6 +251,15 @@ void ConstructionShapeInspector::connectSignals()
         BeginEdit(kit.empty() ? "Remove kit" : "Apply kit");
         ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& shape, entt::entity) {
             if (shape.recipe == Recipe::Wall || (shape.recipe == Recipe::Box && shape.box.hollow)) shape.kit = kit;
+        });
+        EndEdit();
+        Refresh();
+    });
+    connect(m_pieceSwap, qOverload<int>(&QComboBox::activated), this, [this](int index) { swapPickedPiece(index); });
+    connect(m_clearSwaps, &QPushButton::clicked, this, [this]() {
+        BeginEdit("Clear kit swaps");
+        ForEachTarget<ConstructionShapeComponent>([](ConstructionShapeComponent& shape, entt::entity) {
+            shape.kitSwaps.clear();
         });
         EndEdit();
         Refresh();
@@ -448,8 +467,71 @@ void ConstructionShapeInspector::refreshKit(Recipe recipe, bool hollow)
         if (summary.fillers > 0) text += tr(", %n filler(s)", nullptr, summary.fillers);
         if (summary.maxStretch > 0.0005f) text += tr(", stretched up to %1%").arg(summary.maxStretch * 100.0f, 0, 'f', 1);
         if (summary.gaps > 0) text += tr(". %n gap(s) the kit can't fill, shown in red.", nullptr, summary.gaps);
+        if (summary.staleSwaps > 0) {
+            text += tr(". %n swap(s) no longer match a piece in their spot.", nullptr, summary.staleSwaps);
+        }
         m_kitInfo->setText(text);
     }
+    refreshPickedPiece(*shape);
+}
+
+void ConstructionShapeInspector::refreshPickedPiece(const ConstructionShapeComponent& shape)
+{
+    m_clearSwaps->setVisible(!shape.kitSwaps.empty());
+    m_clearSwaps->setText(tr("Clear %n Swap(s)", nullptr, static_cast<int>(shape.kitSwaps.size())));
+    m_pickedSlot.clear();
+    Construction::KitSlotInfo info;
+    if (!shape.kit.empty() && m_system && Targets().size() == 1) {
+        m_pickedSlot = m_system->PickedPiece(GetEntity());
+    }
+    if (m_pickedSlot.empty() || !m_system->KitSlot(GetEntity(), m_pickedSlot, info)) {
+        m_pickedSlot.clear();
+        m_piece->setText(shape.kit.empty() ? QString() : tr("Click a piece in the viewport to swap it."));
+        m_pieceSwap->hide();
+        return;
+    }
+    std::string current = info.kitChoice;
+    for (const Construction::KitSwap& swap : shape.kitSwaps) {
+        if (swap.slot == m_pickedSlot &&
+            std::find(info.choices.begin(), info.choices.end(), swap.prefab) != info.choices.end()) {
+            current = swap.prefab;
+        }
+    }
+    m_piece->setText(tr("%1: %2").arg(QString::fromStdString(Construction::DescribeSlot(m_pickedSlot)),
+                                      QFileInfo(QString::fromStdString(current)).completeBaseName()));
+    m_updating = true;
+    m_pieceSwap->clear();
+    for (const std::string& choice : info.choices) {
+        const QString name = QFileInfo(QString::fromStdString(choice)).completeBaseName();
+        m_pieceSwap->addItem(choice == info.kitChoice ? tr("%1 (kit's choice)").arg(name) : name,
+                             QString::fromStdString(choice));
+    }
+    m_pieceSwap->setCurrentIndex(std::max(0, m_pieceSwap->findData(QString::fromStdString(current))));
+    m_pieceSwap->setEnabled(info.choices.size() > 1);
+    m_pieceSwap->setToolTip(info.choices.size() > 1
+        ? tr("Pieces of the kit with the same role and width that can stand in this spot.")
+        : tr("The kit has no other piece of this role and width. Add one marked as a variant in the kit editor."));
+    m_pieceSwap->show();
+    m_updating = false;
+}
+
+void ConstructionShapeInspector::swapPickedPiece(int index)
+{
+    if (m_updating || m_pickedSlot.empty() || !m_system) return;
+    Construction::KitSlotInfo info;
+    if (!m_system->KitSlot(GetEntity(), m_pickedSlot, info)) return;
+    const std::string chosen = m_pieceSwap->itemData(index).toString().toStdString();
+    BeginEdit("Swap kit piece");
+    ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& shape, entt::entity entity) {
+        if (entity != GetEntity()) return;
+        auto& swaps = shape.kitSwaps;
+        swaps.erase(std::remove_if(swaps.begin(), swaps.end(),
+                                   [&](const Construction::KitSwap& swap) { return swap.slot == m_pickedSlot; }),
+                    swaps.end());
+        if (chosen != info.kitChoice) swaps.push_back({m_pickedSlot, chosen});
+    });
+    EndEdit();
+    Refresh();
 }
 
 void ConstructionShapeInspector::rebuildFaceList()

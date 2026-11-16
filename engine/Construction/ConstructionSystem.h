@@ -46,7 +46,17 @@ struct KitSummary {
     int fillers = 0;
     int gaps = 0;
     float maxStretch = 0.0f;
+    int swapped = 0;     // spots showing a piece swapped in by hand
+    int staleSwaps = 0;  // swaps that no longer match a spot
     std::string error;  // the kit could not be loaded, or pieces could not be placed
+};
+
+// One spot of a dressed shape: what it shows, what the kit would put there, and what it can be swapped to.
+struct KitSlotInfo {
+    std::string slot;
+    std::string prefab;
+    std::string kitChoice;
+    std::vector<std::string> choices;
 };
 
 struct ConstructionStats {
@@ -90,6 +100,11 @@ public:
     std::uint64_t InputHash(entt::entity entity) const;
     bool Summary(entt::entity entity, GeometrySummary& out) const;
     bool Kit(entt::entity entity, KitSummary& out) const;
+    bool KitSlot(entt::entity entity, const std::string& slot, KitSlotInfo& out) const;
+
+    // The kit piece last clicked in the viewport, so the Inspector can offer swaps for it.
+    void SetPickedPiece(entt::entity owner, std::string slot);
+    std::string PickedPiece(entt::entity owner) const;
 
     // Nearest construction surface hit by a world-space ray, ignoring `ignore`.
     bool Raycast(Scene& scene, const Ray& ray, ConstructionHit& out, entt::entity ignore = entt::null) const;
@@ -126,6 +141,8 @@ private:
     MeshSink m_sink;
     std::unordered_map<entt::entity, std::unique_ptr<ShapeState>> m_shapes;
     ConstructionStats m_stats;
+    entt::entity m_pickedOwner = entt::null;
+    std::string m_pickedSlot;
 };
 
 } // namespace Hephaestus::Construction

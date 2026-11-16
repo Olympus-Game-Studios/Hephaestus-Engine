@@ -3754,6 +3754,7 @@ void EditorMainWindow::setupEditorCallbacks()
         syncPrefabOverridesForSelection();
     });
 
+    connect(m_engine.get(), &QtEditorEngine::kitPiecePicked, this, [this]() { refreshDetailsPanel(); });
     connect(m_engine.get(), &QtEditorEngine::sceneHierarchyChanged,
             this, [this]() {
                 rebuildOutliner();
@@ -8465,6 +8466,12 @@ bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
                                                de->modifiers().testFlag(Qt::ShiftModifier));
                     return true;
                 }
+                if (ExtractInspectorAssetDrop(de->mimeData(), materialDrop) &&
+                    materialDrop.portablePath.endsWith(QStringLiteral(".hpkit"), Qt::CaseInsensitive)) {
+                    de->acceptProposedAction();
+                    handleViewportKitDrop(materialDrop.portablePath, dropPos);
+                    return true;
+                }
                 entt::entity previousSelection = entt::null;
                 if (m_engine) {
                     if (auto* ctx = m_engine->GetEditorContext()) {
@@ -8551,6 +8558,33 @@ void EditorMainWindow::handleViewportMaterialDrop(const QString& portablePath, c
         return;
     }
     statusBar()->showMessage(tr("Drop a material onto a shape or mesh to apply it"), 4000);
+}
+
+void EditorMainWindow::handleViewportKitDrop(const QString& portablePath, const QPoint& dropPos)
+{
+    auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+    if (!ctx || !ctx->HasActiveScene() || portablePath.isEmpty()) {
+        return;
+    }
+    entt::registry& registry = ctx->GetActiveScene()->GetRegistry();
+    Hephaestus::Construction::ConstructionHit face;
+    auto* shape = m_engine->PickConstructionFace(static_cast<float>(dropPos.x()), static_cast<float>(dropPos.y()), face) &&
+                          registry.valid(face.entity)
+                      ? registry.try_get<ConstructionShapeComponent>(face.entity)
+                      : nullptr;
+    using Hephaestus::Construction::Recipe;
+    if (!shape || !(shape->recipe == Recipe::Wall ||
+                    (shape->recipe == Recipe::Box && shape->box.hollow &&
+                     shape->operation == Hephaestus::Construction::Operation::Add))) {
+        statusBar()->showMessage(tr("Drop a kit onto a wall or a room to dress it"), 4000);
+        return;
+    }
+    EditorUndoManager::PushSnapshot(ctx, "Apply kit");
+    shape->kit = portablePath.toStdString();
+    ctx->SelectEntity(face.entity);
+    ctx->MarkDirty();
+    refreshDetailsPanel();
+    statusBar()->showMessage(tr("Dressed with %1").arg(QFileInfo(portablePath).completeBaseName()), 4000);
 }
 
 void EditorMainWindow::reimportAssetPack(const QString& portableFolder)

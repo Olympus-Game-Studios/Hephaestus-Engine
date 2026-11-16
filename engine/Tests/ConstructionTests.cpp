@@ -1076,6 +1076,7 @@ KitDefinition TestKit()
         {"assets/kit/Filler.hpprefab", "filler", 0.5f, 0.5f, 0.0f, 0.0f},
         {"assets/kit/Corner.hpprefab", "corner", 0.2f, 0.0f, 0.0f, 0.0f},
         {"assets/kit/Door.hpprefab", "door", 1.6f, 0.0f, 1.0f, 1.4f},
+        {"assets/kit/Wall2Vent.hpprefab", "wall", 2.0f, 0.05f, 0.0f, 0.0f, true},
     };
     return kit;
 }
@@ -1086,7 +1087,7 @@ void TestKits()
     Check(ValidateKit(kit).empty(), "a kit with walls, a filler, a corner and a door frame validates");
     KitDefinition broken = kit;
     broken.pieces[4].openingMax = 0.0f;
-    broken.pieces[0].role = "column";
+    broken.pieces[1].role = "column";
     Check(ValidateKit(broken).size() == 2, "a frame without opening widths and an unknown role are reported");
 
     const RunFill run = SolveRun(kit, 7.3f);
@@ -1121,6 +1122,34 @@ void TestKits()
     }
     Check(fill.gaps == 0 && corners == 4 && doors == 1 && fill.maxStretch <= 0.05f + 1e-4f,
           "a 6 x 4 m room with a door gets four corners, a door frame and wall runs with no gaps");
+    bool variantUsed = false;
+    std::string panelSlot;
+    for (const KitPlacement& placement : fill.placements) {
+        variantUsed = variantUsed || (placement.piece && placement.piece->variant);
+        if (panelSlot.empty() && placement.piece && placement.piece->width == 2.0f && placement.piece->role == "wall") {
+            panelSlot = placement.slot;
+        }
+    }
+    Check(!variantUsed && !panelSlot.empty() && DescribeSlot("1:r0.2") == "Wall 2, run 1, piece 3",
+          "the kit never picks a variant by itself, and every spot is named");
+
+    ConstructionShapeComponent swapped = room;
+    swapped.kitSwaps = {{panelSlot, "assets/kit/Wall2Vent.hpprefab"}, {"0:c", "assets/kit/Wall1.hpprefab"}};
+    auto shownAt = [](const KitFillResult& result, const std::string& slot) -> const KitPiece* {
+        for (const KitPlacement& placement : result.placements) {
+            if (placement.slot == slot) return placement.piece;
+        }
+        return nullptr;
+    };
+    const KitFillResult swappedFill = FillShape(swapped, {door}, kit);
+    const KitPiece* shown = shownAt(swappedFill, panelSlot);
+    Check(shown && shown->variant && swappedFill.swapped == 1 && swappedFill.staleSwaps == 1 &&
+              swappedFill.pieces == fill.pieces,
+          "a variant swapped into a spot replaces the kit's piece there; a piece of another width is refused");
+    swapped.box.width = 8.0f;
+    const KitFillResult resized = FillShape(swapped, {door}, kit);
+    shown = shownAt(resized, panelSlot);
+    Check(shown && shown->variant && resized.swapped == 1, "a swap stays in its spot when the room is resized");
 
     // In a scene: pieces are linked prefab copies under the room, the room stays the collision.
     namespace fs = std::filesystem;
@@ -1130,7 +1159,7 @@ void TestKits()
     std::string error;
     for (const KitPiece& piece : kit.pieces) {
         PrefabAsset prefab;
-        prefab.guid = piece.role + std::to_string(static_cast<int>(piece.width * 10));
+        prefab.guid = piece.prefab;
         prefab.name = piece.role;
         prefab.rootNodeId = "root";
         PrefabNode root;
@@ -1202,6 +1231,25 @@ void TestKits()
         ++left;
     }
     Check(left == 0 && fake.lastIndices == bareIndices, "removing the kit brings the blockout walls back");
+
+    auto& dressedShape = dressed.GetComponent<ConstructionShapeComponent>();
+    dressedShape.kit = "assets/kit/Test.hpkit";
+    dressedShape.kitSwaps = {{panelSlot, "assets/kit/Wall2Vent.hpprefab"}};
+    system.Update(scene);
+    KitSlotInfo slotInfo;
+    int slotEntities = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent>()) {
+        slotEntities += scene.GetRegistry().get<ConstructionGeneratedComponent>(handle).kitSlot == panelSlot ? 1 : 0;
+    }
+    Check(system.Kit(dressed, summary) && summary.swapped == 1 && system.KitSlot(dressed, panelSlot, slotInfo) &&
+              slotInfo.prefab == "assets/kit/Wall2Vent.hpprefab" && slotInfo.kitChoice == "assets/kit/Wall2.hpprefab" &&
+              slotInfo.choices.size() == 2 && slotEntities > 0,
+          "a swap in the scene places the variant, and its entities know their spot");
+    const std::string swappedScene = SceneSerializer(scene).SerializeToString();
+    Scene swappedLoaded("Swapped");
+    SceneSerializer::DeserializeFromString(swappedLoaded, swappedScene);
+    Check(swappedLoaded.FindEntityByName("Dressed Room").GetComponent<ConstructionShapeComponent>().kitSwaps.size() == 1,
+          "swaps are saved with the scene");
     PrefabOverrideSystem::SetProjectRoot({});
     PrefabOverrideSystem::InvalidateAssetCache();
 }
