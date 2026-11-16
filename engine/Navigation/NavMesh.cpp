@@ -1,5 +1,6 @@
 #include "NavMesh.h"
 
+#include "../Assets/MeshGeometryCache.h"
 #include "../Scene/CharacterComponent.h"
 #include "../Scene/CharacterControllerComponent.h"
 #include "../Scene/Components.h"
@@ -43,7 +44,7 @@ float NextRandom()
 
 void NavGeometry::AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3& offset)
 {
-    solidStarts.push_back(static_cast<int>(triangles.size() / 3));
+    pieces.push_back({static_cast<int>(triangles.size() / 3), true});
     const int base = static_cast<int>(vertices.size() / 3);
     for (int i = 0; i < 8; ++i) {
         const Vec3 local(offset.x + ((i & 1) ? halfExtents.x : -halfExtents.x),
@@ -70,7 +71,7 @@ void NavGeometry::AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3&
 void NavGeometry::AddCylinder(const Mat4& world, float radius, float height, const Vec3& offset)
 {
     constexpr int kSides = 12;
-    solidStarts.push_back(static_cast<int>(triangles.size() / 3));
+    pieces.push_back({static_cast<int>(triangles.size() / 3), true});
     const int base = static_cast<int>(vertices.size() / 3);
     for (int i = 0; i < kSides; ++i) {
         const float a = 6.28318531f * static_cast<float>(i) / static_cast<float>(kSides);
@@ -123,7 +124,7 @@ void NavGeometry::AddConvexHull(const Mat4& world, const std::vector<Vec3>& poin
         AddBox(world, vscale(vsub(mx, mn), 0.5f), vadd(offset, vscale(vadd(mn, mx), 0.5f)));
         return;
     }
-    solidStarts.push_back(static_cast<int>(triangles.size() / 3));
+    pieces.push_back({static_cast<int>(triangles.size() / 3), true});
     const int base = static_cast<int>(vertices.size() / 3);
     std::vector<Vec3> worldPoints;
     for (const Vec3& local : points) {
@@ -159,11 +160,46 @@ void NavGeometry::AddConvexHull(const Mat4& world, const std::vector<Vec3>& poin
     }
 }
 
-NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes)
+void NavGeometry::AddMesh(const Mat4& world, const MeshData& mesh)
+{
+    if (mesh.vertices.empty() || mesh.indices.size() < 3) {
+        return;
+    }
+    pieces.push_back({static_cast<int>(triangles.size() / 3), false});
+    const int base = static_cast<int>(vertices.size() / 3);
+    for (const Vertex& v : mesh.vertices) {
+        const Vec3 p = Mat4::TransformPoint(world, Vec3(v.pos[0], v.pos[1], v.pos[2]));
+        vertices.insert(vertices.end(), {p.x, p.y, p.z});
+    }
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        triangles.insert(triangles.end(), {base + static_cast<int>(mesh.indices[i]), base + static_cast<int>(mesh.indices[i + 1]),
+                                           base + static_cast<int>(mesh.indices[i + 2])});
+    }
+}
+
+NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes, const std::filesystem::path& projectRoot)
 {
     NavGeometry geometry;
     int skipped = 0;
     entt::registry& registry = scene.GetRegistry();
+    auto addMesh = [&](entt::entity handle, const MeshRendererComponent& renderer, const Mat4& world) {
+        const auto mesh = renderer.meshAssetPath.empty() ? nullptr
+            : Hephaestus::MeshGeometryCache::Get(renderer.meshAssetPath, projectRoot);
+        if (mesh) {
+            geometry.AddMesh(world, *mesh);
+        } else {
+            ++skipped;
+        }
+        (void)handle;
+    };
+    // Static mesh colliders without a rigid body (JoltPhysicsSystem builds a mesh body for each).
+    for (auto handle : registry.view<TransformComponent, MeshColliderComponent, MeshRendererComponent>()) {
+        const auto& collider = registry.get<MeshColliderComponent>(handle);
+        if (registry.all_of<RigidBodyComponent>(handle) || !collider.enabled || !collider.useComplexCollision) {
+            continue;
+        }
+        addMesh(handle, registry.get<MeshRendererComponent>(handle), scene.GetWorldTransform(Entity(handle, &scene)));
+    }
     for (auto handle : registry.view<TransformComponent, RigidBodyComponent>()) {
         const auto& body = registry.get<RigidBodyComponent>(handle);
         if (!body.IsStatic() || body.isTrigger) {
@@ -172,6 +208,21 @@ NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes)
         const auto* shape = registry.try_get<PhysicsShapeComponent>(handle);
         const auto* renderer = registry.try_get<MeshRendererComponent>(handle);
         const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        // JoltPhysicsSystem uses the model's own triangles for a Mesh shape, or for complex collision when there is no
+        // other shape than the default box.
+        if (renderer) {
+            const auto* collider = registry.try_get<MeshColliderComponent>(handle);
+            const bool defaultBox = shape && shape->type == PhysicsShapeType::Box &&
+                std::fabs(shape->extents.x - 0.5f) <= 1e-4f && std::fabs(shape->extents.y - 0.5f) <= 1e-4f &&
+                std::fabs(shape->extents.z - 0.5f) <= 1e-4f && std::fabs(shape->offset.x) <= 1e-4f &&
+                std::fabs(shape->offset.y) <= 1e-4f && std::fabs(shape->offset.z) <= 1e-4f;
+            const bool explicitShape = shape && !defaultBox && shape->type != PhysicsShapeType::Mesh;
+            if ((shape && shape->type == PhysicsShapeType::Mesh) ||
+                (collider && collider->useComplexCollision && !explicitShape)) {
+                addMesh(handle, *renderer, world);
+                continue;
+            }
+        }
         // JoltPhysicsSystem centres a shape on its entity's mesh bounds; characters excepted.
         Vec3 meshCenter(0.0f, 0.0f, 0.0f);
         if (renderer && !registry.all_of<CharacterComponent>(handle)) {
@@ -203,7 +254,7 @@ NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes)
             geometry.AddConvexHull(world, shape->points, offset);
             break;
         case PhysicsShapeType::Mesh:
-            ++skipped;
+            ++skipped;  // a Mesh shape without a mesh renderer has no triangles
             break;
         }
     }
@@ -420,16 +471,22 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, vertCount, tris, triCount, areas.data());
     // Recast rasterizes surfaces only, so a block taller than an agent would have walkable floor inside it. Each
     // solid is rasterized on its own and its columns are filled from its lowest to its highest point instead.
-    const int firstSolid = geometry.solidStarts.empty() ? triCount : geometry.solidStarts.front();
-    if (firstSolid > 0 &&
-        !rcRasterizeTriangles(&ctx, verts, vertCount, tris, areas.data(), firstSolid, *solid, cfg.walkableClimb)) {
-        error = "could not rasterize the geometry";
-        return false;
+    std::vector<NavGeometry::Piece> pieces = geometry.pieces;
+    if (pieces.empty() || pieces.front().firstTriangle > 0) {
+        pieces.insert(pieces.begin(), NavGeometry::Piece{0, false});
     }
-    for (size_t n = 0; n < geometry.solidStarts.size(); ++n) {
-        const int t0 = geometry.solidStarts[n];
-        const int t1 = n + 1 < geometry.solidStarts.size() ? geometry.solidStarts[n + 1] : triCount;
+    for (size_t n = 0; n < pieces.size(); ++n) {
+        const int t0 = pieces[n].firstTriangle;
+        const int t1 = n + 1 < pieces.size() ? pieces[n + 1].firstTriangle : triCount;
         if (t1 <= t0) {
+            continue;
+        }
+        if (!pieces[n].solid) {
+            if (!rcRasterizeTriangles(&ctx, verts, vertCount, tris + t0 * 3, areas.data() + t0, t1 - t0, *solid,
+                                      cfg.walkableClimb)) {
+                error = "could not rasterize the geometry";
+                return false;
+            }
             continue;
         }
         float mn[3] = {verts[tris[t0 * 3] * 3], 0.0f, verts[tris[t0 * 3] * 3 + 2]};

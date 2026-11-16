@@ -1,8 +1,10 @@
 #pragma once
 
+#include "../Assets/MeshAsset.h"
 #include "../Core/Math.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -46,9 +48,14 @@ struct NavGeometry {
     std::vector<float> vertices;
     std::vector<int> triangles;
     std::vector<NavLink> links;  // both ways
-    // First triangle of each closed convex solid added by the Add functions, in order. A solid's triangles run to the
-    // next one's start; the navmesh fills its whole volume, so the inside of a block is never walkable.
-    std::vector<int> solidStarts;
+    // Each Add call, in order: its first triangle, and whether it is a closed convex solid. A piece's triangles run to
+    // the next piece. The navmesh fills a solid's whole volume, so the inside of a block is never walkable; other
+    // pieces (meshes) are rasterized as surfaces.
+    struct Piece {
+        int firstTriangle = 0;
+        bool solid = true;
+    };
+    std::vector<Piece> pieces;
 
     void AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3& offset);
     // Upright around local Y through offset, with flat ends; height is the whole length.
@@ -56,13 +63,17 @@ struct NavGeometry {
     void AddSphere(const Mat4& world, float radius, const Vec3& offset);
     // The convex hull of the points (local space, plus offset). More than 64 points fall back to their bounding box.
     void AddConvexHull(const Mat4& world, const std::vector<Vec3>& points, const Vec3& offset);
+    // A mesh's triangles as surfaces, such as imported level art with mesh collision.
+    void AddMesh(const Mat4& world, const MeshData& mesh);
     bool Empty() const { return triangles.empty(); }
 };
 
-// Walkable geometry of a scene: static, solid rigid bodies, shaped and placed as the physics system builds them (box,
-// sphere, capsule, cylinder and convex hull shapes, or the mesh bounds when there is no shape). Mesh collision shapes
-// are not read yet; skippedShapes counts them.
-NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes = nullptr);
+// Walkable geometry of a scene, shaped and placed as the physics system builds it: static, solid rigid bodies (box,
+// sphere, capsule, cylinder, convex hull and mesh shapes, or the mesh bounds when there is no shape) and static mesh
+// colliders with complex collision. skippedShapes counts mesh collision whose model could not be loaded.
+// projectRoot is where model paths are looked up first, as JoltPhysicsSystem::SetProjectRoot.
+NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes = nullptr,
+                                 const std::filesystem::path& projectRoot = {});
 
 // Build settings fitted to the scene's character controllers: the widest radius, tallest height, lowest step and
 // shallowest slope, so every character fits where the navmesh says it can go. Defaults when there are none.

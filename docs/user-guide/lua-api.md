@@ -182,7 +182,7 @@ For entities with a [Character Controller](physics.md#character-controller).
 
 ## Navigation
 
-A navmesh lets AI find paths round obstacles. It is built the first time a script asks for it in each Play session, from every static, solid Rigid Body: Box, Sphere, Capsule and Cylinder shapes, blockout walls, rooms and stairs, and static meshes with no shape (as the box around them). Mesh collision shapes are not included yet. It is sized for the characters in the scene at that moment: the widest radius, the tallest height, the lowest step height and the shallowest slope of any Character Controller, so every character fits wherever it says they can go. With no characters it uses the Character Controller defaults (1.8 m tall, 0.3 m radius, 0.3 m step, 45 degree slopes). Points are tables with `x`, `y` and `z`.
+A navmesh lets AI find paths round obstacles. It is built the first time a script asks for it in each Play session, from every static, solid Rigid Body: Box, Sphere, Capsule, Cylinder and Mesh shapes, blockout walls, rooms and stairs, and static meshes with no shape (as the box around them), plus static meshes with **Complex Collision** on their Mesh Collider, using the model's own triangles just as physics does. It is sized for the characters in the scene at that moment: the widest radius, the tallest height, the lowest step height and the shallowest slope of any Character Controller, so every character fits wherever it says they can go. With no characters it uses the Character Controller defaults (1.8 m tall, 0.3 m radius, 0.3 m step, 45 degree slopes). Points are tables with `x`, `y` and `z`.
 
 | Function | Does |
 | --- | --- |

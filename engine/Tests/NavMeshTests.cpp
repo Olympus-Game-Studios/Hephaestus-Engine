@@ -1,10 +1,14 @@
+#include "Assets/MeshGeometryCache.h"
 #include "Navigation/NavMesh.h"
 #include "Scene/CharacterControllerComponent.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
 #include "Scene/Scene.h"
 
+#include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -209,7 +213,7 @@ int main()
         renderer.localBounds = AABB(Vec3(-1.5f, 0.0f, -1.5f), Vec3(1.5f, 1.0f, 1.5f));
         int skippedShapes = -1;
         const NavGeometry shapeGeometry = Hephaestus::Navigation::CollectSceneGeometry(shapes, &skippedShapes);
-        Check(skippedShapes == 0 && shapeGeometry.solidStarts.size() == 5, "boxes, cylinders, spheres and hulls are all collected");
+        Check(skippedShapes == 0 && shapeGeometry.pieces.size() == 5, "boxes, cylinders, spheres and hulls are all collected");
         NavMesh shapeMesh;
         Check(shapeMesh.Build(shapeGeometry, NavBuildSettings{}, error) &&
                   shapeMesh.FindPath(Vec3(-3.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 0.0f), path),
@@ -247,6 +251,63 @@ int main()
         Check(std::fabs(fitted.agentRadius - 0.5f) < 1e-5f && std::fabs(fitted.agentHeight - 2.2f) < 1e-5f &&
                   std::fabs(fitted.agentMaxClimb - 0.25f) < 1e-5f && std::fabs(fitted.cellSize - 0.25f) < 1e-5f,
               "the widest, tallest and least able character sets the navmesh");
+    }
+
+    // Imported level art with mesh collision: the navmesh reads the model's triangles from the shared cache.
+    {
+        namespace fs = std::filesystem;
+        const fs::path folder = fs::temp_directory_path() / "hephaestus_navmesh_mesh_tests";
+        fs::create_directories(folder);
+        const fs::path model = folder / "Ground.obj";
+        auto writeGround = [&](float height) {
+            std::ofstream out(model, std::ios::trunc);
+            out << "v -8 " << height << " -8\nv -8 " << height << " 8\nv 8 " << height << " 8\nv 8 " << height << " -8\n";
+            out << "f 1 2 3\nf 1 3 4\n";
+        };
+        writeGround(0.0f);
+        Hephaestus::MeshGeometryCache::Clear();
+        const auto first = Hephaestus::MeshGeometryCache::Get(model.generic_string());
+        Check(first && first->vertices.size() >= 4 && first->indices.size() == 6, "the shared cache loads a model's triangles");
+        Check(Hephaestus::MeshGeometryCache::Get(model.generic_string()) == first, "a second request reuses the loaded model");
+        writeGround(2.0f);
+        fs::last_write_time(model, fs::last_write_time(model) + std::chrono::seconds(5));
+        const auto second = Hephaestus::MeshGeometryCache::Get(model.generic_string());
+        Check(second && second != first && std::fabs(second->vertices[0].pos[1] - 2.0f) < 1e-4f &&
+                  std::fabs(first->vertices[0].pos[1]) < 1e-4f,
+              "a changed model file is loaded again, and earlier holders keep the old mesh safely");
+        writeGround(0.0f);
+        fs::last_write_time(model, fs::last_write_time(model) + std::chrono::seconds(10));
+
+        Scene art("Art");
+        Entity ground = art.CreateEntity("Ground");
+        ground.AddComponent<MeshRendererComponent>().meshAssetPath = model.generic_string();
+        auto& collider = ground.AddComponent<MeshColliderComponent>();
+        collider.enabled = true;
+        collider.useComplexCollision = true;
+        Entity rock = art.CreateEntity("Rock");
+        rock.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 0.0f);
+        rock.AddComponent<MeshRendererComponent>().meshAssetPath = model.generic_string();
+        rock.GetComponent<TransformComponent>().scale = Vec3(0.25f, 1.0f, 0.25f);
+        rock.GetComponent<TransformComponent>().position = Vec3(4.0f, 1.0f, 4.0f);
+        auto& rockBody = rock.AddComponent<RigidBodyComponent>();
+        rockBody.SetMotion(RigidBodyMotion::Static);
+        rockBody.mass = 0.0f;
+        PhysicsShapeComponent meshShape;
+        meshShape.type = PhysicsShapeType::Mesh;
+        rock.AddComponent<PhysicsShapeComponent>(meshShape);
+        int skippedMeshes = -1;
+        const NavGeometry artGeometry = Hephaestus::Navigation::CollectSceneGeometry(art, &skippedMeshes);
+        Check(skippedMeshes == 0 && artGeometry.pieces.size() == 2 && !artGeometry.pieces[0].solid,
+              "static mesh colliders and Mesh shapes are collected as surfaces");
+        NavMesh artMesh;
+        Vec3 onGround;
+        Check(artMesh.Build(artGeometry, NavBuildSettings{}, error) &&
+                  artMesh.ClosestPoint(Vec3(-2.0f, 0.5f, -2.0f), onGround, Vec3(0.3f, 1.0f, 0.3f)) &&
+                  std::fabs(onGround.y) < 0.2f,
+              "bots can walk on imported ground with mesh collision");
+        Vec3 onRock;
+        Check(artMesh.ClosestPoint(Vec3(4.0f, 1.5f, 4.0f), onRock, Vec3(0.2f, 0.6f, 0.2f)) && std::fabs(onRock.y - 1.0f) < 0.2f,
+              "a Mesh shape is placed by its entity's transform, as physics places it");
     }
 
     if (!g_pass) {

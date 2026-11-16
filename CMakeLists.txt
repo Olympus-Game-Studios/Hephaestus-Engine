@@ -357,6 +357,7 @@ add_library(HephaestusRuntime STATIC
     engine/Audio/MiniaudioImplementation.c
     engine/Assets/GltfDocument.cpp
     engine/Assets/ModelImporter.cpp
+    engine/Assets/MeshGeometryCache.cpp
     engine/Assets/FbxDocument.cpp
     engine/Assets/FbxStaticImporter.cpp
     engine/Assets/FbxSkeletalImporter.cpp
