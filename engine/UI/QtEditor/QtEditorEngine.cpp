@@ -2813,6 +2813,30 @@ void QtEditorEngine::loadRendererMesh(MeshRendererComponent& renderer)
     }
 }
 
+void QtEditorEngine::ReloadMeshFiles(const std::vector<std::string>& meshAssetPaths)
+{
+    if (!m_frameRenderer || !m_editorContext.HasActiveScene() || meshAssetPaths.empty()) {
+        return;
+    }
+    std::unordered_set<std::string> keys;
+    for (const std::string& path : meshAssetPaths) {
+        keys.insert(normalizeAssetPath(path));
+    }
+    m_frameRenderer->WaitGpuIdle();
+    for (const std::string& key : keys) {
+        m_frameRenderer->InvalidateMesh(key);
+    }
+    Scene* scene = m_editorContext.GetActiveScene();
+    for (auto handle : scene->GetEntitiesWith<MeshRendererComponent>()) {
+        auto& renderer = scene->GetRegistry().get<MeshRendererComponent>(handle);
+        if (keys.count(normalizeAssetPath(renderer.meshAssetPath))) {
+            // The old handle points at a destroyed mesh, so look the model up again.
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            loadRendererMesh(renderer);
+        }
+    }
+}
+
 void QtEditorEngine::RebuildSceneMeshes()
 {
     if (!m_frameRenderer || !m_device || !m_editorContext.HasActiveScene()) {

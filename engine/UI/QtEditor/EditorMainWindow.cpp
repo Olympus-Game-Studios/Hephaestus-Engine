@@ -13,6 +13,7 @@
 #include "AddActorsPanel.h"
 #include "EditorAssetActions.h"
 #include "EditorAssetServices.h"
+#include "../../Assets/AssetIntake.h"
 #include "PrefabEditorManager.h"
 #include "PrefabEditorWindow.h"
 #include "CharacterEditorManager.h"
@@ -994,6 +995,11 @@ public:
     {
         m_owner->refreshAssetBrowser();
         m_owner->rebuildSceneVisuals();
+    }
+
+    void ApplyReimportedPack(const std::vector<std::string>& prefabs, const std::vector<std::string>& models) override
+    {
+        m_owner->applyReimportedPack(prefabs, models);
     }
 
     bool RequestScriptReload(std::string& outError) override
@@ -8545,6 +8551,68 @@ void EditorMainWindow::handleViewportMaterialDrop(const QString& portablePath, c
         return;
     }
     statusBar()->showMessage(tr("Drop a material onto a shape or mesh to apply it"), 4000);
+}
+
+void EditorMainWindow::reimportAssetPack(const QString& portableFolder)
+{
+    auto& assets = AssetManager::GetInstance();
+    const std::filesystem::path projectRoot = assets.GetProjectRoot();
+    if (projectRoot.empty() || !m_engine) {
+        return;
+    }
+    if (m_engine->IsPlaying()) {
+        QMessageBox::information(this, tr("Reimport Pack"), tr("Stop Play before reimporting assets."));
+        return;
+    }
+    const std::string folder = portableFolder.toStdString();
+    std::filesystem::path source = Hephaestus::AssetIntake::RecordedSource(projectRoot, folder);
+    std::error_code ec;
+    if (source.empty() || !std::filesystem::exists(source, ec)) {
+        const QString picked = QFileDialog::getOpenFileName(
+            this, tr("Reimport Pack: choose the new version"), QString(),
+            tr("Asset packs (*.zip *.fbx *.glb *.gltf *.obj *.usd *.usda *.usdc *.usdz)"));
+        if (picked.isEmpty()) {
+            return;
+        }
+        source = std::filesystem::path(picked.toStdString());
+    }
+    Hephaestus::AssetIntakeResult result;
+    std::string error;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const bool ok = Hephaestus::AssetIntake::Reimport(projectRoot, folder, source, result, error);
+    QApplication::restoreOverrideCursor();
+    if (!ok) {
+        QMessageBox::critical(this, tr("Reimport Pack"), QString::fromStdString(error));
+        if (result.prefabs.empty()) {
+            return;
+        }
+    }
+    assets.Refresh();
+    applyReimportedPack(result.prefabs, result.models);
+    statusBar()->showMessage(tr("Reimported %1 (%2 prefabs, %3 models)")
+                                 .arg(portableFolder)
+                                 .arg(static_cast<int>(result.prefabs.size()))
+                                 .arg(static_cast<int>(result.models.size())),
+                             5000);
+}
+
+void EditorMainWindow::applyReimportedPack(const std::vector<std::string>& prefabs, const std::vector<std::string>& models)
+{
+    PrefabOverrideSystem::InvalidateAssetCache();
+    auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+    if (ctx && ctx->HasActiveScene()) {
+        for (const std::string& prefab : prefabs) {
+            PrefabOverrideSystem::RefreshInstancesOfPrefab(*ctx->GetActiveScene(), prefab);
+        }
+    }
+    if (m_engine) {
+        m_engine->ReloadMeshFiles(models);
+        m_engine->RebuildSceneMeshes();
+    }
+    EditorAssetServices::Instance().ReferenceIndex().ScanProject(AssetManager::GetInstance().GetProjectRoot());
+    refreshAssetBrowser();
+    rebuildOutliner();
+    refreshDetailsPanel();
 }
 
 void EditorMainWindow::rebuildSceneVisuals()

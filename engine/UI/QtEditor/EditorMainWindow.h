@@ -162,6 +162,10 @@ public:
 
     EditorAssetPipeline* GetAssetPipeline() { return m_assetPipeline.get(); }
     void rebuildSceneVisuals();
+    /// Reimports the imported pack in portableFolder (asking for the source file when it is not recorded or gone).
+    void reimportAssetPack(const QString& portableFolder);
+    /// Rebuilds placed copies of these prefabs and reloads these models after a pack was reimported.
+    void applyReimportedPack(const std::vector<std::string>& prefabs, const std::vector<std::string>& models);
     bool requestCloseOpenCharacter(const QString& absolutePath);
     EditorPluginHost* PluginHost() const { return m_pluginHost.get(); }
 

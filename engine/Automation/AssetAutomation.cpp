@@ -497,6 +497,43 @@ void RegisterAssetAutomation(AutomationService& service)
         }, true));
 
     RegisterOrThrow(service, Definition(
+        "asset.reimport_pack",
+        "Import a pack again into the folder it was imported to, from source or the source it was imported from, "
+        "updating its models, materials and prefabs in place so placed copies, overrides and nested links keep working.",
+        ObjectSchema({{"folder", {{"type", "string"}}}, {"source", {{"type", "string"}}}}, Json::array({"folder"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto assets = RequireAssets(context, failure);
+            if (!assets) return failure;
+            IAssetImportService* importer = context.Backend().AssetImport();
+            if (!importer) {
+                return Failure(ErrorCode::ToolUnavailable, "Asset pack reimport is unavailable for this host");
+            }
+            if (!arguments.contains("folder") || !arguments["folder"].is_string()) {
+                return Failure(ErrorCode::InvalidArguments, "The pack folder is required");
+            }
+            std::string error;
+            const auto folder = ResolveAssetFolder(assets->assetRoot, arguments["folder"].get<std::string>(), error);
+            if (!folder) return Failure(ErrorCode::InvalidArguments, error);
+            const std::filesystem::path source = arguments.contains("source") && arguments["source"].is_string()
+                ? std::filesystem::path(arguments["source"].get<std::string>()).lexically_normal()
+                : std::filesystem::path();
+            AssetIntakeResult result;
+            if (!importer->ReimportPack(assets->projectRoot,
+                                        AssetPathPolicy::ToPortableKey(assets->projectRoot, folder->generic_string()),
+                                        source, result, error)) {
+                return Failure(ErrorCode::InvalidArguments, error, {{"warnings", result.warnings}});
+            }
+            assets->assets->Refresh();
+            context.Backend().ApplyReimportedPack(result.prefabs, result.models);
+            return ToolResult::Success({{"folder", result.folder},
+                                        {"prefabs", result.prefabs},
+                                        {"materials", result.materials},
+                                        {"models", result.models},
+                                        {"warnings", result.warnings}});
+        }, true));
+
+    RegisterOrThrow(service, Definition(
         "asset.reimport",
         "Reimport a project asset through the editor reimport pipeline.",
         ObjectSchema({{"path", {{"type", "string"}}}}, Json::array({"path"})),

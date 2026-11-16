@@ -1205,6 +1205,13 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             }
             menu.addSeparator();
         }
+        if (const QString pack = importedPackFolder(relativePath); !pack.isEmpty() && m_mainWindow) {
+            menu.addAction(tr("Reimport Pack"), [this, pack]() {
+                m_mainWindow->reimportAssetPack(pack);
+                Refresh();
+            });
+            menu.addSeparator();
+        }
         if (m_mainWindow && m_mainWindow->PluginHost()) {
             m_mainWindow->PluginHost()->PopulateContextMenu("assetBrowser", menu, relativePath);
         }
@@ -1298,6 +1305,12 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
 
     if (index.isValid() && !targetDir.isEmpty()) {
         menu.addSeparator();
+        if (const QString pack = importedPackFolder(targetDir); !pack.isEmpty() && m_mainWindow) {
+            menu.addAction(tr("Reimport Pack"), [this, pack]() {
+                m_mainWindow->reimportAssetPack(pack);
+                Refresh();
+            });
+        }
         menu.addAction(tr("Rename"), [this, targetDir]() {
             renameAsset(targetDir, true);
         });
@@ -1880,6 +1893,24 @@ void AssetBrowserWidget::showInFolder(const QString& relativePath)
             break;
         }
     }
+}
+
+QString AssetBrowserWidget::importedPackFolder(const QString& relativePath) const
+{
+    if (relativePath.isEmpty() || relativePath.startsWith(QStringLiteral("plugin://"))) {
+        return {};
+    }
+    auto& assetMgr = AssetManager::GetInstance();
+    const std::filesystem::path projectRoot = assetMgr.GetProjectRoot();
+    std::filesystem::path current = std::filesystem::path(relativePath.toStdString());
+    for (int depth = 0; depth < 16 && !current.empty(); ++depth) {
+        const QString portable = ToProjectRelativeAssetPath(QString::fromStdString(current.generic_string()));
+        if (!Hephaestus::AssetIntake::RecordedSource(projectRoot, portable.toStdString()).empty()) {
+            return portable;
+        }
+        current = current.parent_path();
+    }
+    return {};
 }
 
 void AssetBrowserWidget::showInExplorer(const QString& relativePath)

@@ -177,6 +177,14 @@ public:
     /** Refresh editor views after an asset file operation. */
     virtual void NotifyAssetChanged() {}
 
+    /** After a pack was reimported in place: rebuild placed copies of its prefabs and reload its models. */
+    virtual void ApplyReimportedPack(const std::vector<std::string>& prefabs, const std::vector<std::string>& models)
+    {
+        (void)prefabs;
+        (void)models;
+        NotifyAssetChanged();
+    }
+
     /**
      * @brief Ask the host script runtime to force-reload scripts.
      *

@@ -169,6 +169,8 @@ private:
     void renameAsset(const QString& relativePath, bool isDirectory);
     void findAssetReferences(const QString& relativePath);
     void showInExplorer(const QString& relativePath);
+    // The imported pack (portable folder with an import.json) this item is in, or empty.
+    QString importedPackFolder(const QString& relativePath) const;
     void showInFolder(const QString& relativePath);
     void syncFolderTreeSelection();
     QModelIndex findFolderIndexByPath(const QString& relativePath) const;

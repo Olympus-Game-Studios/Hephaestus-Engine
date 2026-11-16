@@ -175,6 +175,8 @@ public:
      * to the GPU and entity handles are set correctly.
      */
     void RebuildSceneMeshes();
+    /// Loads these model files again (after they changed on disk) for every mesh renderer that shows them.
+    void ReloadMeshFiles(const std::vector<std::string>& meshAssetPaths);
     AudioEngine* GetAudioEngine() const { return m_audioEngine.get(); }
 
     /**

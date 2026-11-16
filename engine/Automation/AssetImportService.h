@@ -12,6 +12,7 @@
 
 #include "Assets/AssetIntake.h"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,18 @@ public:
         (void)request;
         (void)outResult;
         outError = "Asset pack import is unavailable for this host";
+        return false;
+    }
+
+    /** Import a pack again into its folder, updating it in place (AssetIntake::Reimport). */
+    virtual bool ReimportPack(const std::filesystem::path& projectRoot, const std::string& folder,
+                              const std::filesystem::path& source, AssetIntakeResult& outResult, std::string& outError)
+    {
+        (void)projectRoot;
+        (void)folder;
+        (void)source;
+        (void)outResult;
+        outError = "Asset pack reimport is unavailable for this host";
         return false;
     }
 };
