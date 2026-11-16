@@ -411,6 +411,7 @@ add_library(HephaestusRuntime STATIC
     engine/Scene/PrefabComponentIO.cpp
     engine/Scene/ParticleSimulation.cpp
     engine/Navigation/NavMesh.cpp
+    engine/Analysis/LevelChecks.cpp
     engine/Construction/ConstructionShape.cpp
     engine/Construction/ConstructionGeometry.cpp
     engine/Construction/ConstructionKit.cpp
@@ -705,6 +706,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/TextureViewerDialog.h
             engine/UI/QtEditor/KitEditorDialog.cpp
             engine/UI/QtEditor/KitEditorDialog.h
+            engine/UI/QtEditor/LevelCheckDialog.cpp
+            engine/UI/QtEditor/LevelCheckDialog.h
             engine/UI/QtEditor/HUIVisualEditorDialog.cpp
             engine/UI/QtEditor/HUIVisualEditorDialog.h
             engine/UI/QtEditor/MaterialGraphQtEditorDialog.cpp

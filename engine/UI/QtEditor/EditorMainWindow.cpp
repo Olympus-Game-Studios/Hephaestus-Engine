@@ -52,6 +52,7 @@
 #include "EditorSystemUsage.h"
 #include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
+#include "LevelCheckDialog.h"
 #include "HierarchyEye.h"
 #include "EditorPluginHost.h"
 #include "PluginManagerDialog.h"
@@ -1612,6 +1613,7 @@ void EditorMainWindow::setupMenuBar()
 
     QMenu* buildMenu = menuBar->addMenu(tr("&Build"));
     buildMenu->addAction(Theme::Icon(QStringLiteral("light")), tr("Bake Lighting"), this, &EditorMainWindow::bakeAllProbeVolumes);
+    buildMenu->addAction(tr("Check Level"), this, &EditorMainWindow::checkLevel);
     buildMenu->addSeparator();
     buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
     QAction* packageProjectAction =
@@ -8558,6 +8560,18 @@ void EditorMainWindow::handleViewportMaterialDrop(const QString& portablePath, c
         return;
     }
     statusBar()->showMessage(tr("Drop a material onto a shape or mesh to apply it"), 4000);
+}
+
+void EditorMainWindow::checkLevel()
+{
+    if (!m_engine) return;
+    if (!m_levelCheck) {
+        m_levelCheck = new LevelCheckDialog(m_engine.get(), this);
+    }
+    m_levelCheck->show();
+    m_levelCheck->raise();
+    m_levelCheck->activateWindow();
+    m_levelCheck->RunCheck();
 }
 
 void EditorMainWindow::handleViewportKitDrop(const QString& portablePath, const QPoint& dropPos)

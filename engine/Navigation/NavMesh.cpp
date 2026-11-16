@@ -661,6 +661,78 @@ bool NavMesh::ClosestPoint(const Vec3& point, Vec3& out, const Vec3& searchExten
     return true;
 }
 
+std::vector<NavIsland> NavMesh::Islands(const std::vector<Vec3>& starts, const Vec3& searchExtents) const
+{
+    std::vector<NavIsland> islands;
+    const dtNavMesh* mesh = m_navMesh;
+    const dtMeshTile* tile = mesh ? mesh->getTile(0) : nullptr;
+    if (!m_query || !tile || !tile->header) {
+        return islands;
+    }
+    const int polyCount = tile->header->polyCount;
+    std::vector<int> islandOf(static_cast<size_t>(polyCount), -1);
+    for (int seed = 0; seed < polyCount; ++seed) {
+        if (islandOf[static_cast<size_t>(seed)] >= 0) continue;
+        const int id = static_cast<int>(islands.size());
+        NavIsland island;
+        bool first = true;
+        float weightedX = 0.0f, weightedY = 0.0f, weightedZ = 0.0f;
+        std::vector<int> open{seed};
+        islandOf[static_cast<size_t>(seed)] = id;
+        while (!open.empty()) {
+            const int index = open.back();
+            open.pop_back();
+            const dtPoly& poly = tile->polys[index];
+            for (unsigned int k = poly.firstLink; k != DT_NULL_LINK; k = tile->links[k].next) {
+                const unsigned int next = mesh->decodePolyIdPoly(tile->links[k].ref);
+                if (next < static_cast<unsigned int>(polyCount) && islandOf[next] < 0) {
+                    islandOf[next] = id;
+                    open.push_back(static_cast<int>(next));
+                }
+            }
+            if (poly.getType() != DT_POLYTYPE_GROUND) continue;
+            float area = 0.0f;
+            Vec3 sum(0.0f, 0.0f, 0.0f);
+            for (int v = 0; v < poly.vertCount; ++v) {
+                const float* a = &tile->verts[poly.verts[v] * 3];
+                const float* b = &tile->verts[poly.verts[(v + 1) % poly.vertCount] * 3];
+                area += a[0] * b[2] - b[0] * a[2];
+                sum = vadd(sum, Vec3(a[0], a[1], a[2]));
+                const Vec3 point(a[0], a[1], a[2]);
+                island.min = first ? point : Vec3(std::min(island.min.x, point.x), std::min(island.min.y, point.y),
+                                                  std::min(island.min.z, point.z));
+                island.max = first ? point : Vec3(std::max(island.max.x, point.x), std::max(island.max.y, point.y),
+                                                  std::max(island.max.z, point.z));
+                first = false;
+            }
+            area = std::fabs(area) * 0.5f;
+            const Vec3 centre = vscale(sum, 1.0f / static_cast<float>(std::max<int>(1, poly.vertCount)));
+            island.area += area;
+            weightedX += centre.x * area;
+            weightedY += centre.y * area;
+            weightedZ += centre.z * area;
+        }
+        if (island.area > 0.0f) {
+            island.centre = Vec3(weightedX / island.area, weightedY / island.area, weightedZ / island.area);
+        }
+        islands.push_back(island);
+    }
+    dtQueryFilter filter;
+    const float extents[3] = {searchExtents.x, searchExtents.y, searchExtents.z};
+    for (const Vec3& start : starts) {
+        const float p[3] = {start.x, start.y, start.z};
+        dtPolyRef ref = 0;
+        float nearest[3];
+        if (dtStatusSucceed(m_query->findNearestPoly(p, extents, &filter, &ref, nearest)) && ref != 0) {
+            const unsigned int index = mesh->decodePolyIdPoly(ref);
+            if (index < static_cast<unsigned int>(polyCount)) {
+                islands[static_cast<size_t>(islandOf[index])].reached = true;
+            }
+        }
+    }
+    return islands;
+}
+
 bool NavMesh::FindPath(const Vec3& from, const Vec3& to, std::vector<Vec3>& corners,
                        std::vector<unsigned char>* linkStarts) const
 {

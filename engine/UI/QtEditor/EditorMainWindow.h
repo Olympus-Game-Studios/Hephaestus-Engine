@@ -84,6 +84,7 @@ namespace QtEditor {
 class EditorSystemUsage;
 class QtViewportWindow;
 class QtEditorEngine;
+class LevelCheckDialog;
 class AssetBrowserWidget;
 class AddActorsPanel;
 class CodeEditorPanel;
@@ -238,6 +239,7 @@ private:
     void resetInspectorComponent(const std::string& type);
     void removeInspectorComponent(const std::string& type);
     void bakeAllProbeVolumes();
+    void checkLevel();
     void bakeSelectedProbeVolumes();
     void bakeProbeVolumes(const std::vector<entt::entity>& volumes);
     ComponentInspector* focusedComponentInspector() const;
@@ -247,6 +249,7 @@ private:
     // it in the first material slot of the mesh there.
     void handleViewportMaterialDrop(const QString& portablePath, const QPoint& dropPos, bool wholeShape);
     void handleViewportKitDrop(const QString& portablePath, const QPoint& dropPos);
+    LevelCheckDialog* m_levelCheck = nullptr;
     void syncPrefabOverridesForSelection();
     void updatePrefabInspectorUi();
     void decoratePrefabComponentInspector(QWidget* widget, const std::string& componentName);

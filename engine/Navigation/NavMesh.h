@@ -84,6 +84,15 @@ NavBuildSettings SettingsForScene(Scene& scene);
 // over the top. Returns how many were added.
 int AddVaultLinks(Scene& scene, const NavBuildSettings& settings, NavGeometry& geometry);
 
+// A connected part of the navmesh: everywhere a walker can get to from anywhere else in it, links included.
+struct NavIsland {
+    float area = 0.0f;  // square metres, seen from above
+    Vec3 centre;        // area-weighted centre of its polygons
+    Vec3 min;
+    Vec3 max;
+    bool reached = false;  // holds the walkable point nearest one of the starts
+};
+
 class NavMesh {
 public:
     NavMesh() = default;
@@ -103,6 +112,9 @@ public:
     bool ClosestPoint(const Vec3& point, Vec3& out, const Vec3& searchExtents = Vec3(2.0f, 4.0f, 2.0f)) const;
     // A random walkable point within radius (along the navmesh) of center; rngState is advanced.
     bool RandomPointAround(const Vec3& center, float radius, std::uint32_t& rngState, Vec3& out) const;
+    // Every connected part of the navmesh, marking those that hold the walkable point nearest one of starts.
+    std::vector<NavIsland> Islands(const std::vector<Vec3>& starts,
+                                   const Vec3& searchExtents = Vec3(2.0f, 4.0f, 2.0f)) const;
 
 private:
     dtNavMesh* m_navMesh = nullptr;

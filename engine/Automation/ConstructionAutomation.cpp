@@ -2,6 +2,8 @@
 
 #include "AutomationToolSupport.h"
 
+#include "Analysis/LevelChecks.h"
+#include "Assets/AssetManager.h"
 #include "Construction/ConstructionSystem.h"
 #include "Scene/Entity.h"
 #include "Scene/Json.h"
@@ -281,6 +283,39 @@ void RegisterConstructionAutomation(AutomationService& service)
                                     {"lastUpdateMs", stats.lastUpdateMs}};
             }
             return ToolResult::Success(std::move(result));
+        }));
+
+    RegisterOrThrow(service, Definition(
+        "level.check",
+        "Check the open level against what its characters can do: doorways too narrow or too low, steps too high, "
+        "ramps too steep, and floor the characters can't walk to from where they start. Returns the traversal "
+        "metrics used and each problem with its check, severity, message, position and entity.",
+        ObjectSchema({}, Json::array()),
+        [](ToolContext& context, const Json&) -> ToolOutcome {
+            Scene* scene = RequireScene(context);
+            if (!scene) return Failure(ErrorCode::NoActiveScene, "No active scene");
+            UpToDate(context, *scene);
+            Hephaestus::AssetManager* assets = context.Backend().Assets();
+            const Analysis::LevelCheckReport report =
+                Analysis::CheckLevel(*scene, assets ? std::filesystem::path(assets->GetProjectRoot()) : std::filesystem::path());
+            Json problems = Json::array();
+            for (const Analysis::LevelProblem& problem : report.problems) {
+                Json entry = {{"check", problem.check}, {"severity", Analysis::SeverityName(problem.severity)},
+                              {"message", problem.message},
+                              {"position", Json::array({problem.position.x, problem.position.y, problem.position.z})}};
+                if (problem.entity != entt::null && scene->GetRegistry().valid(problem.entity)) {
+                    entry["entity"] = context.Entities().Bind(*scene, problem.entity).value;
+                }
+                problems.push_back(std::move(entry));
+            }
+            const auto& m = report.metrics;
+            return ToolResult::Success(Json{
+                {"metrics", {{"height", m.height}, {"radius", m.radius}, {"stepHeight", m.stepHeight},
+                             {"maxSlopeDegrees", m.maxSlopeDegrees}, {"jumpHeight", m.jumpHeight},
+                             {"fromControllers", m.fromControllers}}},
+                {"navPolygons", report.navPolygons},
+                {"islands", report.islands},
+                {"problems", std::move(problems)}});
         }));
 }
 

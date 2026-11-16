@@ -1,8 +1,10 @@
+#include "Analysis/LevelChecks.h"
 #include "Construction/ConstructionGeometry.h"
 #include "Construction/ConstructionKit.h"
 #include "Construction/ConstructionSystem.h"
 #include "Construction/ConstructionTool.h"
 #include "Navigation/NavMesh.h"
+#include "Scene/CharacterControllerComponent.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
 #include "Scene/Scene.h"
@@ -1254,6 +1256,90 @@ void TestKits()
     PrefabOverrideSystem::InvalidateAssetCache();
 }
 
+void TestLevelChecks()
+{
+    using namespace Hephaestus::Analysis;
+    Scene scene("Checks");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity home = AddBox(scene, "Home", Room());
+    OpeningParams narrow = Door();
+    narrow.width = 0.5f;
+    Entity narrowDoor = AddOpening(scene, home, narrow);
+    OpeningParams low = Door();
+    low.side = WallSide::NegZ;
+    low.height = 1.5f;
+    AddOpening(scene, home, low);
+    OpeningParams window = Door();
+    window.side = WallSide::PosX;
+    window.sill = 1.0f;
+    window.width = 0.4f;
+    window.height = 0.8f;
+    AddOpening(scene, home, window);
+    AddBox(scene, "Sealed", Room(), Vec3(20.0f, 0.0f, 0.0f));
+    Entity stairs = scene.CreateEntity("Steep Stairs");
+    stairs.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 12.0f);
+    auto& stairShape = stairs.AddComponent<ConstructionShapeComponent>();
+    stairShape.recipe = Recipe::Stairs;
+    stairShape.box.height = 1.5f;
+    stairShape.box.depth = 3.0f;
+    stairShape.box.width = 1.2f;
+    stairShape.stairs.steps = 2;
+    Entity ramp = scene.CreateEntity("Steep Ramp");
+    ramp.GetComponent<TransformComponent>().position = Vec3(10.0f, 0.0f, 12.0f);
+    auto& rampShape = ramp.AddComponent<ConstructionShapeComponent>();
+    rampShape.recipe = Recipe::Ramp;
+    rampShape.box.height = 3.0f;
+    rampShape.box.depth = 2.0f;
+    system.Update(scene);
+
+    LevelCheckReport report = CheckLevel(scene);
+    auto count = [&](const std::string& check, Severity severity) {
+        int n = 0;
+        for (const LevelProblem& problem : report.problems) n += problem.check == check && problem.severity == severity;
+        return n;
+    };
+    Check(count("no-characters", Severity::Info) == 1 && count("unreachable-floor", Severity::Warning) == 0,
+          "without characters, reachability is skipped and says so");
+
+    Entity player = scene.CreateEntity("Player");
+    player.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.1f, 0.0f);
+    auto& controller = player.AddComponent<CharacterControllerComponent>();
+    controller.jumpSpeed = 4.43f;
+    report = CheckLevel(scene);
+    const float expectedJump = 4.43f * 4.43f / (2.0f * 9.81f);
+    Check(report.metrics.fromControllers && std::fabs(report.metrics.jumpHeight - expectedJump) < 1e-3f &&
+              std::fabs(report.metrics.stepHeight - controller.stepHeight) < 1e-5f,
+          "traversal metrics come from the character controller, jump height from jump speed and gravity");
+    bool narrowAtDoor = false;
+    for (const LevelProblem& problem : report.problems) {
+        narrowAtDoor = narrowAtDoor || (problem.check == "door-too-narrow" && problem.entity == narrowDoor &&
+                                        std::fabs(problem.position.z - 2.0f) < 0.2f && std::fabs(problem.position.x) < 1e-3f);
+    }
+    Check(count("door-too-narrow", Severity::Error) == 1 && narrowAtDoor,
+          "a 0.5 m doorway is too narrow for a 0.6 m wide player, and is placed at the door");
+    Check(count("door-too-low", Severity::Error) == 1, "a 1.5 m high doorway is too low for a 1.8 m player");
+    Check(count("step-too-high", Severity::Error) == 1, "two 0.75 m steps are too high to climb");
+    Check(count("ramp-too-steep", Severity::Error) == 1, "a 56 degree ramp is too steep to walk");
+    Check(report.navPolygons > 0 && count("unreachable-floor", Severity::Warning) >= 1,
+          "the floor of a room with no way in can't be reached (" + std::to_string(report.islands) + " islands)");
+    bool sealedFlagged = false;
+    bool homeFlagged = false;
+    for (const LevelProblem& problem : report.problems) {
+        if (problem.check != "unreachable-floor") continue;
+        sealedFlagged = sealedFlagged || std::fabs(problem.position.x - 20.0f) < 2.0f;
+        homeFlagged = homeFlagged || std::fabs(problem.position.x) < 2.5f && std::fabs(problem.position.z) < 1.5f;
+    }
+    Check(sealedFlagged && !homeFlagged, "the sealed room is reported and the player's own room is not");
+
+    narrowDoor.GetComponent<ConstructionShapeComponent>().opening.width = 1.2f;
+    system.Update(scene);
+    report = CheckLevel(scene);
+    Check(count("door-too-narrow", Severity::Error) == 0 && count("door-too-narrow", Severity::Warning) == 0,
+          "widening the doorway clears the problem");
+}
+
 void TestScale()
 {
     Scene scene("Scale");
@@ -1312,6 +1398,7 @@ int main()
     TestRampsAndTurns();
     TestFaceMaterials();
     TestKits();
+    TestLevelChecks();
     TestScale();
     if (!g_pass) {
         return 1;

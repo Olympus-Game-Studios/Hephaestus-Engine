@@ -721,3 +721,11 @@ Plan: `docs/plans/level-construction-plan.md` (local, gitignored).
 - `engine/UI/QtEditor/QtEditorEngine.cpp:QtEditorEngine::tryApplyCompletedViewportPick` turns a click on a kit piece into a selection of its owner shape plus `ConstructionSystem::SetPickedPiece`, and emits `kitPiecePicked` so the Details panel refreshes even when the owner was already selected (`EditorContext::SelectEntity` skips unchanged selections).
 - `engine/UI/QtEditor/ConstructionShapeInspector.cpp:ConstructionShapeInspector::refreshPickedPiece` reads the current choice from the shape's `kitSwaps`, not from the system, because the system re-dresses on the next frame.
 - `engine/UI/QtEditor/EditorMainWindow.cpp:EditorMainWindow::handleViewportKitDrop` recognises kits by the `.hpkit` extension, because the asset browser drags them as the generic Mesh spawnable kind.
+
+## Level checks (2026-11-16)
+
+- `engine/Analysis/LevelChecks.cpp:MetricsForScene` takes body size, step and slope from `Navigation::SettingsForScene` (largest body, smallest step and slope across enabled controllers) so checks and the navmesh agree; jump height is the smallest `jumpSpeed^2 / (2 * 9.81 * gravityScale)`, which assumes the default Jolt gravity.
+- `engine/Analysis/LevelChecks.cpp:CheckOpenings` treats an opening as a doorway when its sill is within 5 cm of `HostFloorTop`, as `ConstructionKit.cpp:FillShape` does. Narrower than the body is an error; narrower than body plus one navmesh cell each side is a warning, because Recast erosion rounds up to whole cells and bots then can't path through.
+- `engine/Analysis/LevelChecks.cpp:CheckLevel` builds its own navmesh like `LuaScriptEngine::EnsureNavMesh` (scene geometry, fitted settings, vault links) and reports islands of at least 1 m2 that no enabled character's nearest polygon belongs to. The search extent reaches a character height plus 1 m down, since a controller's origin may be at its centre.
+- `engine/Navigation/NavMesh.cpp:NavMesh::Islands` flood-fills the single tile's polygons over their Detour links, so vault links join islands; area and centre come from ground polygons only.
+- `engine/UI/QtEditor/LevelCheckDialog.cpp:LevelCheckDialog::showProblem` frames problems with `EditorCameraController::FocusOnPoint`; navmesh problems have no entity.
