@@ -1643,6 +1643,82 @@ CameraProjection ParseCameraProjection(const std::string& str) {
     return str == "Orthographic" ? CameraProjection::Orthographic : CameraProjection::Perspective;
 }
 
+JsonValue NodeOverridesToJson(const std::unordered_map<std::string, PrefabNodeOverride>& overrides) {
+    JsonValue out = MakeObject();
+    for (const auto& [nodeId, nodeOverride] : overrides) {
+        JsonValue node = MakeObject();
+        if (nodeOverride.hasTransform) {
+            JsonValue transform = MakeObject();
+            transform.objectValue["position"] = MakeVec3(nodeOverride.transform.position);
+            transform.objectValue["rotation"] = MakeVec3(nodeOverride.transform.rotation);
+            transform.objectValue["scale"] = MakeVec3(nodeOverride.transform.scale);
+            node.objectValue["transform"] = std::move(transform);
+        }
+        if (!nodeOverride.componentOverrides.empty()) {
+            JsonValue components = MakeObject();
+            for (const auto& [type, componentOverride] : nodeOverride.componentOverrides) {
+                JsonValue properties = MakeObject();
+                for (const auto& [path, value] : componentOverride.properties) {
+                    properties.objectValue[path] = PropertyToJson(value);
+                }
+                components.objectValue[type] = std::move(properties);
+            }
+            node.objectValue["components"] = std::move(components);
+        }
+        if (!nodeOverride.scriptVars.empty()) {
+            JsonValue vars = MakeObject();
+            for (const auto& [key, value] : nodeOverride.scriptVars) {
+                vars.objectValue[key] = PropertyToJson(value);
+            }
+            node.objectValue["scriptVars"] = std::move(vars);
+        }
+        out.objectValue[nodeId] = std::move(node);
+    }
+    return out;
+}
+
+void NodeOverridesFromJson(const JsonValue& value, std::unordered_map<std::string, PrefabNodeOverride>& out) {
+    out.clear();
+    if (!value.IsObject()) {
+        return;
+    }
+    auto readVec3 = [](const JsonValue* v, Vec3& target) {
+        if (v && v->IsArray() && v->AsArray().size() == 3) {
+            const auto& a = v->AsArray();
+            target = Vec3(static_cast<float>(a[0].AsNumber()), static_cast<float>(a[1].AsNumber()),
+                          static_cast<float>(a[2].AsNumber()));
+        }
+    };
+    for (const auto& [nodeId, nodeValue] : value.AsObject()) {
+        if (!nodeValue.IsObject()) {
+            continue;
+        }
+        PrefabNodeOverride nodeOverride;
+        if (const JsonValue* transform = nodeValue.Find("transform"); transform && transform->IsObject()) {
+            readVec3(transform->Find("position"), nodeOverride.transform.position);
+            readVec3(transform->Find("rotation"), nodeOverride.transform.rotation);
+            readVec3(transform->Find("scale"), nodeOverride.transform.scale);
+            nodeOverride.hasTransform = true;
+        }
+        if (const JsonValue* components = nodeValue.Find("components"); components && components->IsObject()) {
+            for (const auto& [type, properties] : components->AsObject()) {
+                if (!properties.IsObject()) continue;
+                PrefabComponentOverride componentOverride;
+                for (const auto& [path, propertyValue] : properties.AsObject()) {
+                    componentOverride.properties.emplace(path, JsonToProperty(propertyValue));
+                }
+                nodeOverride.componentOverrides.emplace(type, std::move(componentOverride));
+            }
+        }
+        if (const JsonValue* vars = nodeValue.Find("scriptVars"); vars && vars->IsObject()) {
+            for (const auto& [key, varValue] : vars->AsObject()) {
+                nodeOverride.scriptVars.emplace(key, JsonToProperty(varValue));
+            }
+        }
+        out.emplace(nodeId, std::move(nodeOverride));
+    }
+}
+
 bool IsNodeOverrideEmpty(const PrefabNodeOverride& nodeOverride) {
     if (nodeOverride.hasTransform) {
         return false;

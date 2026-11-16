@@ -4,6 +4,8 @@
 #include "../Scene/PrefabInstantiator.h"
 #include "../Scene/PrefabComponentIO.h"
 #include "../Scene/PrefabOverrideSystem.h"
+
+#include <iostream>
 #include "../Scene/SceneSerializer.h"
 #include "../Scene/Components.h"
 #include "../Scripting/ScriptComponent.h"
@@ -289,6 +291,10 @@ bool PrefabDocument::OnOpen(const std::filesystem::path& path, std::string& outE
     if (!PrefabSerializer::Deserialize(asset_, path_, outError)) {
         return false;
     }
+    std::string nestedError;
+    if (!PrefabOverrideSystem::ExpandNested(asset_, nestedError)) {
+        std::cerr << "[PrefabDocument] " << nestedError << std::endl;
+    }
 
     if (asset_.guid.empty()) {
         asset_.guid = GenerateNodeId();
@@ -310,10 +316,10 @@ bool PrefabDocument::OnSave(std::string& outError) {
         outError = "Prefab save failed: no path set.";
         return false;
     }
-    if (!PrefabSerializer::Serialize(asset_, path_, outError)) {
+    // Edits to nested prefab parts are saved as overrides on their nested prefab node.
+    if (!PrefabOverrideSystem::SaveAsset(asset_, path_.generic_string(), outError)) {
         return false;
     }
-    PrefabOverrideSystem::InvalidateAssetCache(path_.generic_string());
     dirty_ = false;
     if (postSaveCallback_) {
         postSaveCallback_(path_);

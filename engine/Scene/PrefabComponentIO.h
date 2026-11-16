@@ -63,6 +63,9 @@ std::string CameraProjectionToString(CameraProjection projection);
 CameraProjection ParseCameraProjection(const std::string& str);
 
 bool IsNodeOverrideEmpty(const PrefabNodeOverride& nodeOverride);
+// {nodeId: {"transform": {...}, "components": {type: {path: value}}, "scriptVars": {...}}}, as scenes store overrides.
+JsonValue NodeOverridesToJson(const std::unordered_map<std::string, PrefabNodeOverride>& overrides);
+void NodeOverridesFromJson(const JsonValue& value, std::unordered_map<std::string, PrefabNodeOverride>& out);
 void PruneEmptyOverrides(PrefabInstanceComponent& instance);
 
 } // namespace PrefabComponentIO

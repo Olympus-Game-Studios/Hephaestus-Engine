@@ -6,6 +6,7 @@
 #include "Scene.h"
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -24,8 +25,23 @@ public:
     static PrefabInstanceComponent* TryGetInstance(Scene& scene, Entity entity);
     static const PrefabNodeComponent* TryGetNode(Entity entity);
 
+    /// Loads a prefab with its nested prefabs expanded (ExpandNested).
     static bool LoadAsset(const std::string& path, PrefabAsset& out, std::string& error);
+    /// Saves an expanded prefab, folding edits to nested parts back into their nodes' overrides (CollapseNested
+    /// against the file on disk).
+    static bool SaveAsset(const PrefabAsset& expanded, const std::string& path, std::string& error);
+    /// Clears the cached prefab and every cached prefab that includes it.
     static void InvalidateAssetCache(const std::string& path = {});
+
+    /// Replaces nested prefab nodes with the nested prefab's nodes ("<node>/<nested node>" ids, overrides applied).
+    /// A nested prefab that is missing or includes itself stays as an empty node and is reported in error.
+    /// loadNested loads (and expands) a nested prefab; by default LoadAsset, which uses the shared cache and so
+    /// belongs to the main thread.
+    using NestedLoader = std::function<bool(const std::string& path, PrefabAsset& out, std::string& error)>;
+    static bool ExpandNested(PrefabAsset& asset, std::string& error, const NestedLoader& loadNested = {});
+    /// The file form of an expanded prefab: nodes expanded from a nested prefab go back into that nested node, with
+    /// whatever differs from the nested prefab stored as its overrides. raw is the prefab as last saved.
+    static PrefabAsset CollapseNested(const PrefabAsset& expanded, const PrefabAsset& raw);
 
     /// Project root used to resolve portable prefab paths (e.g. assets/prefabs/X.hpprefab).
     static void SetProjectRoot(const std::filesystem::path& projectRoot);

@@ -91,7 +91,15 @@ Changes you make to a placed copy are tracked as **overrides** and marked in the
 
 Scripts can spawn prefabs while the game runs with `Scene.instantiate`, which is how you'd do bullets, pickups and enemy waves. See the [Lua API reference](lua-api.md#scene).
 
-**Not supported yet:** prefabs inside prefabs, and prefab variants. Don't parent one prefab copy inside another and expect it to behave like a nested prefab.
+### Prefabs inside prefabs
+
+Prefabs can be built out of other prefabs. Place the smaller prefabs (crates, a barrier, a lamp), parent them under one entity or under one of them, and use **Create Prefab From Selection** on the top one. The new prefab keeps a link to each smaller prefab instead of copying it, along with any changes you'd made to those copies. Now when you edit the crate prefab, every crate updates: in your levels, inside the new prefab, and inside every copy of the new prefab.
+
+Changes stack up in layers. The bigger prefab can change its crates (paint one red), and a level can change a copy of the bigger prefab (turn its lamp off), without breaking either link. Editing a part of a nested prefab in the Prefab Editor, or applying an override to it, saves the change on the bigger prefab rather than on the crate prefab itself.
+
+**Variants:** Create Prefab From Selection on a single prefab copy makes a variant of it: a new prefab that is the original plus your changes, and that still picks up later fixes to the original.
+
+**Not supported yet:** removing a component or a child from a nested part, or moving a nested part to a different parent, is not kept when you save. Change its values instead, or unpack it.
 
 ## Blocking out levels
 
