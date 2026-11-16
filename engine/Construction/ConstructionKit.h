@@ -65,4 +65,7 @@ struct KitFillResult {
 KitFillResult FillShape(const ConstructionShapeComponent& shape, const std::vector<OpeningParams>& openings,
                         const KitDefinition& kit);
 
+// The extent of a piece prefab's meshes as placed (its local frame), for filling in a piece's width.
+bool MeasurePiece(const std::string& prefab, AABB& bounds, std::string& error);
+
 } // namespace Hephaestus::Construction

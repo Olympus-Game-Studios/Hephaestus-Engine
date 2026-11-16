@@ -159,6 +159,7 @@ private:
     void createNewUIFile(const QString& parentRelativePath);
     void createNewPrefab(const QString& parentRelativePath);
     void createNewCharacter(const QString& parentRelativePath);
+    void createNewKit(const QString& parentRelativePath);
     void importAssets();
     void importCharacter();
     void duplicateAsset(const QString& relativePath, bool isDirectory);

@@ -7,6 +7,7 @@
 
 #include "AssetBrowserWidget.h"
 #include "InspectorMime.h"
+#include "../../Construction/ConstructionKit.h"
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
 #include "EditorPluginHost.h"
@@ -709,6 +710,7 @@ void AssetBrowserWidget::rebuildContentsView()
             case AssetType::Audio: return tr("Audio");
             case AssetType::Prefab: return tr("Prefab");
             case AssetType::Character: return tr("Character");
+            case AssetType::Kit: return tr("Kit");
             case AssetType::Shader: return tr("Shader");
             case AssetType::Font: return tr("Font");
             case AssetType::Text: return tr("Text");
@@ -947,6 +949,7 @@ QIcon AssetBrowserWidget::getAssetIcon(int assetType, bool isDirectory) const
         case AssetType::Audio:      return Theme::Icon(QStringLiteral("audio"));
         case AssetType::Prefab:     return Theme::Icon(QStringLiteral("prefab"));
         case AssetType::Character:  return Theme::Icon(QStringLiteral("character"));
+        case AssetType::Kit:        return Theme::Icon(QStringLiteral("draw-wall"));
         case AssetType::Shader:     return Theme::Icon(QStringLiteral("code"));
         case AssetType::UILayout:   return Theme::Icon(QStringLiteral("ui"));
         default:                    return Theme::Icon(QStringLiteral("file"));
@@ -1358,6 +1361,9 @@ void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirect
     menu.addAction(Theme::Icon(QStringLiteral("character")), tr("New Character"), [this, targetDirectory]() {
         createNewCharacter(targetDirectory);
     });
+    menu.addAction(Theme::Icon(QStringLiteral("draw-wall")), tr("New Kit"), [this, targetDirectory]() {
+        createNewKit(targetDirectory);
+    });
     menu.addAction(tr("Import Character…"), [this]() {
         importCharacter();
     });
@@ -1646,6 +1652,33 @@ void AssetBrowserWidget::createNewCharacter(const QString& parentRelativePath)
     const QString relativePath = parentRelativePath.isEmpty() ? fileName : parentRelativePath + "/" + fileName;
     emit assetOpenRequested(relativePath);
     std::cout << "[AssetBrowser] Created character: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewKit(const QString& parentRelativePath)
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("New Kit"), tr("Kit name (without extension):"),
+                                               QLineEdit::Normal, tr("NewKit"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    auto& assetMgr = AssetManager::GetInstance();
+    const std::filesystem::path folder = parentRelativePath.isEmpty()
+        ? std::filesystem::path(assetMgr.GetAssetRoot())
+        : std::filesystem::path(assetMgr.ToAbsolutePath(parentRelativePath.toStdString()));
+    const QString fileName = name.trimmed() + QStringLiteral(".hpkit");
+    const std::filesystem::path filePath = folder / fileName.toStdString();
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, tr("New Kit"), tr("A kit with that name already exists."));
+        return;
+    }
+    Construction::KitDefinition kit;
+    kit.name = name.trimmed().toStdString();
+    std::string error;
+    if (!Construction::SaveKit(filePath, kit, error)) {
+        QMessageBox::critical(this, tr("New Kit"), tr("Failed to create kit: %1").arg(QString::fromStdString(error)));
+        return;
+    }
+    Refresh();
+    emit assetOpenRequested(parentRelativePath.isEmpty() ? fileName : parentRelativePath + "/" + fileName);
 }
 
 void AssetBrowserWidget::restoreFromTrash()

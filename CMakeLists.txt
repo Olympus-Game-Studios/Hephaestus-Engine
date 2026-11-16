@@ -703,6 +703,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/EditorAssetActions.h
             engine/UI/QtEditor/TextureViewerDialog.cpp
             engine/UI/QtEditor/TextureViewerDialog.h
+            engine/UI/QtEditor/KitEditorDialog.cpp
+            engine/UI/QtEditor/KitEditorDialog.h
             engine/UI/QtEditor/HUIVisualEditorDialog.cpp
             engine/UI/QtEditor/HUIVisualEditorDialog.h
             engine/UI/QtEditor/MaterialGraphQtEditorDialog.cpp
@@ -2623,6 +2625,8 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
     if(Qt6Test_FOUND)
         add_executable(EditorQtSmokeTests
             engine/Tests/EditorQtSmokeTests.cpp
+            engine/UI/QtEditor/KitEditorDialog.cpp
+            engine/UI/QtEditor/KitEditorDialog.h
             engine/UI/QtEditor/PropertyEditors.cpp
             engine/UI/QtEditor/PropertyEditors.h
             engine/UI/QtEditor/EditorCommandSearch.cpp

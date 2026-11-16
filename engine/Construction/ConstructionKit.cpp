@@ -2,7 +2,11 @@
 
 #include "ConstructionGeometry.h"
 
+#include "../Scene/Entity.h"
 #include "../Scene/Json.h"
+#include "../Scene/PrefabInstantiator.h"
+#include "../Scene/PrefabOverrideSystem.h"
+#include "../Scene/Scene.h"
 
 #include <algorithm>
 #include <cmath>
@@ -369,6 +373,42 @@ KitFillResult FillShape(const ConstructionShapeComponent& shape, const std::vect
         }
     }
     return result;
+}
+
+bool MeasurePiece(const std::string& prefab, AABB& bounds, std::string& error)
+{
+    PrefabAsset asset;
+    if (!PrefabOverrideSystem::LoadAsset(prefab, asset, error)) {
+        return false;
+    }
+    Scene scene("Kit Piece");
+    PrefabInstantiateOptions options;
+    options.prefabPath = prefab;
+    options.attachInstanceComponent = false;
+    if (!PrefabInstantiator::Instantiate(scene, asset, options)) {
+        error = "Could not place " + prefab;
+        return false;
+    }
+    bool measured = false;
+    for (auto handle : scene.GetRegistry().view<MeshRendererComponent>()) {
+        const AABB& local = scene.GetRegistry().get<MeshRendererComponent>(handle).localBounds;
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        for (int corner = 0; corner < 8; ++corner) {
+            const Vec3 point = Mat4::TransformPoint(world, Vec3(corner & 1 ? local.max.x : local.min.x,
+                                                                corner & 2 ? local.max.y : local.min.y,
+                                                                corner & 4 ? local.max.z : local.min.z));
+            if (!measured) {
+                bounds = AABB(point, point);
+                measured = true;
+            }
+            bounds.min = Vec3(std::min(bounds.min.x, point.x), std::min(bounds.min.y, point.y), std::min(bounds.min.z, point.z));
+            bounds.max = Vec3(std::max(bounds.max.x, point.x), std::max(bounds.max.y, point.y), std::max(bounds.max.z, point.z));
+        }
+    }
+    if (!measured) {
+        error = prefab + " has no meshes to measure";
+    }
+    return measured;
 }
 
 } // namespace Hephaestus::Construction

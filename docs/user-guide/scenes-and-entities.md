@@ -133,7 +133,9 @@ A kit turns a blockout into finished walls made from your own art. It's a `.hpki
 
 The blockout is still there underneath: it gives the level its collision and navmesh, so dressing a room never changes how it plays, and its floor and ceiling stay visible. Move a corner, resize the room or cut a new door and the pieces are laid out again; so are they when you save the kit file. Pick **None** to go back to the blockout.
 
-A kit file looks like this:
+To make a kit, right-click in the Assets panel and pick **New Kit**, then double-click it to open the kit editor. **Add Pieces** picks prefabs from your project and measures each one's width from its meshes; set each piece's role (wall panel, filler, corner, door frame or window frame), and for frames the range of opening widths they fit. **Try a wall** shows which pieces the kit would use for a wall of any length and how far they'd stretch, and anything wrong with the kit is listed underneath. Saving updates every wall and room that uses the kit straight away.
+
+Kits are plain text, and a kit file looks like this:
 
 ```json
 {
@@ -151,7 +153,7 @@ A kit file looks like this:
 
 Build each piece standing on its origin, with its width along X and centred on it, and the wall's thickness centred on Z; +Z faces into the room. `stretch` is how far a piece may be stretched or squashed to fit, as a fraction of its width (0.08 is 8 percent). A run uses at most one filler. Door and window frames are used for openings whose width is between their `openingMin` and `openingMax`.
 
-**Not there yet:** a kit editor, previewing a kit before you apply it, and swapping single pieces by hand. Pieces don't have their own collision.
+**Not there yet:** swapping single pieces by hand. Pieces don't have their own collision.
 
 ## Undo
 

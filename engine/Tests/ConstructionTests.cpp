@@ -1146,6 +1146,10 @@ void TestKits()
     SaveKit(project / "assets/kit/Test.hpkit", kit, error);
     PrefabOverrideSystem::SetProjectRoot(project);
     PrefabOverrideSystem::InvalidateAssetCache();
+    AABB measured;
+    Check(MeasurePiece("assets/kit/Wall2.hpprefab", measured, error) && std::fabs(measured.max.x - measured.min.x - 2.0f) < 1e-4f &&
+              std::fabs(measured.max.y - 3.0f) < 1e-4f,
+          "a piece prefab is measured from its meshes (" + error + ")");
 
     Scene scene("Kit");
     FakeSink fake;
