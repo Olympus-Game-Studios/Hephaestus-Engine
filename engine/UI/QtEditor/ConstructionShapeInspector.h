@@ -12,6 +12,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QVBoxLayout>
+
+#include "../../Construction/ConstructionShape.h"
+
+#include <vector>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -28,6 +33,7 @@ private:
     void buildUI();
     void connectSignals();
     void applyToComponent();
+    void rebuildFaceList();
 
     QLabel* m_kind = nullptr;
     QLineEdit* m_role = nullptr;
@@ -65,6 +71,10 @@ private:
     QDoubleSpinBox* m_sill = nullptr;
     QDoubleSpinBox* m_openingWidth = nullptr;
     QDoubleSpinBox* m_openingHeight = nullptr;
+
+    QGroupBox* m_facesGroup = nullptr;
+    QVBoxLayout* m_facesList = nullptr;
+    std::vector<Hephaestus::Construction::FaceMaterial> m_shownFaces;
 
     QPushButton* m_remove = nullptr;
 };

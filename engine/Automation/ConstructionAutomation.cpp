@@ -29,6 +29,15 @@ Json ParamsSchema()
              "Metres."}};
 }
 
+Json FacesSchema()
+{
+    return {{"type", "array"},
+            {"description",
+             "Materials painted on faces, replacing the list: [{group, wall?, segment?, material}]. group is top, "
+             "bottom, +x, -x, +z, -z, inner (inside walls, with wall), floor, ceiling or reveal; segment picks a "
+             "wall path segment; material is a project material path."}};
+}
+
 bool ReadVec3(const Json& value, Vec3& out)
 {
     if (!value.is_array() || value.size() != 3) return false;
@@ -47,6 +56,7 @@ bool ApplyParams(ConstructionShapeComponent& shape, const Json& arguments, std::
     data["recipe"] = Construction::RecipeName(shape.recipe);
     if (arguments.contains("role") && arguments["role"].is_string()) data["role"] = arguments["role"];
     if (arguments.contains("operation") && arguments["operation"].is_string()) data["operation"] = arguments["operation"];
+    if (arguments.contains("faces")) data["faces"] = arguments["faces"];
     if (arguments.contains("params")) {
         if (!arguments["params"].is_object()) {
             error = "params must be an object";
@@ -193,6 +203,7 @@ void RegisterConstructionAutomation(AutomationService& service)
         "Change a construction shape's parameters (only the ones given) and re-evaluate it.",
         ObjectSchema({{"entity", {{"type", "string"}}}, {"role", {{"type", "string"}}},
                       {"operation", {{"type", "string"}, {"enum", Json::array({"add", "subtract"})}}},
+                      {"faces", FacesSchema()},
                       {"params", ParamsSchema()}},
                      Json::array({"entity"})),
         [](ToolContext& context, const Json& arguments) -> ToolOutcome {

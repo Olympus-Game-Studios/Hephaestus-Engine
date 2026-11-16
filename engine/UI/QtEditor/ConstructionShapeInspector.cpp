@@ -8,7 +8,9 @@
 #include "../../Scene/Entity.h"
 #include "../../Scene/Scene.h"
 
+#include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <cmath>
 #include <QVBoxLayout>
 
@@ -164,6 +166,12 @@ void ConstructionShapeInspector::buildUI()
     opening->addRow(tr("Width"), m_openingWidth);
     m_openingHeight = makeSpin(0.05, kMaxSize, 0.1);
     opening->addRow(tr("Height"), m_openingHeight);
+
+    m_facesGroup = new QGroupBox(tr("Painted Faces"), this);
+    m_facesGroup->setToolTip(tr("Drag a material from the Assets panel onto a face in the viewport to paint it. "
+                                "Hold Shift while dropping to paint the whole shape."));
+    m_facesList = new QVBoxLayout(m_facesGroup);
+    layout->addWidget(m_facesGroup);
 
     m_remove = new QPushButton(tr("Remove Component"));
     layout->addWidget(m_remove);
@@ -354,6 +362,64 @@ void ConstructionShapeInspector::Refresh()
     SetSpinFromMixed(m_openingWidth, openingWidth);
     SetSpinFromMixed(m_openingHeight, openingHeight);
     m_updating = false;
+    rebuildFaceList();
+}
+
+void ConstructionShapeInspector::rebuildFaceList()
+{
+    const auto* shape = m_ctx && m_ctx->HasActiveScene()
+        ? m_ctx->GetActiveScene()->GetRegistry().try_get<ConstructionShapeComponent>(GetEntity()) : nullptr;
+    std::vector<Construction::FaceMaterial> faces;
+    if (shape && Construction::HasOwnGeometry(*shape)) {
+        faces = shape->faceMaterials;
+    }
+    const bool same = faces.size() == m_shownFaces.size() &&
+        std::equal(faces.begin(), faces.end(), m_shownFaces.begin(), [](const auto& a, const auto& b) {
+            return Construction::SameFace(a.face, b.face) && a.material == b.material;
+        });
+    m_facesGroup->setVisible(shape && Construction::HasOwnGeometry(*shape));
+    if (same && m_facesList->count() > 0) {
+        return;
+    }
+    m_shownFaces = faces;
+    while (QLayoutItem* item = m_facesList->takeAt(0)) {
+        if (QWidget* widget = item->widget()) widget->deleteLater();
+        if (QLayout* row = item->layout()) {
+            while (QLayoutItem* child = row->takeAt(0)) {
+                if (QWidget* widget = child->widget()) widget->deleteLater();
+                delete child;
+            }
+        }
+        delete item;
+    }
+    if (faces.empty()) {
+        auto* hint = new QLabel(tr("None. Drag a material onto a face in the viewport; Shift paints the whole shape."));
+        hint->setWordWrap(true);
+        m_facesList->addWidget(hint);
+        return;
+    }
+    for (const Construction::FaceMaterial& face : faces) {
+        auto* row = new QHBoxLayout();
+        const QString material = QFileInfo(QString::fromStdString(face.material)).completeBaseName();
+        auto* label = new QLabel(tr("%1: %2").arg(QString::fromStdString(Construction::DescribeFace(face.face)), material));
+        label->setToolTip(QString::fromStdString(face.material));
+        auto* clear = new QPushButton(tr("Clear"));
+        clear->setToolTip(tr("Give this face the shape's own material again."));
+        const Construction::FaceTag tag = face.face;
+        connect(clear, &QPushButton::clicked, this, [this, tag]() {
+            BeginEdit("Clear painted face");
+            ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& target, entt::entity) {
+                std::erase_if(target.faceMaterials, [&](const auto& painted) {
+                    return Construction::SameFace(painted.face, tag);
+                });
+            });
+            EndEdit();
+            Refresh();
+        });
+        row->addWidget(label, 1);
+        row->addWidget(clear);
+        m_facesList->addLayout(row);
+    }
 }
 
 } // namespace QtEditor

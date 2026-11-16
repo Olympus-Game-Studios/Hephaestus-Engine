@@ -323,7 +323,8 @@ void EmitFaces(const CellGrid& grid, EvaluatedGeometry& out)
                         if (grid.Solid(cell[0], cell[1], cell[2]) && !grid.Solid(next[0], next[1], next[2])) {
                             const bool outside = next[axis] < 0 || next[axis] >= grid.Count(axis);
                             const FaceGroup group = outside ? OuterGroup(axis, dir)
-                                : grid.InInterior(next[0], next[1], next[2]) ? FaceGroup::Inner
+                                : grid.InInterior(next[0], next[1], next[2])
+                                    ? (axis == 1 ? (dir > 0 ? FaceGroup::Floor : FaceGroup::Ceiling) : FaceGroup::Inner)
                                 : FaceGroup::Reveal;
                             value = static_cast<int>(group);
                         }
@@ -1005,7 +1006,7 @@ bool EvaluateWall(const ConstructionShapeComponent& shape, const std::vector<Ope
             const WallPoint& a = polygon[static_cast<size_t>(triangles[n])];
             const WallPoint& b = polygon[static_cast<size_t>(triangles[n + 1])];
             const WallPoint& c = polygon[static_cast<size_t>(triangles[n + 2])];
-            PushFacing(out, Vec3(a.x, t, a.z), Vec3(b.x, t, b.z), Vec3(c.x, t, c.z), up, FaceTag{FaceGroup::Inner, -1, -1});
+            PushFacing(out, Vec3(a.x, t, a.z), Vec3(b.x, t, b.z), Vec3(c.x, t, c.z), up, FaceTag{FaceGroup::Floor, -1, -1});
             PushFacing(out, Vec3(a.x, 0.0f, a.z), Vec3(b.x, 0.0f, b.z), Vec3(c.x, 0.0f, c.z), Vec3(0.0f, -1.0f, 0.0f),
                        FaceTag{FaceGroup::Bottom, -1, -1});
         }
@@ -1148,6 +1149,14 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
     h.Int(shape.stairs.steps);
     h.Int(shape.segments);
     h.Int(shape.wall.closed);
+    h.Int(static_cast<std::int64_t>(shape.faceMaterials.size()));
+    for (const FaceMaterial& face : shape.faceMaterials) {
+        h.Int(static_cast<int>(face.face.group));
+        h.Int(face.face.wall);
+        h.Int(face.face.segment);
+        h.Bytes(face.material.data(), face.material.size());
+        h.Int(0);
+    }
     h.Int(static_cast<std::int64_t>(shape.wall.points.size()));
     for (const WallPoint& point : shape.wall.points) {
         h.Float(point.x);
@@ -1172,6 +1181,59 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
         h.Float(cut.max.x); h.Float(cut.max.y); h.Float(cut.max.z);
     }
     return h.value;
+}
+
+std::vector<std::string> AssignFaceMaterials(const std::vector<FaceMaterial>& faces, EvaluatedGeometry& geometry)
+{
+    std::vector<std::string> slots{std::string()};
+    const size_t triangles = geometry.mesh.indices.size() / 3;
+    if (faces.empty() || geometry.triangleTags.size() != triangles) {
+        return slots;
+    }
+    std::vector<int> slotOf(triangles, 0);
+    for (size_t t = 0; t < triangles; ++t) {
+        for (const FaceMaterial& face : faces) {
+            if (face.material.empty() || !SameFace(face.face, geometry.triangleTags[t])) {
+                continue;
+            }
+            auto found = std::find(slots.begin(), slots.end(), face.material);
+            if (found == slots.end()) {
+                slots.push_back(face.material);
+                found = slots.end() - 1;
+            }
+            slotOf[t] = static_cast<int>(found - slots.begin());
+            break;
+        }
+    }
+    if (slots.size() == 1) {
+        return slots;
+    }
+    std::vector<uint32_t> indices;
+    std::vector<FaceTag> tags;
+    indices.reserve(geometry.mesh.indices.size());
+    tags.reserve(triangles);
+    const MeshData::Submesh base = geometry.mesh.submeshes.empty() ? MeshData::Submesh{} : geometry.mesh.submeshes.front();
+    geometry.mesh.submeshes.clear();
+    for (int slot = 0; slot < static_cast<int>(slots.size()); ++slot) {
+        MeshData::Submesh submesh = base;
+        submesh.indexOffset = static_cast<uint32_t>(indices.size());
+        submesh.materialSlot = slot;
+        submesh.bounds = geometry.mesh.bounds;
+        for (size_t t = 0; t < triangles; ++t) {
+            if (slotOf[t] == slot) {
+                indices.insert(indices.end(), geometry.mesh.indices.begin() + static_cast<std::ptrdiff_t>(t * 3),
+                               geometry.mesh.indices.begin() + static_cast<std::ptrdiff_t>(t * 3 + 3));
+                tags.push_back(geometry.triangleTags[t]);
+            }
+        }
+        submesh.indexCount = static_cast<uint32_t>(indices.size()) - submesh.indexOffset;
+        if (submesh.indexCount > 0) {
+            geometry.mesh.submeshes.push_back(submesh);
+        }
+    }
+    geometry.mesh.indices = std::move(indices);
+    geometry.triangleTags = std::move(tags);
+    return slots;
 }
 
 std::uint64_t HashGeometry(const EvaluatedGeometry& geometry)

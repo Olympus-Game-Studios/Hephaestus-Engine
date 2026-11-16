@@ -723,7 +723,7 @@ void TestWalls()
     Check(lRoom.hulls.empty() && InsideSolid(lRoom, Vec3(1.5f, 0.1f, 5.5f)) && InsideSolid(lRoom, Vec3(4.5f, 0.1f, 2.0f)) &&
               !InsideSolid(lRoom, Vec3(4.5f, 0.1f, 5.5f)) && !InsideSolid(lRoom, Vec3(1.5f, 1.5f, 2.0f)),
           "an L-shaped room has a floor in both arms and none outside the L");
-    Check(WindingMatchesNormals(lRoom) && HasGroup(lRoom, FaceGroup::Inner), "the room's floor faces up into the room");
+    Check(WindingMatchesNormals(lRoom) && HasGroup(lRoom, FaceGroup::Floor), "the room's floor faces up into the room");
     Check(DisplayName(room) == std::string("Room") && HostFloorTop(room) > 0.19f, "a closed wall is a room with a floor");
 
     ConstructionShapeComponent triangle = wall;
@@ -983,6 +983,82 @@ void TestRampsAndTurns()
           "clicking with Draw Ramp drops a 2 x 4 m ramp 1 m high");
 }
 
+void TestFaceMaterials()
+{
+    Scene scene("Faces");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity room = AddBox(scene, "Room", Room());
+    auto& shape = room.GetComponent<ConstructionShapeComponent>();
+    shape.faceMaterials.push_back({FaceTag{FaceGroup::Floor, -1, -1}, "assets/materials/Tiles.hematerial"});
+    shape.faceMaterials.push_back({FaceTag{FaceGroup::Inner, static_cast<std::int8_t>(WallSide::PosZ), -1},
+                                   "assets/materials/Brick.hematerial"});
+    shape.faceMaterials.push_back({FaceTag{FaceGroup::PosZ, static_cast<std::int8_t>(WallSide::PosZ), -1},
+                                   "assets/materials/Brick.hematerial"});
+    auto& renderer = room.AddComponent<MeshRendererComponent>();
+    renderer.appliedMaterialPaths = {"assets/materials/Plaster.hematerial"};
+    system.Update(scene);
+    const EvaluatedGeometry* geometry = system.Geometry(room);
+    Check(geometry && geometry->mesh.submeshes.size() == 3, "painted faces split the room into three material slots");
+    Check(renderer.submeshCount == 3 && renderer.appliedMaterialPaths.size() == 3 &&
+              renderer.appliedMaterialPaths[0] == "assets/materials/Plaster.hematerial" &&
+              renderer.appliedMaterialPaths[1] == "assets/materials/Tiles.hematerial" &&
+              renderer.appliedMaterialPaths[2] == "assets/materials/Brick.hematerial",
+          "slot 0 keeps the shape's own material and each painted material gets one slot");
+    bool tagsFollow = geometry != nullptr;
+    for (const auto& submesh : geometry->mesh.submeshes) {
+        for (uint32_t i = submesh.indexOffset; i < submesh.indexOffset + submesh.indexCount; i += 3) {
+            const FaceTag& tag = geometry->triangleTags[i / 3];
+            const int expected = tag.group == FaceGroup::Floor ? 1
+                : (tag.wall == static_cast<std::int8_t>(WallSide::PosZ) &&
+                   (tag.group == FaceGroup::Inner || tag.group == FaceGroup::PosZ)) ? 2 : 0;
+            tagsFollow = tagsFollow && submesh.materialSlot == expected;
+        }
+    }
+    Check(tagsFollow, "every triangle lands in its face's slot and keeps its face tag");
+    ConstructionHit hit;
+    Check(system.Raycast(scene, Ray(Vec3(0.0f, 5.0f, 0.0f), Vec3(0.0f, -1.0f, 0.0f)), hit) &&
+              hit.tag.group == FaceGroup::Floor,
+          "picking still finds the floor after the triangles are regrouped");
+
+    shape.faceMaterials.erase(shape.faceMaterials.begin());
+    Check(system.Update(scene) == 1 && renderer.submeshCount == 2 &&
+              renderer.appliedMaterialPaths[1] == "assets/materials/Brick.hematerial",
+          "clearing a face's material re-evaluates the room with one slot fewer");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    Entity loadedRoom = loaded.FindEntityByName("Room");
+    const auto* loadedShape = loadedRoom ? loaded.GetRegistry().try_get<ConstructionShapeComponent>(loadedRoom) : nullptr;
+    Check(loadedShape && loadedShape->faceMaterials.size() == 2 &&
+              loadedShape->faceMaterials[1].face.group == FaceGroup::PosZ &&
+              loadedShape->faceMaterials[1].face.wall == static_cast<std::int8_t>(WallSide::PosZ) &&
+              loadedShape->faceMaterials[1].material == "assets/materials/Brick.hematerial",
+          "painted faces save and load");
+
+    // Wall segments are painted one by one.
+    ConstructionShapeComponent wall;
+    wall.recipe = Recipe::Wall;
+    wall.box.height = 3.0f;
+    wall.box.wallThickness = 0.2f;
+    wall.wall.points = {{0.0f, 0.0f}, {4.0f, 0.0f}, {4.0f, 3.0f}};
+    wall.faceMaterials.push_back({FaceTag{FaceGroup::PosZ, static_cast<std::int8_t>(WallSide::PosZ), 1},
+                                  "assets/materials/Brick.hematerial"});
+    EvaluatedGeometry painted;
+    EvaluateShape(wall, {}, painted);
+    const auto slots = AssignFaceMaterials(wall.faceMaterials, painted);
+    bool onlySegment = slots.size() == 2 && painted.mesh.submeshes.size() == 2;
+    for (const auto& submesh : painted.mesh.submeshes) {
+        for (uint32_t i = submesh.indexOffset; submesh.materialSlot == 1 && i < submesh.indexOffset + submesh.indexCount; i += 3) {
+            onlySegment = onlySegment && painted.triangleTags[i / 3].segment == 1;
+        }
+    }
+    Check(onlySegment && DescribeFace(wall.faceMaterials[0].face) == "+Z side of wall 2",
+          "a wall's face is painted on its own segment only");
+}
+
 void TestScale()
 {
     Scene scene("Scale");
@@ -1039,6 +1115,7 @@ int main()
     TestWalls();
     TestWallTool();
     TestRampsAndTurns();
+    TestFaceMaterials();
     TestScale();
     if (!g_pass) {
         return 1;

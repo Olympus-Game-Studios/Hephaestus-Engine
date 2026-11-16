@@ -18,6 +18,7 @@ struct ConstructionSystem::ShapeState {
     size_t meshHandle = MeshRendererComponent::InvalidMesh;
     EvaluatedGeometry geometry;
     std::vector<entt::entity> colliders;
+    std::vector<std::string> slotMaterials{std::string()};
 };
 
 ConstructionSystem::ConstructionSystem() = default;
@@ -292,7 +293,7 @@ int ConstructionSystem::Update(Scene& scene)
         ShapeState& state = *found->second;
         auto& renderer = registry.get<MeshRendererComponent>(entity);
         if (renderer.meshHandle != state.meshHandle) {
-            renderer.SetMesh(state.meshHandle, state.geometry.mesh.bounds, {}, false, 1);
+            ApplySlots(renderer, state);
         }
         if (!CollidersIntact(scene, entity, state)) {
             RebuildColliders(scene, entity, state);
@@ -334,6 +335,7 @@ void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState&
     state.inputHash = hash;
     ++m_stats.evaluations;
     const bool hasGeometry = EvaluateShape(shape, CollectOpenings(scene, entity), state.geometry, cuts);
+    state.slotMaterials = AssignFaceMaterials(shape.faceMaterials, state.geometry);
 
     auto& renderer = registry.get<MeshRendererComponent>(entity);
     if (hasGeometry && m_sink.upload) {
@@ -348,8 +350,19 @@ void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState&
     } else if (!hasGeometry) {
         Release(state);
     }
-    renderer.SetMesh(state.meshHandle, state.geometry.mesh.bounds, {}, false, 1);
+    ApplySlots(renderer, state);
     RebuildColliders(scene, entity, state);
+}
+
+void ConstructionSystem::ApplySlots(MeshRendererComponent& renderer, const ShapeState& state)
+{
+    const int slots = static_cast<int>(state.slotMaterials.size());
+    renderer.SetMesh(state.meshHandle, state.geometry.mesh.bounds, {}, false, slots);
+    // Slot 0 is the shape's own material, which the Mesh Renderer can still override; the rest are painted faces.
+    const std::string own = renderer.appliedMaterialPaths.empty() ? std::string() : renderer.appliedMaterialPaths[0];
+    renderer.appliedMaterialPaths = state.slotMaterials;
+    renderer.appliedMaterialPaths[0] = own;
+    renderer.materialIndices.assign(static_cast<size_t>(slots), -1);
 }
 
 bool ConstructionSystem::CollidersIntact(Scene& scene, entt::entity owner, const ShapeState& state) const

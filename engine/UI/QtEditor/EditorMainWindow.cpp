@@ -23,6 +23,7 @@
 #include "ProbeVolumeInspector.h"
 #include "ConstructionShapeInspector.h"
 #include "../../Construction/ConstructionShape.h"
+#include "InspectorMime.h"
 #include "../../Gfx/ProbeBake.h"
 #include "ComponentInspector.h"
 #include "MeshRendererInspector.h"
@@ -8451,6 +8452,13 @@ bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
             if (de->mimeData()->hasFormat(kSpawnableMimeType)) {
                 QByteArray payload = de->mimeData()->data(kSpawnableMimeType);
                 QPoint dropPos = de->position().toPoint();
+                InspectorAssetDrop materialDrop;
+                if (ExtractInspectorAssetDrop(de->mimeData(), materialDrop) && materialDrop.type == AssetType::Material) {
+                    de->acceptProposedAction();
+                    handleViewportMaterialDrop(materialDrop.portablePath, dropPos,
+                                               de->modifiers().testFlag(Qt::ShiftModifier));
+                    return true;
+                }
                 entt::entity previousSelection = entt::null;
                 if (m_engine) {
                     if (auto* ctx = m_engine->GetEditorContext()) {
@@ -8479,6 +8487,65 @@ bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
 // ─────────────────────────────────────────────────────────────────────────────
 // Spawn entity from an Add Actors drop onto the viewport
 // ─────────────────────────────────────────────────────────────────────────────
+
+void EditorMainWindow::handleViewportMaterialDrop(const QString& portablePath, const QPoint& dropPos, bool wholeShape)
+{
+    auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+    if (!ctx || !ctx->HasActiveScene() || portablePath.isEmpty()) {
+        return;
+    }
+    Scene* scene = ctx->GetActiveScene();
+    entt::registry& registry = scene->GetRegistry();
+    const std::string material = portablePath.toStdString();
+    const QString materialName = QFileInfo(portablePath).completeBaseName();
+    const float x = static_cast<float>(dropPos.x());
+    const float y = static_cast<float>(dropPos.y());
+    auto paintSlotZero = [&](entt::entity entity) {
+        auto& renderer = registry.get_or_emplace<MeshRendererComponent>(entity);
+        if (renderer.appliedMaterialPaths.empty()) renderer.appliedMaterialPaths.resize(1);
+        if (renderer.materialIndices.empty()) renderer.materialIndices.resize(1, -1);
+        renderer.appliedMaterialPaths[0] = material;
+        renderer.materialIndices[0] = -1;
+    };
+
+    Hephaestus::Construction::ConstructionHit face;
+    if (m_engine->PickConstructionFace(x, y, face) && registry.valid(face.entity) &&
+        registry.all_of<ConstructionShapeComponent>(face.entity)) {
+        const std::string where = wholeShape ? std::string("the whole shape") : Hephaestus::Construction::DescribeFace(face.tag);
+        EditorUndoManager::PushSnapshot(ctx, wholeShape ? "Paint shape" : "Paint face");
+        if (wholeShape) {
+            paintSlotZero(face.entity);
+        } else {
+            auto& faces = registry.get<ConstructionShapeComponent>(face.entity).faceMaterials;
+            auto existing = std::find_if(faces.begin(), faces.end(), [&](const auto& painted) {
+                return Hephaestus::Construction::SameFace(painted.face, face.tag);
+            });
+            if (existing != faces.end()) {
+                existing->material = material;
+            } else {
+                faces.push_back({face.tag, material});
+            }
+        }
+        ctx->SelectEntity(face.entity);
+        ctx->MarkDirty();
+        refreshDetailsPanel();
+        statusBar()->showMessage(tr("Painted %1 with %2").arg(QString::fromStdString(where), materialName), 4000);
+        return;
+    }
+
+    Hephaestus::SceneAuthoring::SceneRaycastHit hit;
+    if (m_engine->RaycastViewport(x, y, hit) && hit.entity != entt::null && registry.valid(hit.entity) &&
+        registry.all_of<MeshRendererComponent>(hit.entity)) {
+        EditorUndoManager::PushSnapshot(ctx, "Assign material");
+        paintSlotZero(hit.entity);
+        ctx->SelectEntity(hit.entity);
+        ctx->MarkDirty();
+        refreshDetailsPanel();
+        statusBar()->showMessage(tr("Put %1 in the first material slot").arg(materialName), 4000);
+        return;
+    }
+    statusBar()->showMessage(tr("Drop a material onto a shape or mesh to apply it"), 4000);
+}
 
 void EditorMainWindow::rebuildSceneVisuals()
 {

@@ -1938,13 +1938,42 @@ void QtEditorEngine::FocusAll()
     m_cameraController.FocusOnPoint(center.x, center.y, center.z, radius);
 }
 
+bool QtEditorEngine::PickConstructionFace(float x, float y, Hephaestus::Construction::ConstructionHit& outHit)
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    Ray ray;
+    return scene && viewportRay(x, y, ray) && m_construction.Raycast(*scene, ray, outHit);
+}
+
 bool QtEditorEngine::RaycastViewport(
     float x, float y, Hephaestus::SceneAuthoring::SceneRaycastHit& outHit,
     const std::unordered_set<entt::entity>& ignored)
 {
     Scene* scene = m_editorContext.GetActiveScene();
-    if (!scene || !m_swapchain || m_swapchain->extent.width == 0 ||
-        m_swapchain->extent.height == 0) {
+    Ray ray;
+    if (!scene || !viewportRay(x, y, ray)) {
+        return false;
+    }
+    if (Hephaestus::SceneAuthoring::RaycastBounds(
+            *scene, ray, outHit, ignored)) {
+        return true;
+    }
+    if (std::abs(ray.direction.y) > 1e-6f) {
+        const float distance = -ray.origin.y / ray.direction.y;
+        if (distance >= 0.0f) {
+            outHit.entity = entt::null;
+            outHit.point = ray.at(distance);
+            outHit.normal = Vec3(0, 1, 0);
+            outHit.distance = distance;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool QtEditorEngine::viewportRay(float x, float y, Ray& outRay) const
+{
+    if (!m_swapchain || m_swapchain->extent.width == 0 || m_swapchain->extent.height == 0) {
         return false;
     }
 
@@ -1992,22 +2021,8 @@ bool QtEditorEngine::RaycastViewport(
         inverseView, Mat4::TransformPoint(inverseProjection, nearNdc));
     const Vec3 farWorld = Mat4::TransformPoint(
         inverseView, Mat4::TransformPoint(inverseProjection, farNdc));
-    const Ray ray(nearWorld, vnorm(vsub(farWorld, nearWorld)));
-    if (Hephaestus::SceneAuthoring::RaycastBounds(
-            *scene, ray, outHit, ignored)) {
-        return true;
-    }
-    if (std::abs(ray.direction.y) > 1e-6f) {
-        const float distance = -ray.origin.y / ray.direction.y;
-        if (distance >= 0.0f) {
-            outHit.entity = entt::null;
-            outHit.point = ray.at(distance);
-            outHit.normal = Vec3(0, 1, 0);
-            outHit.distance = distance;
-            return true;
-        }
-    }
-    return false;
+    outRay = Ray(nearWorld, vnorm(vsub(farWorld, nearWorld)));
+    return true;
 }
 
 void QtEditorEngine::BeginPlacement(entt::entity previewEntity)

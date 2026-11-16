@@ -90,6 +90,10 @@ bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningP
 std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<OpeningParams> openings,
                          const std::vector<LocalBox>& cuts = {});
 
+// Groups the triangles of painted faces into one submesh per material, slot 0 keeping the shape's own material.
+// Returns the material of each slot (slot 0 is empty).
+std::vector<std::string> AssignFaceMaterials(const std::vector<FaceMaterial>& faces, EvaluatedGeometry& geometry);
+
 // Byte-level hash of an evaluation result, used to prove regeneration is deterministic.
 std::uint64_t HashGeometry(const EvaluatedGeometry& geometry);
 

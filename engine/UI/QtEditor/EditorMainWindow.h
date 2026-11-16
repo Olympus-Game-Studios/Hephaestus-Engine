@@ -239,6 +239,9 @@ private:
     ComponentInspector* focusedComponentInspector() const;
     void handleDragDrop(const QString& assetPath, const QString& targetField);
     void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);
+    // Paints a dropped material on the construction face under dropPos (the whole shape with wholeShape), or puts
+    // it in the first material slot of the mesh there.
+    void handleViewportMaterialDrop(const QString& portablePath, const QPoint& dropPos, bool wholeShape);
     void syncPrefabOverridesForSelection();
     void updatePrefabInspectorUi();
     void decoratePrefabComponentInspector(QWidget* widget, const std::string& componentName);

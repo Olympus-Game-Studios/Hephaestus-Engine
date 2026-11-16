@@ -70,13 +70,26 @@ struct StairsParams {
     float flightWidth = 1.2f;
 };
 
-enum class FaceGroup : std::uint8_t { Top, Bottom, PosX, NegX, PosZ, NegZ, Inner, Reveal };
+// Floor and Ceiling are the inside faces of a room's floor and ceiling; Inner is the inside of its walls.
+enum class FaceGroup : std::uint8_t { Top, Bottom, PosX, NegX, PosZ, NegZ, Inner, Reveal, Floor, Ceiling };
 
 struct FaceTag {
     FaceGroup group = FaceGroup::Reveal;
     std::int8_t wall = -1;  // WallSide this face belongs to, or -1
     std::int16_t segment = -1;  // wall path segment this face belongs to, or -1
 };
+
+// A material painted on every face of a shape with this group, wall and segment.
+struct FaceMaterial {
+    FaceTag face;
+    std::string material;  // project material asset path
+};
+
+bool SameFace(const FaceTag& a, const FaceTag& b);
+const char* FaceGroupName(FaceGroup group);
+bool ParseFaceGroup(const std::string& name, FaceGroup& out);
+// How the editor names a face, such as "Top" or "Inside of the +X wall".
+std::string DescribeFace(const FaceTag& face);
 
 constexpr int kEvaluatorVersion = 1;
 
@@ -103,6 +116,7 @@ struct ConstructionShapeComponent {
     Hephaestus::Construction::OpeningParams opening;
     Hephaestus::Construction::StairsParams stairs;
     Hephaestus::Construction::WallParams wall;
+    std::vector<Hephaestus::Construction::FaceMaterial> faceMaterials;
     int segments = 24;  // around a cylinder or sphere
     int evaluatorVersion = Hephaestus::Construction::kEvaluatorVersion;
 };

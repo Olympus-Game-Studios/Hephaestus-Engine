@@ -127,6 +127,65 @@ bool ParseRecipe(const std::string& name, Recipe& out)
     return false;
 }
 
+bool SameFace(const FaceTag& a, const FaceTag& b)
+{
+    return a.group == b.group && a.wall == b.wall && a.segment == b.segment;
+}
+
+const char* FaceGroupName(FaceGroup group)
+{
+    switch (group) {
+    case FaceGroup::Top: return "top";
+    case FaceGroup::Bottom: return "bottom";
+    case FaceGroup::PosX: return "+x";
+    case FaceGroup::NegX: return "-x";
+    case FaceGroup::PosZ: return "+z";
+    case FaceGroup::NegZ: return "-z";
+    case FaceGroup::Inner: return "inner";
+    case FaceGroup::Reveal: return "reveal";
+    case FaceGroup::Floor: return "floor";
+    case FaceGroup::Ceiling: return "ceiling";
+    }
+    return "reveal";
+}
+
+bool ParseFaceGroup(const std::string& name, FaceGroup& out)
+{
+    for (FaceGroup group : {FaceGroup::Top, FaceGroup::Bottom, FaceGroup::PosX, FaceGroup::NegX, FaceGroup::PosZ,
+                            FaceGroup::NegZ, FaceGroup::Inner, FaceGroup::Reveal, FaceGroup::Floor,
+                            FaceGroup::Ceiling}) {
+        if (name == FaceGroupName(group)) {
+            out = group;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string DescribeFace(const FaceTag& face)
+{
+    std::string text;
+    switch (face.group) {
+    case FaceGroup::Top: text = "Top"; break;
+    case FaceGroup::Bottom: text = "Bottom"; break;
+    case FaceGroup::PosX: text = "+X side"; break;
+    case FaceGroup::NegX: text = "-X side"; break;
+    case FaceGroup::PosZ: text = "+Z side"; break;
+    case FaceGroup::NegZ: text = "-Z side"; break;
+    case FaceGroup::Inner: text = "Inside wall"; break;
+    case FaceGroup::Reveal: text = "Edges and openings"; break;
+    case FaceGroup::Floor: text = "Floor"; break;
+    case FaceGroup::Ceiling: text = "Ceiling"; break;
+    }
+    if (face.group == FaceGroup::Inner && face.wall >= 0) {
+        text += std::string(" (") + WallSideName(static_cast<WallSide>(face.wall)) + ")";
+    }
+    if (face.segment >= 0) {
+        text += " of wall " + std::to_string(face.segment + 1);
+    }
+    return text;
+}
+
 const char* StairTurnName(StairTurn turn)
 {
     switch (turn) {
@@ -225,8 +284,23 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
         oss << in2 << "\"height\": " << Number(o.height) << ",\n";
         oss << in2 << "\"segment\": " << o.segment << "\n";
     }
-    oss << in << "}\n";
-    oss << indent << "}";
+    oss << in << "}";
+    if (!shape.faceMaterials.empty()) {
+        oss << ",\n" << in << "\"faces\": [";
+        for (size_t n = 0; n < shape.faceMaterials.size(); ++n) {
+            const FaceMaterial& face = shape.faceMaterials[n];
+            oss << (n ? ", " : "") << "{\"group\": \"" << FaceGroupName(face.face.group) << "\"";
+            if (face.face.wall >= 0) {
+                oss << ", \"wall\": \"" << WallSideName(static_cast<WallSide>(face.face.wall)) << "\"";
+            }
+            if (face.face.segment >= 0) {
+                oss << ", \"segment\": " << face.face.segment;
+            }
+            oss << ", \"material\": \"" << Escape(face.material) << "\"}";
+        }
+        oss << "]";
+    }
+    oss << "\n" << indent << "}";
     return oss.str();
 }
 
@@ -310,6 +384,24 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
     out.objectValue["operation"] = text(OperationName(shape.operation));
     out.objectValue["version"] = number(shape.evaluatorVersion);
     out.objectValue["params"] = std::move(params);
+    if (!shape.faceMaterials.empty()) {
+        JsonValue faces;
+        faces.type = JsonValue::Type::Array;
+        for (const FaceMaterial& face : shape.faceMaterials) {
+            JsonValue entry;
+            entry.type = JsonValue::Type::Object;
+            entry.objectValue["group"] = text(FaceGroupName(face.face.group));
+            if (face.face.wall >= 0) {
+                entry.objectValue["wall"] = text(WallSideName(static_cast<WallSide>(face.face.wall)));
+            }
+            if (face.face.segment >= 0) {
+                entry.objectValue["segment"] = number(face.face.segment);
+            }
+            entry.objectValue["material"] = text(face.material);
+            faces.arrayValue.push_back(std::move(entry));
+        }
+        out.objectValue["faces"] = std::move(faces);
+    }
     return out;
 }
 
@@ -416,6 +508,33 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
             ReadFloat(*params, "segment", segment);
             o.segment = static_cast<int>(std::lround(segment));
         }
+    }
+    if (const JsonValue* faces = data.Find("faces"); faces && faces->IsArray()) {
+        std::vector<FaceMaterial> read;
+        for (const JsonValue& entry : faces->AsArray()) {
+            const JsonValue* group = entry.IsObject() ? entry.Find("group") : nullptr;
+            const JsonValue* material = entry.IsObject() ? entry.Find("material") : nullptr;
+            FaceMaterial face;
+            if (!group || !group->IsString() || !ParseFaceGroup(group->AsString(), face.face.group) || !material ||
+                !material->IsString()) {
+                outError = "ConstructionShape faces need a known group and a material.";
+                return false;
+            }
+            if (const JsonValue* wall = entry.Find("wall"); wall && wall->IsString()) {
+                WallSide side = WallSide::PosZ;
+                if (!ParseWallSide(wall->AsString(), side)) {
+                    outError = "Unknown face wall '" + wall->AsString() + "'.";
+                    return false;
+                }
+                face.face.wall = static_cast<std::int8_t>(side);
+            }
+            if (const JsonValue* segment = entry.Find("segment"); segment && segment->IsNumber()) {
+                face.face.segment = static_cast<std::int16_t>(segment->AsNumber());
+            }
+            face.material = material->AsString();
+            read.push_back(std::move(face));
+        }
+        shape.faceMaterials = std::move(read);
     }
     shape.evaluatorVersion = kEvaluatorVersion;
     Sanitize(shape);

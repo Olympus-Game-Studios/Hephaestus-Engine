@@ -191,6 +191,8 @@ public:
     bool RaycastViewport(float x, float y,
                          Hephaestus::SceneAuthoring::SceneRaycastHit& outHit,
                          const std::unordered_set<entt::entity>& ignored = {});
+    /// The construction shape face under viewport-local coordinates.
+    bool PickConstructionFace(float x, float y, Hephaestus::Construction::ConstructionHit& outHit);
 
     /**
      * @brief Get the camera controller for external configuration.
@@ -537,6 +539,7 @@ private:
     float m_rmbPressY = 0.0f;
     bool m_rmbMoved = false;
     entt::entity m_placementPreview = entt::null;
+    bool viewportRay(float x, float y, Ray& outRay) const;
     Hephaestus::Construction::ConstructionSystem m_construction;
     Hephaestus::Construction::ConstructionTool m_constructionTool;
     std::uint64_t m_constructionSceneIdentity = 0;

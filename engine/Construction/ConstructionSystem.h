@@ -14,6 +14,7 @@
 #include <vector>
 
 class Scene;
+struct MeshRendererComponent;
 struct MeshData;
 
 namespace Hephaestus::Construction {
@@ -104,6 +105,7 @@ private:
     void RebuildColliders(Scene& scene, entt::entity owner, ShapeState& state);
     void DestroyColliders(Scene& scene, ShapeState& state);
     void Release(ShapeState& state);
+    static void ApplySlots(MeshRendererComponent& renderer, const ShapeState& state);
 
     MeshSink m_sink;
     std::unordered_map<entt::entity, std::unique_ptr<ShapeState>> m_shapes;
