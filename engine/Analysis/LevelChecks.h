@@ -20,10 +20,18 @@ struct TraversalMetrics {
     float stepHeight = 0.3f;
     float maxSlopeDegrees = 45.0f;
     float jumpHeight = 0.0f;  // how high a standing jump lifts the feet
+    // The character that jumps lowest: its take-off speed, walking speed, gravity and grace time after a ledge.
+    float jumpSpeed = 0.0f;
+    float walkSpeed = 0.0f;
+    float gravity = 9.81f;
+    float coyoteTime = 0.0f;
     bool fromControllers = false;
 };
 
 TraversalMetrics MetricsForScene(Scene& scene);
+// How far a running jump at walking speed carries the character while landing `rise` metres higher (negative:
+// lower); negative when it can't get that high.
+float JumpReach(const TraversalMetrics& metrics, float rise);
 
 enum class Severity { Error, Warning, Info };
 const char* SeverityName(Severity severity);

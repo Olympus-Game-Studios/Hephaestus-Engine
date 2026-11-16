@@ -91,6 +91,7 @@ struct NavIsland {
     Vec3 min;
     Vec3 max;
     bool reached = false;  // holds the walkable point nearest one of the starts
+    std::vector<std::pair<Vec3, Vec3>> edges;  // its outline: polygon edges with nothing walkable beyond them
 };
 
 class NavMesh {

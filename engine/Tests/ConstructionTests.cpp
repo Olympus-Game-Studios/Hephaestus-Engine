@@ -1340,6 +1340,56 @@ void TestLevelChecks()
           "widening the doorway clears the problem");
 }
 
+void TestJumpChecks()
+{
+    using namespace Hephaestus::Analysis;
+    Scene scene("Jumps");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    auto block = [&](const std::string& name, float width, float height, float depth, const Vec3& position) {
+        BoxParams box;
+        box.width = width;
+        box.height = height;
+        box.depth = depth;
+        return AddBox(scene, name, box, position);
+    };
+    block("Ground", 30.0f, 0.2f, 10.0f, Vec3(0.0f, 0.0f, 0.0f));
+    block("Low Platform", 2.0f, 1.0f, 2.0f, Vec3(6.0f, 0.0f, 0.0f));
+    block("Pillar", 2.0f, 3.0f, 2.0f, Vec3(-6.0f, 0.0f, 0.0f));
+    block("Far Island", 3.0f, 0.2f, 3.0f, Vec3(19.5f, 0.0f, 0.0f));   // a 3 m gap from the ground's edge
+    block("Near Island", 3.0f, 0.2f, 3.0f, Vec3(-18.0f, 0.0f, 0.0f));  // a 1.5 m gap
+    block("Walled Island", 3.0f, 0.2f, 3.0f, Vec3(0.0f, 0.0f, 6.5f));  // 1 m away, behind a wall
+    block("Wall", 30.0f, 3.0f, 0.2f, Vec3(0.0f, 0.0f, 5.5f));
+    Entity player = scene.CreateEntity("Player");
+    player.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.2f, 0.0f);
+    auto& controller = player.AddComponent<CharacterControllerComponent>();
+    controller.walkSpeed = 2.0f;
+    system.Update(scene);
+
+    const LevelCheckReport report = CheckLevel(scene);
+    const TraversalMetrics& m = report.metrics;
+    Check(std::fabs(JumpReach(m, 0.0f) - 2.0f * 2.0f * 5.5f / 9.81f) < 1e-3f && JumpReach(m, 2.0f) < 0.0f,
+          "a level jump at walking speed carries speed x airtime, and nothing reaches above the jump height");
+    auto near = [&](const std::string& check, const Vec3& where, float within) {
+        for (const LevelProblem& problem : report.problems) {
+            if (problem.check == check && std::fabs(problem.position.x - where.x) < within &&
+                std::fabs(problem.position.z - where.z) < within) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::string seen;
+    for (const LevelProblem& problem : report.problems) seen += "\n  " + problem.check + ": " + problem.message;
+    Check(near("jump-only", Vec3(6.0f, 0.0f, 0.0f), 1.5f), "a 0.8 m high platform is reached by jumping" + seen);
+    Check(near("too-high-to-jump", Vec3(-6.0f, 0.0f, 0.0f), 1.5f), "a 2.8 m high pillar top is out of jump reach");
+    Check(near("gap-too-wide", Vec3(19.5f, 0.0f, 0.0f), 2.0f), "a 3 m gap is wider than a 2.2 m jump");
+    Check(near("jump-only", Vec3(-18.0f, 0.0f, 0.0f), 2.0f), "a 1.5 m gap can be jumped");
+    Check(!near("jump-only", Vec3(0.0f, 0.0f, 6.5f), 2.0f) && !near("gap-too-wide", Vec3(0.0f, 0.0f, 6.5f), 2.0f),
+          "a wall between two floors rules out jumping across");
+}
+
 void TestScale()
 {
     Scene scene("Scale");
@@ -1399,6 +1449,7 @@ int main()
     TestFaceMaterials();
     TestKits();
     TestLevelChecks();
+    TestJumpChecks();
     TestScale();
     if (!g_pass) {
         return 1;

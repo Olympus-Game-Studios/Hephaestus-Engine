@@ -696,6 +696,9 @@ std::vector<NavIsland> NavMesh::Islands(const std::vector<Vec3>& starts, const V
             for (int v = 0; v < poly.vertCount; ++v) {
                 const float* a = &tile->verts[poly.verts[v] * 3];
                 const float* b = &tile->verts[poly.verts[(v + 1) % poly.vertCount] * 3];
+                if (poly.neis[v] == 0) {
+                    island.edges.push_back({Vec3(a[0], a[1], a[2]), Vec3(b[0], b[1], b[2])});
+                }
                 area += a[0] * b[2] - b[0] * a[2];
                 sum = vadd(sum, Vec3(a[0], a[1], a[2]));
                 const Vec3 point(a[0], a[1], a[2]);
