@@ -127,7 +127,31 @@ The Plane, Cylinder and Sphere buttons make construction shapes too. Their size,
 
 Construction shapes work in packaged games too: they're built from their sizes when the level loads.
 
-**Not there yet:** ramps, walls drawn as lines, rooms with other footprints and materials per face.
+### Dressing walls with a kit
+
+A kit turns a blockout into finished walls made from your own art. It's a `.hpkit` file in your project's `assets` folder that lists prefabs (wall panels, a filler, a corner post, door and window frames) with the width of each. Select a wall or a room and pick the kit in the **Kit** section of its Construction settings: the panels are laid along every wall, corner posts go at the corners and frames go over doors and windows. Each stretch gets the mix of panels that needs the least stretching, and anything the kit can't fill shows as a red box in the editor, so you can tell at a glance where you need another piece. The Kit section says how many pieces were placed, how far they stretched and how many gaps there are.
+
+The blockout is still there underneath: it gives the level its collision and navmesh, so dressing a room never changes how it plays, and its floor and ceiling stay visible. Move a corner, resize the room or cut a new door and the pieces are laid out again; so are they when you save the kit file. Pick **None** to go back to the blockout.
+
+A kit file looks like this:
+
+```json
+{
+  "schema": "HephaestusKit",
+  "name": "Stone",
+  "pieces": [
+    {"prefab": "assets/Kits/Panel2m.hpprefab", "role": "wall", "width": 2.0, "stretch": 0.08},
+    {"prefab": "assets/Kits/Panel1m.hpprefab", "role": "wall", "width": 1.0, "stretch": 0.08},
+    {"prefab": "assets/Kits/Filler.hpprefab", "role": "filler", "width": 0.5, "stretch": 0.5},
+    {"prefab": "assets/Kits/Corner.hpprefab", "role": "corner", "width": 0.3, "stretch": 0},
+    {"prefab": "assets/Kits/DoorFrame.hpprefab", "role": "door", "width": 1.8, "stretch": 0, "openingMin": 0.9, "openingMax": 1.3}
+  ]
+}
+```
+
+Build each piece standing on its origin, with its width along X and centred on it, and the wall's thickness centred on Z; +Z faces into the room. `stretch` is how far a piece may be stretched or squashed to fit, as a fraction of its width (0.08 is 8 percent). A run uses at most one filler. Door and window frames are used for openings whose width is between their `openingMin` and `openingMax`.
+
+**Not there yet:** a kit editor, previewing a kit before you apply it, and swapping single pieces by hand. Pieces don't have their own collision.
 
 ## Undo
 

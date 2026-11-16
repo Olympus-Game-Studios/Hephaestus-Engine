@@ -7873,8 +7873,8 @@ void EditorMainWindow::registerComponentInspectors()
         [](const entt::registry& r, entt::entity e) {
             return r.all_of<ConstructionShapeComponent>(e);
         },
-        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
-            return new ConstructionShapeInspector(ctx, e, parent);
+        [this](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new ConstructionShapeInspector(ctx, e, m_engine ? &m_engine->GetConstruction() : nullptr, parent);
         });
 
     reg.Register("ProbeVolume", 11,

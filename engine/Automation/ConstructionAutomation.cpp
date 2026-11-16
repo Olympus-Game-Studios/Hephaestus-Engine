@@ -57,6 +57,22 @@ bool ApplyParams(ConstructionShapeComponent& shape, const Json& arguments, std::
     if (arguments.contains("role") && arguments["role"].is_string()) data["role"] = arguments["role"];
     if (arguments.contains("operation") && arguments["operation"].is_string()) data["operation"] = arguments["operation"];
     if (arguments.contains("faces")) data["faces"] = arguments["faces"];
+    if (arguments.contains("kit")) {
+        if (!arguments["kit"].is_string()) {
+            error = "kit must be a .hpkit path, or empty to remove the kit";
+            return false;
+        }
+        const std::string kit = arguments["kit"].get<std::string>();
+        if (!kit.empty() && (kit.size() < 6 || kit.compare(kit.size() - 6, 6, ".hpkit") != 0)) {
+            error = "kit must be a .hpkit path";
+            return false;
+        }
+        if (!kit.empty() && shape.recipe != Recipe::Wall && !(shape.recipe == Recipe::Box && shape.box.hollow)) {
+            error = "only walls and hollow rooms can take a kit";
+            return false;
+        }
+        data["kit"] = kit;
+    }
     if (arguments.contains("params")) {
         if (!arguments["params"].is_object()) {
             error = "params must be an object";
@@ -101,6 +117,12 @@ Json ShapeJson(ToolContext& context, Scene& scene, entt::entity entity)
                                   {"collisionBoxes", summary.collisionBoxes},
                                   {"inputHash", std::to_string(summary.inputHash)},
                                   {"geometryHash", std::to_string(summary.geometryHash)}};
+        }
+        Construction::KitSummary kit;
+        if (!shape.kit.empty() && system->Kit(entity, kit)) {
+            value["kitResult"] = {{"pieces", kit.pieces}, {"fillers", kit.fillers}, {"gaps", kit.gaps},
+                                  {"maxStretch", kit.maxStretch}};
+            if (!kit.error.empty()) value["kitResult"]["error"] = kit.error;
         }
     }
     return value;
@@ -204,6 +226,9 @@ void RegisterConstructionAutomation(AutomationService& service)
         ObjectSchema({{"entity", {{"type", "string"}}}, {"role", {{"type", "string"}}},
                       {"operation", {{"type", "string"}, {"enum", Json::array({"add", "subtract"})}}},
                       {"faces", FacesSchema()},
+                      {"kit", {{"type", "string"},
+                               {"description", "a .hpkit that dresses a wall or hollow room with prefab pieces; "
+                                               "empty removes it"}}},
                       {"params", ParamsSchema()}},
                      Json::array({"entity"})),
         [](ToolContext& context, const Json& arguments) -> ToolOutcome {

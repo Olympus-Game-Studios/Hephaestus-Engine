@@ -3,6 +3,7 @@
 #include "ConstructionShapeInspector.h"
 #include "PropertyEditors.h"
 
+#include "../../Assets/AssetManager.h"
 #include "../../Construction/ConstructionShape.h"
 #include "../../Construction/ConstructionSystem.h"
 #include "../../Scene/Entity.h"
@@ -13,6 +14,8 @@
 #include <QHBoxLayout>
 #include <cmath>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <filesystem>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -50,10 +53,34 @@ bool OnWallHost(EditorContext* ctx, entt::entity opening)
     return host && host->recipe == Recipe::Wall;
 }
 
+// Project-relative paths of every kit file in the project.
+QStringList ProjectKits()
+{
+    namespace fs = std::filesystem;
+    QStringList kits;
+    const fs::path root(AssetManager::GetInstance().GetProjectRoot());
+    std::error_code ec;
+    if (root.empty() || !fs::exists(root / "assets", ec)) return kits;
+    for (fs::recursive_directory_iterator it(root / "assets", fs::directory_options::skip_permission_denied, ec), end;
+         it != end; it.increment(ec)) {
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+        if (it->is_regular_file(ec) && it->path().extension() == ".hpkit") {
+            kits.push_back(QString::fromStdString(it->path().lexically_relative(root).generic_string()));
+        }
+    }
+    kits.sort(Qt::CaseInsensitive);
+    return kits;
+}
+
 } // namespace
 
-ConstructionShapeInspector::ConstructionShapeInspector(EditorContext* ctx, entt::entity entity, QWidget* parent)
+ConstructionShapeInspector::ConstructionShapeInspector(EditorContext* ctx, entt::entity entity,
+                                                       Construction::ConstructionSystem* system, QWidget* parent)
     : ComponentInspector(tr("Construction"), ctx, entity, parent)
+    , m_system(system)
 {
     SetTypeName("ConstructionShape");
     buildUI();
@@ -173,6 +200,17 @@ void ConstructionShapeInspector::buildUI()
     m_facesList = new QVBoxLayout(m_facesGroup);
     layout->addWidget(m_facesGroup);
 
+    m_kitGroup = new QGroupBox(tr("Kit"), this);
+    m_kitGroup->setToolTip(tr("Dress this wall or room with a kit's prefab pieces. The blockout stays as the "
+                              "collision and navmesh shape, and is hidden in the view."));
+    auto* kitLayout = new QVBoxLayout(m_kitGroup);
+    m_kit = new QComboBox();
+    kitLayout->addWidget(m_kit);
+    m_kitInfo = new QLabel();
+    m_kitInfo->setWordWrap(true);
+    kitLayout->addWidget(m_kitInfo);
+    layout->addWidget(m_kitGroup);
+
     m_remove = new QPushButton(tr("Remove Component"));
     layout->addWidget(m_remove);
 }
@@ -197,6 +235,16 @@ void ConstructionShapeInspector::connectSignals()
     connect(m_operation, qOverload<int>(&QComboBox::currentIndexChanged), this, edited);
     connect(m_turn, qOverload<int>(&QComboBox::currentIndexChanged), this, edited);
     connect(m_role, &QLineEdit::editingFinished, this, edited);
+    connect(m_kit, qOverload<int>(&QComboBox::activated), this, [this](int index) {
+        if (m_updating) return;
+        const std::string kit = m_kit->itemData(index).toString().toStdString();
+        BeginEdit(kit.empty() ? "Remove kit" : "Apply kit");
+        ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& shape, entt::entity) {
+            if (shape.recipe == Recipe::Wall || (shape.recipe == Recipe::Box && shape.box.hollow)) shape.kit = kit;
+        });
+        EndEdit();
+        Refresh();
+    });
     connect(m_remove, &QPushButton::clicked, this, [this]() {
         BeginEdit("Remove construction shape");
         ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent&, entt::entity entity) {
@@ -363,6 +411,45 @@ void ConstructionShapeInspector::Refresh()
     SetSpinFromMixed(m_openingHeight, openingHeight);
     m_updating = false;
     rebuildFaceList();
+    refreshKit(recipe, !hollow.mixed && hollow.value);
+}
+
+void ConstructionShapeInspector::refreshKit(Recipe recipe, bool hollow)
+{
+    const auto* shape = m_ctx && m_ctx->HasActiveScene()
+        ? m_ctx->GetActiveScene()->GetRegistry().try_get<ConstructionShapeComponent>(GetEntity()) : nullptr;
+    const bool dressable = shape && (recipe == Recipe::Wall || (recipe == Recipe::Box && hollow &&
+                                                                shape->operation == Operation::Add));
+    m_kitGroup->setVisible(dressable);
+    if (!dressable) return;
+    m_updating = true;
+    m_kit->clear();
+    m_kit->addItem(tr("None"), QString());
+    const QString current = QString::fromStdString(shape->kit);
+    QStringList kits = ProjectKits();
+    if (!current.isEmpty() && !kits.contains(current)) kits.prepend(current);
+    for (const QString& kit : kits) {
+        m_kit->addItem(QFileInfo(kit).completeBaseName(), kit);
+        m_kit->setItemData(m_kit->count() - 1, kit, Qt::ToolTipRole);
+    }
+    m_kit->setCurrentIndex(std::max(0, m_kit->findData(current)));
+    m_updating = false;
+
+    Construction::KitSummary summary;
+    if (current.isEmpty()) {
+        m_kitInfo->setText(kits.isEmpty() ? tr("No kits in this project yet. Kits are .hpkit files in assets.")
+                                          : tr("Showing the blockout."));
+    } else if (!m_system || !m_system->Kit(GetEntity(), summary)) {
+        m_kitInfo->setText(QString());
+    } else if (!summary.error.empty()) {
+        m_kitInfo->setText(tr("Could not apply the kit: %1").arg(QString::fromStdString(summary.error)));
+    } else {
+        QString text = tr("%n piece(s)", nullptr, summary.pieces);
+        if (summary.fillers > 0) text += tr(", %n filler(s)", nullptr, summary.fillers);
+        if (summary.maxStretch > 0.0005f) text += tr(", stretched up to %1%").arg(summary.maxStretch * 100.0f, 0, 'f', 1);
+        if (summary.gaps > 0) text += tr(". %n gap(s) the kit can't fill, shown in red.", nullptr, summary.gaps);
+        m_kitInfo->setText(text);
+    }
 }
 
 void ConstructionShapeInspector::rebuildFaceList()

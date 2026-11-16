@@ -1157,6 +1157,8 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
         h.Bytes(face.material.data(), face.material.size());
         h.Int(0);
     }
+    h.Bytes(shape.kit.data(), shape.kit.size());
+    h.Int(0);
     h.Int(static_cast<std::int64_t>(shape.wall.points.size()));
     for (const WallPoint& point : shape.wall.points) {
         h.Float(point.x);

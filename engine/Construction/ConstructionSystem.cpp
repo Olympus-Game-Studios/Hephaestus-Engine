@@ -1,5 +1,10 @@
 #include "ConstructionSystem.h"
 #include "ConstructionGeometry.h"
+#include "ConstructionKit.h"
+
+#include "../Scene/PrefabComponentIO.h"
+#include "../Scene/PrefabInstantiator.h"
+#include "../Scene/PrefabOverrideSystem.h"
 
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
@@ -8,6 +13,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <iostream>
 #include <tuple>
 #include <unordered_set>
 
@@ -19,6 +26,9 @@ struct ConstructionSystem::ShapeState {
     EvaluatedGeometry geometry;
     std::vector<entt::entity> colliders;
     std::vector<std::string> slotMaterials{std::string()};
+    // Kit dressing: every entity of every placed piece, children after their parents.
+    std::vector<entt::entity> pieces;
+    KitSummary kit;
 };
 
 ConstructionSystem::ConstructionSystem() = default;
@@ -243,6 +253,7 @@ int ConstructionSystem::Update(Scene& scene)
             continue;
         }
         DestroyColliders(scene, *it->second);
+        DestroyPieces(scene, *it->second);
         const std::uint64_t key = it->second->inputHash;
         spares.emplace(key, std::move(it->second));
         it = m_shapes.erase(it);
@@ -270,7 +281,14 @@ int ConstructionSystem::Update(Scene& scene)
         }
         const std::vector<LocalBox> cuts = CanHostOpenings(shape)
             ? CutsFor(scene, entity, shape, cutters) : std::vector<LocalBox>{};
-        const std::uint64_t hash = HashInputs(shape, CollectOpenings(scene, entity), cuts);
+        std::uint64_t hash = HashInputs(shape, CollectOpenings(scene, entity), cuts);
+        if (!shape.kit.empty()) {
+            // A kit file saved since the last fill dresses the shape again.
+            std::error_code ec;
+            const auto file = PrefabOverrideSystem::ResolveAssetFilePath(shape.kit, false);
+            const auto stamp = std::filesystem::last_write_time(file, ec).time_since_epoch().count();
+            hash ^= static_cast<std::uint64_t>(ec ? 0 : stamp) * 0x9E3779B97F4A7C15ull;
+        }
         auto found = m_shapes.find(entity);
         if (found == m_shapes.end()) {
             auto spare = spares.find(hash);
@@ -298,6 +316,9 @@ int ConstructionSystem::Update(Scene& scene)
         if (!CollidersIntact(scene, entity, state)) {
             RebuildColliders(scene, entity, state);
         }
+        if (!PiecesIntact(scene, state)) {
+            RebuildPieces(scene, entity, state);
+        }
     }
 
     for (auto& spare : spares) {
@@ -310,8 +331,10 @@ int ConstructionSystem::Update(Scene& scene)
         const auto owner = static_cast<entt::entity>(registry.get<ConstructionGeneratedComponent>(entity).ownerEntity);
         auto state = m_shapes.find(owner);
         const bool owned = state != m_shapes.end() &&
-            std::find(state->second->colliders.begin(), state->second->colliders.end(), entity) !=
-                state->second->colliders.end();
+            (std::find(state->second->colliders.begin(), state->second->colliders.end(), entity) !=
+                 state->second->colliders.end() ||
+             std::find(state->second->pieces.begin(), state->second->pieces.end(), entity) !=
+                 state->second->pieces.end());
         if (!owned) {
             strays.push_back(entity);
         }
@@ -327,6 +350,38 @@ int ConstructionSystem::Update(Scene& scene)
     return evaluated;
 }
 
+namespace {
+
+// What stays drawn of a shape a kit dresses: its floor, ceiling and underside. The kit's pieces replace the walls.
+MeshData UndressedFaces(const EvaluatedGeometry& geometry)
+{
+    MeshData out;
+    out.vertices = geometry.mesh.vertices;
+    out.bounds = geometry.mesh.bounds;
+    std::vector<MeshData::Submesh> ranges = geometry.mesh.submeshes;
+    if (ranges.empty()) {
+        ranges.push_back({0, static_cast<uint32_t>(geometry.mesh.indices.size()), 0, std::string(), geometry.mesh.bounds});
+    }
+    for (MeshData::Submesh range : ranges) {
+        const uint32_t start = static_cast<uint32_t>(out.indices.size());
+        for (uint32_t i = range.indexOffset; i + 2 < range.indexOffset + range.indexCount; i += 3) {
+            const FaceGroup group = geometry.triangleTags[i / 3].group;
+            if (group == FaceGroup::Floor || group == FaceGroup::Ceiling || group == FaceGroup::Bottom) {
+                out.indices.insert(out.indices.end(), geometry.mesh.indices.begin() + i,
+                                   geometry.mesh.indices.begin() + i + 3);
+            }
+        }
+        range.indexOffset = start;
+        range.indexCount = static_cast<uint32_t>(out.indices.size()) - start;
+        if (range.indexCount > 0) {
+            out.submeshes.push_back(std::move(range));
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState& state, std::uint64_t hash,
                                   const std::vector<LocalBox>& cuts)
 {
@@ -336,12 +391,25 @@ void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState&
     ++m_stats.evaluations;
     const bool hasGeometry = EvaluateShape(shape, CollectOpenings(scene, entity), state.geometry, cuts);
     state.slotMaterials = AssignFaceMaterials(shape.faceMaterials, state.geometry);
+    RebuildPieces(scene, entity, state);
 
     auto& renderer = registry.get<MeshRendererComponent>(entity);
+    const bool dressed = !state.pieces.empty() && state.kit.error.empty() &&
+        state.geometry.triangleTags.size() * 3 == state.geometry.mesh.indices.size();
+    const MeshData shown = dressed ? UndressedFaces(state.geometry) : MeshData();
+    // A dressed open wall has nothing left to draw: hide it but keep its outline selectable.
+    if (dressed && shown.indices.empty()) {
+        renderer.visible = false;
+        renderer.showHiddenOutline = true;
+    } else if (!renderer.visible && renderer.showHiddenOutline) {
+        renderer.visible = true;
+        renderer.showHiddenOutline = false;
+    }
     if (hasGeometry && m_sink.upload) {
         const std::string name = registry.all_of<TagComponent>(entity)
             ? registry.get<TagComponent>(entity).tag : std::string("Construction");
-        const size_t handle = m_sink.upload(state.meshHandle, name, state.geometry.mesh);
+        const size_t handle = m_sink.upload(state.meshHandle, name, dressed && !shown.indices.empty() ? shown
+                                                                                                 : state.geometry.mesh);
         if (handle != state.meshHandle && state.meshHandle != kNoMesh && m_sink.release) {
             m_sink.release(state.meshHandle);
         }
@@ -352,6 +420,130 @@ void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState&
     }
     ApplySlots(renderer, state);
     RebuildColliders(scene, entity, state);
+}
+
+bool ConstructionSystem::PiecesIntact(Scene& scene, const ShapeState& state) const
+{
+    // Adopted after a load or undo: the summary says pieces belong here but they were removed with the old entity.
+    if (state.pieces.empty() && state.kit.pieces + state.kit.gaps > 0) {
+        return false;
+    }
+    for (entt::entity piece : state.pieces) {
+        if (!scene.GetRegistry().valid(piece) || !scene.GetRegistry().all_of<ConstructionGeneratedComponent>(piece)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void ConstructionSystem::DestroyPieces(Scene& scene, ShapeState& state)
+{
+    entt::registry& registry = scene.GetRegistry();
+    for (auto it = state.pieces.rbegin(); it != state.pieces.rend(); ++it) {
+        if (registry.valid(*it) && registry.all_of<ConstructionGeneratedComponent>(*it)) {
+            scene.DestroyEntity(Entity(*it, &scene));
+        }
+    }
+    state.pieces.clear();
+}
+
+void ConstructionSystem::RebuildPieces(Scene& scene, entt::entity owner, ShapeState& state)
+{
+    DestroyPieces(scene, state);
+    state.kit = KitSummary{};
+    entt::registry& registry = scene.GetRegistry();
+    const auto& shape = registry.get<ConstructionShapeComponent>(owner);
+    if (shape.kit.empty()) {
+        return;
+    }
+    KitDefinition kit;
+    std::string error;
+    if (!LoadKit(PrefabOverrideSystem::ResolveAssetFilePath(shape.kit, false), kit, error)) {
+        state.kit.error = error;
+        return;
+    }
+    const KitFillResult fill = FillShape(shape, CollectOpenings(scene, owner), kit);
+    state.kit.pieces = fill.pieces;
+    state.kit.fillers = fill.fillers;
+    state.kit.gaps = fill.gaps;
+    state.kit.maxStretch = fill.maxStretch;
+    Entity ownerEntity(owner, &scene);
+    auto adopt = [&](Entity entity) {
+        registry.emplace_or_replace<EditorOnlyComponent>(static_cast<entt::entity>(entity));
+        registry.emplace_or_replace<ConstructionGeneratedComponent>(static_cast<entt::entity>(entity)).ownerEntity =
+            static_cast<std::uint32_t>(owner);
+        state.pieces.push_back(static_cast<entt::entity>(entity));
+    };
+    std::unordered_map<std::string, PrefabAsset> prefabs;
+    for (const KitPlacement& placement : fill.placements) {
+        Entity root;
+        if (placement.piece) {
+            auto found = prefabs.find(placement.piece->prefab);
+            if (found == prefabs.end()) {
+                PrefabAsset asset;
+                if (!PrefabOverrideSystem::LoadAsset(placement.piece->prefab, asset, error)) {
+                    state.kit.error = placement.piece->prefab + ": " + error;
+                    continue;
+                }
+                found = prefabs.emplace(placement.piece->prefab, std::move(asset)).first;
+            }
+            PrefabInstantiateOptions options;
+            options.prefabPath = placement.piece->prefab;
+            options.attachInstanceComponent = false;
+            root = PrefabInstantiator::Instantiate(scene, found->second, options);
+        } else {
+            // What the kit could not fill shows as a red box, in the editor only.
+            root = scene.CreateEntity("Kit Gap");
+            auto& marker = root.AddComponent<MeshRendererComponent>();
+            marker.meshAssetPath = "builtin://cube";
+            marker.hideInGame = true;
+            marker.castShadows = false;
+            MaterialComponent red(Vec3(0.95f, 0.15f, 0.1f));
+            red.blendMode = MaterialBlendMode::AlphaBlend;
+            red.opacity = 0.45f;
+            root.AddComponent<MaterialComponent>(red);
+        }
+        if (!root) {
+            continue;
+        }
+        auto& transform = root.GetComponent<TransformComponent>();
+        transform.position = placement.position;
+        transform.rotation = Vec3(0.0f, placement.yaw, 0.0f);
+        transform.scale = placement.piece ? Vec3(placement.scaleX, 1.0f, 1.0f)
+                                          : Vec3(placement.width, shape.box.height, shape.box.wallThickness * 1.05f);
+        if (!placement.piece) {
+            transform.position.y += shape.box.height * 0.5f;
+        }
+        scene.SetParent(root, ownerEntity, false);
+        std::vector<entt::entity> members{static_cast<entt::entity>(root)};
+        for (size_t n = 0; n < members.size(); ++n) {
+            for (entt::entity child : registry.get<TransformComponent>(members[n]).children) {
+                members.push_back(child);
+            }
+        }
+        for (entt::entity member : members) {
+            Entity entity(member, &scene);
+            // The construction shell keeps the collision, so kit art never changes how the level plays.
+            registry.remove<RigidBodyComponent, PhysicsShapeComponent, MeshColliderComponent>(member);
+            adopt(entity);
+            if (auto* renderer = registry.try_get<MeshRendererComponent>(member); renderer && m_sink.loadMesh) {
+                m_sink.loadMesh(*renderer);
+            }
+        }
+    }
+    if (!state.kit.error.empty()) {
+        std::cerr << "[Construction] Kit '" << shape.kit << "': " << state.kit.error << "\n";
+    }
+}
+
+bool ConstructionSystem::Kit(entt::entity entity, KitSummary& out) const
+{
+    auto found = m_shapes.find(entity);
+    if (found == m_shapes.end()) {
+        return false;
+    }
+    out = found->second->kit;
+    return true;
 }
 
 void ConstructionSystem::ApplySlots(MeshRendererComponent& renderer, const ShapeState& state)

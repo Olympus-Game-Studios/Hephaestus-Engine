@@ -224,6 +224,7 @@ void QtEditorEngine::ensureConstructionSink()
             m_frameRenderer->ReleaseDynamicMesh(handle);
         }
     };
+    sink.loadMesh = [this](MeshRendererComponent& renderer) { loadRendererMesh(renderer); };
     m_construction.SetMeshSink(std::move(sink));
 
     Hephaestus::Construction::ToolHost host;

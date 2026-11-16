@@ -1,4 +1,5 @@
 #include "Construction/ConstructionGeometry.h"
+#include "Construction/ConstructionKit.h"
 #include "Construction/ConstructionSystem.h"
 #include "Construction/ConstructionTool.h"
 #include "Navigation/NavMesh.h"
@@ -6,8 +7,12 @@
 #include "Scene/Entity.h"
 #include "Scene/Scene.h"
 #include "Scene/SceneSerializer.h"
+#include "Scene/PrefabComponentIO.h"
+#include "Scene/PrefabSerializer.h"
+#include "Scene/PrefabOverrideSystem.h"
 
 #include <chrono>
+#include <filesystem>
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -76,11 +81,13 @@ struct FakeSink {
     int uploads = 0;
     int releases = 0;
     int live = 0;
+    size_t lastIndices = 0;
     MeshSink Make()
     {
         MeshSink sink;
-        sink.upload = [this](size_t existing, const std::string&, const MeshData&) {
+        sink.upload = [this](size_t existing, const std::string&, const MeshData& mesh) {
             ++uploads;
+            lastIndices = mesh.indices.size();
             if (existing != MeshRendererComponent::InvalidMesh) {
                 return existing;
             }
@@ -1059,6 +1066,142 @@ void TestFaceMaterials()
           "a wall's face is painted on its own segment only");
 }
 
+KitDefinition TestKit()
+{
+    KitDefinition kit;
+    kit.name = "Test";
+    kit.pieces = {
+        {"assets/kit/Wall2.hpprefab", "wall", 2.0f, 0.05f, 0.0f, 0.0f},
+        {"assets/kit/Wall1.hpprefab", "wall", 1.0f, 0.05f, 0.0f, 0.0f},
+        {"assets/kit/Filler.hpprefab", "filler", 0.5f, 0.5f, 0.0f, 0.0f},
+        {"assets/kit/Corner.hpprefab", "corner", 0.2f, 0.0f, 0.0f, 0.0f},
+        {"assets/kit/Door.hpprefab", "door", 1.6f, 0.0f, 1.0f, 1.4f},
+    };
+    return kit;
+}
+
+void TestKits()
+{
+    const KitDefinition kit = TestKit();
+    Check(ValidateKit(kit).empty(), "a kit with walls, a filler, a corner and a door frame validates");
+    KitDefinition broken = kit;
+    broken.pieces[4].openingMax = 0.0f;
+    broken.pieces[0].role = "column";
+    Check(ValidateKit(broken).size() == 2, "a frame without opening widths and an unknown role are reported");
+
+    const RunFill run = SolveRun(kit, 7.3f);
+    float total = 0.0f;
+    bool withinLimits = run.filled;
+    for (const KitPiece* piece : run.pieces) {
+        total += piece->width * run.scale;
+        withinLimits = withinLimits && std::fabs(run.scale - 1.0f) <= piece->stretch + 1e-4f;
+    }
+    Check(run.filled && std::fabs(total - 7.3f) < 1e-3f && withinLimits,
+          "a 7.3 m run fills with declared pieces, stretched within every piece's limit");
+    Check(SolveRun(kit, 4.0f).pieces.size() == 2 && std::fabs(SolveRun(kit, 4.0f).scale - 1.0f) < 1e-5f,
+          "a 4 m run is two 2 m pieces with no stretch");
+    Check(!SolveRun(kit, 0.2f).filled, "a run shorter than anything in the kit stays unfilled");
+
+    ConstructionShapeComponent room;
+    room.recipe = Recipe::Box;
+    room.box = Room();
+    room.box.width = 6.0f;
+    room.box.depth = 4.0f;
+    OpeningParams door;
+    door.side = WallSide::PosZ;
+    door.offset = 0.0f;
+    door.sill = room.box.wallThickness;
+    door.width = 1.2f;
+    const KitFillResult fill = FillShape(room, {door}, kit);
+    int corners = 0;
+    int doors = 0;
+    for (const KitPlacement& placement : fill.placements) {
+        corners += placement.piece && placement.piece->role == "corner" ? 1 : 0;
+        doors += placement.piece && placement.piece->role == "door" ? 1 : 0;
+    }
+    Check(fill.gaps == 0 && corners == 4 && doors == 1 && fill.maxStretch <= 0.05f + 1e-4f,
+          "a 6 x 4 m room with a door gets four corners, a door frame and wall runs with no gaps");
+
+    // In a scene: pieces are linked prefab copies under the room, the room stays the collision.
+    namespace fs = std::filesystem;
+    const fs::path project = fs::temp_directory_path() / "hephaestus_kit_tests";
+    fs::remove_all(project);
+    fs::create_directories(project / "assets/kit");
+    std::string error;
+    for (const KitPiece& piece : kit.pieces) {
+        PrefabAsset prefab;
+        prefab.guid = piece.role + std::to_string(static_cast<int>(piece.width * 10));
+        prefab.name = piece.role;
+        prefab.rootNodeId = "root";
+        PrefabNode root;
+        root.id = "root";
+        root.name = "Kit " + piece.role;
+        MeshRendererComponent renderer(AABB(Vec3(-piece.width * 0.5f, 0.0f, -0.1f), Vec3(piece.width * 0.5f, 3.0f, 0.1f)));
+        renderer.meshAssetPath = "builtin://cube";
+        root.components.push_back({"MeshRenderer", true, PrefabComponentIO::MeshRendererToJson(renderer)});
+        root.components.push_back({"PhysicsShape", true, PrefabComponentIO::MakeObject()});
+        prefab.nodes.push_back(root);
+        PrefabSerializer::Serialize(prefab, project / piece.prefab, error);
+    }
+    SaveKit(project / "assets/kit/Test.hpkit", kit, error);
+    PrefabOverrideSystem::SetProjectRoot(project);
+    PrefabOverrideSystem::InvalidateAssetCache();
+
+    Scene scene("Kit");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity dressed = AddBox(scene, "Dressed Room", room.box);
+    AddOpening(scene, dressed, door);
+    system.Update(scene);
+    const size_t bareIndices = fake.lastIndices;
+    const int bareGenerated = CountGenerated(scene);
+    dressed.GetComponent<ConstructionShapeComponent>().kit = "assets/kit/Test.hpkit";
+    system.Update(scene);
+    const size_t dressedIndices = fake.lastIndices;
+    KitSummary summary;
+    Check(system.Kit(dressed, summary) && summary.error.empty() && summary.pieces == static_cast<int>(fill.pieces) &&
+              summary.gaps == 0,
+          "the room is dressed with the kit's pieces (" + summary.error + ")");
+    int pieceRoots = 0;
+    int pieceEntities = 0;
+    bool physicsStripped = true;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        ++pieceEntities;
+        pieceRoots += scene.GetRegistry().get<PrefabNodeComponent>(handle).nodeId == "root" ? 1 : 0;
+        physicsStripped = physicsStripped && !scene.GetRegistry().all_of<PhysicsShapeComponent>(handle);
+    }
+    Check(pieceRoots == fill.pieces && physicsStripped && scene.GetRegistry().all_of<EditorOnlyComponent>(
+              *scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>().begin()),
+          "each piece is a prefab copy under the room, without its own collision, and is never saved");
+    Check(dressed.GetComponent<MeshRendererComponent>().visible && dressedIndices > 0 && dressedIndices < bareIndices &&
+              CountGenerated(scene) - pieceEntities == bareGenerated,
+          "only the floor of the blockout is still drawn, and its collision stays");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Check(saved.find("\"kit\": \"assets/kit/Test.hpkit\"") != std::string::npos && saved.find("Kit wall") == std::string::npos,
+          "the scene saves the kit, not the pieces");
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    ConstructionSystem loadedSystem;
+    loadedSystem.SetMeshSink(fake.Make());
+    loadedSystem.Update(loaded);
+    KitSummary loadedSummary;
+    Check(loadedSystem.Kit(loaded.FindEntityByName("Dressed Room"), loadedSummary) && loadedSummary.pieces == summary.pieces,
+          "a loaded scene dresses the room again");
+
+    dressed.GetComponent<ConstructionShapeComponent>().kit.clear();
+    system.Update(scene);
+    int left = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        (void)handle;
+        ++left;
+    }
+    Check(left == 0 && fake.lastIndices == bareIndices, "removing the kit brings the blockout walls back");
+    PrefabOverrideSystem::SetProjectRoot({});
+    PrefabOverrideSystem::InvalidateAssetCache();
+}
+
 void TestScale()
 {
     Scene scene("Scale");
@@ -1116,6 +1259,7 @@ int main()
     TestWallTool();
     TestRampsAndTurns();
     TestFaceMaterials();
+    TestKits();
     TestScale();
     if (!g_pass) {
         return 1;

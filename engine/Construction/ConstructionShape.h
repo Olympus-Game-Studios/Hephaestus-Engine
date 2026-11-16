@@ -117,6 +117,8 @@ struct ConstructionShapeComponent {
     Hephaestus::Construction::StairsParams stairs;
     Hephaestus::Construction::WallParams wall;
     std::vector<Hephaestus::Construction::FaceMaterial> faceMaterials;
+    // A .hpkit that dresses this wall or room with prefab pieces; the shape stays the collision and navmesh shell.
+    std::string kit;
     int segments = 24;  // around a cylinder or sphere
     int evaluatorVersion = Hephaestus::Construction::kEvaluatorVersion;
 };

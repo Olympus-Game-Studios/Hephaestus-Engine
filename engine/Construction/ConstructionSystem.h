@@ -35,6 +35,18 @@ struct GeometrySummary {
 struct MeshSink {
     std::function<size_t(size_t existingHandle, const std::string& name, const MeshData& mesh)> upload;
     std::function<void(size_t handle)> release;
+    // Loads the model of a mesh renderer the system created (kit pieces); hosts that load every renderer after
+    // Update can leave it empty.
+    std::function<void(MeshRendererComponent& renderer)> loadMesh;
+};
+
+// What a kit did to one shape, for the Inspector and automation.
+struct KitSummary {
+    int pieces = 0;
+    int fillers = 0;
+    int gaps = 0;
+    float maxStretch = 0.0f;
+    std::string error;  // the kit could not be loaded, or pieces could not be placed
 };
 
 struct ConstructionStats {
@@ -77,6 +89,7 @@ public:
     const EvaluatedGeometry* Geometry(entt::entity entity) const;
     std::uint64_t InputHash(entt::entity entity) const;
     bool Summary(entt::entity entity, GeometrySummary& out) const;
+    bool Kit(entt::entity entity, KitSummary& out) const;
 
     // Nearest construction surface hit by a world-space ray, ignoring `ignore`.
     bool Raycast(Scene& scene, const Ray& ray, ConstructionHit& out, entt::entity ignore = entt::null) const;
@@ -106,6 +119,9 @@ private:
     void DestroyColliders(Scene& scene, ShapeState& state);
     void Release(ShapeState& state);
     static void ApplySlots(MeshRendererComponent& renderer, const ShapeState& state);
+    void RebuildPieces(Scene& scene, entt::entity owner, ShapeState& state);
+    void DestroyPieces(Scene& scene, ShapeState& state);
+    bool PiecesIntact(Scene& scene, const ShapeState& state) const;
 
     MeshSink m_sink;
     std::unordered_map<entt::entity, std::unique_ptr<ShapeState>> m_shapes;

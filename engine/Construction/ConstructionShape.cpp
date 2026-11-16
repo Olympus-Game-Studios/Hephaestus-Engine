@@ -285,6 +285,9 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
         oss << in2 << "\"segment\": " << o.segment << "\n";
     }
     oss << in << "}";
+    if (!shape.kit.empty()) {
+        oss << ",\n" << in << "\"kit\": \"" << Escape(shape.kit) << "\"";
+    }
     if (!shape.faceMaterials.empty()) {
         oss << ",\n" << in << "\"faces\": [";
         for (size_t n = 0; n < shape.faceMaterials.size(); ++n) {
@@ -384,6 +387,9 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
     out.objectValue["operation"] = text(OperationName(shape.operation));
     out.objectValue["version"] = number(shape.evaluatorVersion);
     out.objectValue["params"] = std::move(params);
+    if (!shape.kit.empty()) {
+        out.objectValue["kit"] = text(shape.kit);
+    }
     if (!shape.faceMaterials.empty()) {
         JsonValue faces;
         faces.type = JsonValue::Type::Array;
@@ -508,6 +514,9 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
             ReadFloat(*params, "segment", segment);
             o.segment = static_cast<int>(std::lround(segment));
         }
+    }
+    if (const JsonValue* kit = data.Find("kit"); kit && kit->IsString()) {
+        shape.kit = kit->AsString();
     }
     if (const JsonValue* faces = data.Find("faces"); faces && faces->IsArray()) {
         std::vector<FaceMaterial> read;

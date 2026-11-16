@@ -18,6 +18,10 @@
 
 #include <vector>
 
+namespace Hephaestus::Construction {
+class ConstructionSystem;
+}
+
 namespace Hephaestus {
 namespace QtEditor {
 
@@ -26,7 +30,8 @@ class ConstructionShapeInspector : public ComponentInspector
     Q_OBJECT
 
 public:
-    explicit ConstructionShapeInspector(EditorContext* ctx, entt::entity entity, QWidget* parent = nullptr);
+    ConstructionShapeInspector(EditorContext* ctx, entt::entity entity,
+                               Hephaestus::Construction::ConstructionSystem* system, QWidget* parent = nullptr);
     void Refresh() override;
 
 private:
@@ -34,6 +39,7 @@ private:
     void connectSignals();
     void applyToComponent();
     void rebuildFaceList();
+    void refreshKit(Hephaestus::Construction::Recipe recipe, bool hollow);
 
     QLabel* m_kind = nullptr;
     QLineEdit* m_role = nullptr;
@@ -75,6 +81,11 @@ private:
     QGroupBox* m_facesGroup = nullptr;
     QVBoxLayout* m_facesList = nullptr;
     std::vector<Hephaestus::Construction::FaceMaterial> m_shownFaces;
+
+    QGroupBox* m_kitGroup = nullptr;
+    QComboBox* m_kit = nullptr;
+    QLabel* m_kitInfo = nullptr;
+    Hephaestus::Construction::ConstructionSystem* m_system = nullptr;
 
     QPushButton* m_remove = nullptr;
 };

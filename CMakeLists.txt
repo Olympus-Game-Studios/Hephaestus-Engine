@@ -413,6 +413,7 @@ add_library(HephaestusRuntime STATIC
     engine/Navigation/NavMesh.cpp
     engine/Construction/ConstructionShape.cpp
     engine/Construction/ConstructionGeometry.cpp
+    engine/Construction/ConstructionKit.cpp
     engine/Construction/ConstructionSystem.cpp
     engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
