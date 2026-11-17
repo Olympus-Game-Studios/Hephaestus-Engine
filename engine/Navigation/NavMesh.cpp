@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <unordered_map>
 
 namespace Hephaestus::Navigation {
 namespace {
@@ -423,6 +424,9 @@ void NavMesh::Clear()
     dtFreeNavMesh(m_navMesh);
     m_query = nullptr;
     m_navMesh = nullptr;
+    m_tileHashes.clear();
+    m_settingsHash = 0;
+    m_tileBits = 0;
 }
 
 int NavMesh::PolygonCount() const
@@ -664,10 +668,50 @@ unsigned int Log2Ceil(unsigned int value)
 
 } // namespace
 
+namespace {
+
+struct Hasher {
+    std::uint64_t value = 1469598103934665603ull;
+    void Bytes(const void* data, size_t size)
+    {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            value = (value ^ bytes[i]) * 1099511628211ull;
+        }
+    }
+    template <typename T> void Add(const T& item) { Bytes(&item, sizeof(T)); }
+};
+
+std::uint64_t SettingsHash(const NavBuildSettings& s)
+{
+    Hasher h;
+    for (float value : {s.cellSize, s.cellHeight, s.agentHeight, s.agentRadius, s.agentMaxClimb, s.agentMaxSlopeDegrees,
+                        s.regionMinSize, s.regionMergeSize, s.edgeMaxLength, s.edgeMaxError, s.detailSampleDistance,
+                        s.detailSampleMaxError}) {
+        h.Add(value);
+    }
+    h.Add(kTileCells);
+    return h.value;
+}
+
+std::int64_t TileKey(int x, int y)
+{
+    return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
+}
+
+} // namespace
+
 bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std::string& error)
 {
     Clear();
+    return Update(geometry, s, error);
+}
+
+bool NavMesh::Update(const NavGeometry& geometry, const NavBuildSettings& s, std::string& error, NavUpdateStats* stats)
+{
+    NavUpdateStats counts;
     if (geometry.Empty()) {
+        Clear();
         error = "no walkable geometry (static colliders) in the scene";
         return false;
     }
@@ -675,28 +719,15 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     const int vertCount = static_cast<int>(geometry.vertices.size() / 3);
     const int* tris = geometry.triangles.data();
     const int triCount = static_cast<int>(geometry.triangles.size() / 3);
-
-    rcConfig cfg = BaseConfig(s);
-    float bmin[3];
-    float bmax[3];
-    rcCalcBounds(verts, vertCount, bmin, bmax);
-    int gridWidth = 0;
-    int gridHeight = 0;
-    rcCalcGridSize(bmin, bmax, cfg.cs, &gridWidth, &gridHeight);
-    const int tilesX = (gridWidth + cfg.tileSize - 1) / cfg.tileSize;
-    const int tilesY = (gridHeight + cfg.tileSize - 1) / cfg.tileSize;
-    // 32-bit polygon references leave 22 bits for the tile and the polygon within it.
-    const unsigned int tileBits = Log2Ceil(static_cast<unsigned int>(tilesX * tilesY));
-    if (tileBits > 14) {
-        error = "the level is too large for the navmesh (" + std::to_string(tilesX * tilesY) + " tiles)";
-        return false;
-    }
-    const unsigned int polyBits = 22 - tileBits;
+    const rcConfig cfg = BaseConfig(s);
+    const float extent = cfg.tileSize * cfg.cs;
+    const float border = cfg.borderSize * cfg.cs;
 
     std::vector<unsigned char> areas(static_cast<size_t>(triCount), 0);
     rcContext ctx(false);
     rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, vertCount, tris, triCount, areas.data());
     std::vector<PieceBounds> pieces;
+    std::vector<std::uint64_t> pieceHashes;
     {
         std::vector<NavGeometry::Piece> listed = geometry.pieces;
         if (listed.empty() || listed.front().firstTriangle > 0) {
@@ -711,68 +742,138 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
             const float* first = &verts[tris[piece.firstTriangle * 3] * 3];
             rcVcopy(piece.min, first);
             rcVcopy(piece.max, first);
+            Hasher h;
+            h.Add(piece.solid);
             for (int i = piece.firstTriangle * 3; i < piece.endTriangle * 3; ++i) {
-                rcVmin(piece.min, &verts[tris[i] * 3]);
-                rcVmax(piece.max, &verts[tris[i] * 3]);
+                const float* v = &verts[tris[i] * 3];
+                rcVmin(piece.min, v);
+                rcVmax(piece.max, v);
+                h.Bytes(v, sizeof(float) * 3);
             }
             pieces.push_back(piece);
+            pieceHashes.push_back(h.value);
         }
     }
 
-    dtNavMeshParams meshParams{};
-    rcVcopy(meshParams.orig, bmin);
-    meshParams.tileWidth = cfg.tileSize * cfg.cs;
-    meshParams.tileHeight = cfg.tileSize * cfg.cs;
-    meshParams.maxTiles = 1 << tileBits;
-    meshParams.maxPolys = 1 << polyBits;
-    m_navMesh = dtAllocNavMesh();
-    if (!m_navMesh || dtStatusFailed(m_navMesh->init(&meshParams))) {
-        Clear();
-        error = "could not initialise the navmesh";
-        return false;
-    }
-    int tilesBuilt = 0;
-    for (int ty = 0; ty < tilesY; ++ty) {
-        for (int tx = 0; tx < tilesX; ++tx) {
-            rcConfig tile = cfg;
-            const float extent = cfg.tileSize * cfg.cs;
-            const float border = cfg.borderSize * cfg.cs;
-            tile.bmin[0] = bmin[0] + tx * extent - border;
-            tile.bmin[1] = bmin[1];
-            tile.bmin[2] = bmin[2] + ty * extent - border;
-            tile.bmax[0] = bmin[0] + (tx + 1) * extent + border;
-            tile.bmax[1] = bmax[1];
-            tile.bmax[2] = bmin[2] + (ty + 1) * extent + border;
-            unsigned char* data = nullptr;
-            int dataSize = 0;
-            if (!BuildTile(geometry, pieces, areas, s, tile, tx, ty, data, dataSize, error)) {
-                Clear();
-                return false;
+    // Tiles sit on a fixed world grid, so an edit only changes the tiles its geometry (and their borders) touch.
+    struct TileWork {
+        int x = 0;
+        int y = 0;
+        std::uint64_t hash = 0;
+        std::vector<size_t> pieces;
+    };
+    std::unordered_map<std::int64_t, TileWork> wanted;
+    for (size_t n = 0; n < pieces.size(); ++n) {
+        const PieceBounds& piece = pieces[n];
+        const int x0 = static_cast<int>(std::floor((piece.min[0] - border) / extent));
+        const int x1 = static_cast<int>(std::floor((piece.max[0] + border) / extent));
+        const int y0 = static_cast<int>(std::floor((piece.min[2] - border) / extent));
+        const int y1 = static_cast<int>(std::floor((piece.max[2] + border) / extent));
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                TileWork& work = wanted[TileKey(x, y)];
+                work.x = x;
+                work.y = y;
+                work.pieces.push_back(n);
             }
-            if (!data) {
-                continue;
-            }
-            if (dtStatusFailed(m_navMesh->addTile(data, dataSize, DT_TILE_FREE_DATA, 0, nullptr))) {
-                dtFree(data);
-                Clear();
-                error = "could not add a navmesh tile";
-                return false;
-            }
-            ++tilesBuilt;
         }
     }
-    if (tilesBuilt == 0) {
+    const std::uint64_t settingsHash = SettingsHash(s);
+    for (auto& [key, work] : wanted) {
+        Hasher h;
+        h.Add(settingsHash);
+        for (size_t n : work.pieces) h.Add(pieceHashes[n]);
+        const float lo[2] = {work.x * extent, work.y * extent};
+        for (const NavLink& link : geometry.links) {
+            if (link.from.x >= lo[0] && link.from.x < lo[0] + extent && link.from.z >= lo[1] && link.from.z < lo[1] + extent) {
+                h.Add(link.from);
+                h.Add(link.to);
+            }
+        }
+        work.hash = h.value;
+    }
+
+    const unsigned int tileBits = Log2Ceil(static_cast<unsigned int>(std::max<size_t>(1, wanted.size() * 2)));
+    if (tileBits > 14) {
         Clear();
+        error = "the level is too large for the navmesh (" + std::to_string(wanted.size()) + " tiles)";
+        return false;
+    }
+    if (!m_navMesh || settingsHash != m_settingsHash || tileBits > m_tileBits) {
+        Clear();
+        dtNavMeshParams meshParams{};
+        meshParams.tileWidth = extent;
+        meshParams.tileHeight = extent;
+        // 32-bit polygon references leave 22 bits for the tile and the polygon within it.
+        m_tileBits = std::max(tileBits, 6u);
+        meshParams.maxTiles = 1 << m_tileBits;
+        meshParams.maxPolys = 1 << (22 - m_tileBits);
+        m_navMesh = dtAllocNavMesh();
+        m_query = dtAllocNavMeshQuery();
+        if (!m_navMesh || dtStatusFailed(m_navMesh->init(&meshParams)) || !m_query ||
+            dtStatusFailed(m_query->init(m_navMesh, 2048))) {
+            Clear();
+            error = "could not initialise the navmesh";
+            return false;
+        }
+        m_settingsHash = settingsHash;
+        m_vaultLinkCost = s.vaultLinkCost;
+    }
+
+    for (auto it = m_tileHashes.begin(); it != m_tileHashes.end();) {
+        if (wanted.find(it->first) == wanted.end()) {
+            const int x = static_cast<int>(it->first >> 32);
+            const int y = static_cast<int>(static_cast<std::int32_t>(it->first & 0xffffffff));
+            m_navMesh->removeTile(m_navMesh->getTileRefAt(x, y, 0), nullptr, nullptr);
+            ++counts.tilesRemoved;
+            it = m_tileHashes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto& [key, work] : wanted) {
+        auto known = m_tileHashes.find(key);
+        if (known != m_tileHashes.end() && known->second == work.hash) {
+            ++counts.tilesKept;
+            continue;
+        }
+        rcConfig tile = cfg;
+        tile.bmin[0] = work.x * extent - border;
+        tile.bmin[2] = work.y * extent - border;
+        tile.bmax[0] = (work.x + 1) * extent + border;
+        tile.bmax[2] = (work.y + 1) * extent + border;
+        std::vector<PieceBounds> overlapping;
+        tile.bmin[1] = pieces[work.pieces.front()].min[1];
+        tile.bmax[1] = pieces[work.pieces.front()].max[1];
+        for (size_t n : work.pieces) {
+            overlapping.push_back(pieces[n]);
+            tile.bmin[1] = std::min(tile.bmin[1], pieces[n].min[1]);
+            tile.bmax[1] = std::max(tile.bmax[1], pieces[n].max[1]);
+        }
+        tile.bmax[1] += s.agentHeight;
+        unsigned char* data = nullptr;
+        int dataSize = 0;
+        if (!BuildTile(geometry, overlapping, areas, s, tile, work.x, work.y, data, dataSize, error)) {
+            Clear();
+            return false;
+        }
+        if (const dtTileRef old = m_navMesh->getTileRefAt(work.x, work.y, 0)) {
+            m_navMesh->removeTile(old, nullptr, nullptr);
+        }
+        if (data && dtStatusFailed(m_navMesh->addTile(data, dataSize, DT_TILE_FREE_DATA, 0, nullptr))) {
+            dtFree(data);
+            Clear();
+            error = "could not add a navmesh tile";
+            return false;
+        }
+        m_tileHashes[key] = work.hash;
+        ++counts.tilesBuilt;
+    }
+    if (stats) *stats = counts;
+    if (PolygonCount() == 0) {
         error = "no walkable area";
         return false;
     }
-    m_query = dtAllocNavMeshQuery();
-    if (!m_query || dtStatusFailed(m_query->init(m_navMesh, 2048))) {
-        Clear();
-        error = "could not initialise the navmesh query";
-        return false;
-    }
-    m_vaultLinkCost = s.vaultLinkCost;
     return true;
 }
 

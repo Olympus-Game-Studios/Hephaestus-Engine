@@ -264,22 +264,19 @@ void CheckStairsAndRamps(Scene& scene, const TraversalMetrics& metrics, LevelChe
     }
 }
 
-bool BuildNavMesh(Scene& scene, const std::filesystem::path& projectRoot, Navigation::NavGeometry& geometry,
-                  Navigation::NavMesh& out, std::string& error)
-{
-    const Navigation::NavBuildSettings settings = Navigation::SettingsForScene(scene);
-    geometry = Navigation::CollectSceneGeometry(scene, nullptr, projectRoot);
-    Navigation::AddVaultLinks(scene, settings, geometry);
-    return out.Build(geometry, settings, error);
-}
-
 } // namespace
 
-bool BuildLevelNavMesh(Scene& scene, const std::filesystem::path& projectRoot, Navigation::NavMesh& out,
-                       std::string& error)
+std::shared_ptr<Navigation::NavMesh> LevelNavMesh(Scene& scene, const std::filesystem::path& projectRoot,
+                                                  std::string& error, Navigation::NavUpdateStats* stats,
+                                                  Navigation::NavGeometry* geometryOut, int* skippedShapes)
 {
-    Navigation::NavGeometry geometry;
-    return BuildNavMesh(scene, projectRoot, geometry, out, error);
+    static std::shared_ptr<Navigation::NavMesh> shared = std::make_shared<Navigation::NavMesh>();
+    const Navigation::NavBuildSettings settings = Navigation::SettingsForScene(scene);
+    Navigation::NavGeometry geometry = Navigation::CollectSceneGeometry(scene, skippedShapes, projectRoot);
+    Navigation::AddVaultLinks(scene, settings, geometry);
+    const bool ready = shared->Update(geometry, settings, error, stats);
+    if (geometryOut) *geometryOut = std::move(geometry);
+    return ready ? shared : nullptr;
 }
 
 WalkRoute MeasureWalk(const Navigation::NavMesh& navMesh, const TraversalMetrics& metrics, const Vec3& from,
@@ -309,11 +306,11 @@ WalkRoute MeasureWalk(const Navigation::NavMesh& navMesh, const TraversalMetrics
 bool MeasureLevelWalk(Scene& scene, const std::filesystem::path& projectRoot, const Vec3& from, const Vec3& to,
                       WalkRoute& out, std::string& error)
 {
-    Navigation::NavMesh navMesh;
-    if (!BuildLevelNavMesh(scene, projectRoot, navMesh, error)) {
+    const std::shared_ptr<Navigation::NavMesh> navMesh = LevelNavMesh(scene, projectRoot, error);
+    if (!navMesh) {
         return false;
     }
-    out = MeasureWalk(navMesh, MetricsForScene(scene), from, to);
+    out = MeasureWalk(*navMesh, MetricsForScene(scene), from, to);
     return true;
 }
 
@@ -419,9 +416,9 @@ LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRo
         starts.push_back(Mat4::TransformPoint(scene.GetWorldTransform(Entity(handle, &scene)), Vec3(0.0f, 0.0f, 0.0f)));
     }
     Navigation::NavGeometry geometry;
-    Navigation::NavMesh navMesh;
     std::string error;
-    const bool navBuilt = BuildNavMesh(scene, projectRoot, geometry, navMesh, error);
+    const std::shared_ptr<Navigation::NavMesh> shared = LevelNavMesh(scene, projectRoot, error, nullptr, &geometry);
+    const bool navBuilt = shared != nullptr;
     if (starts.empty()) {
         report.problems.push_back({"no-characters", Severity::Info,
                                    "No character in the scene, so reachability was not checked and the default "
@@ -431,11 +428,12 @@ LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRo
         report.problems.push_back({"navmesh", Severity::Error, "The navmesh could not be built: " + error + ".",
                                    starts.front(), entt::null});
     } else {
-        CheckReachability(navMesh, geometry, starts, report);
+        CheckReachability(*shared, geometry, starts, report);
     }
     if (!navBuilt) {
         return report;
     }
+    const Navigation::NavMesh& navMesh = *shared;
     report.navPolygons = navMesh.PolygonCount();
     const LevelCheckContext context{scene, report.metrics, navMesh, geometry};
     // Copied, so a check that registers or removes checks while it runs does not disturb the loop.

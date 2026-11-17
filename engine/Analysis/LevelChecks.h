@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ class Scene;
 namespace Hephaestus::Navigation {
 class NavMesh;
 struct NavGeometry;
+struct NavUpdateStats;
 }
 
 namespace Hephaestus::Analysis {
@@ -68,9 +70,13 @@ struct WalkRoute {
     int links = 0;          // vaults over cover on the way
 };
 
-// Builds the navmesh a level check uses: the scene's collision, sized to its characters, with vault links.
-bool BuildLevelNavMesh(Scene& scene, const std::filesystem::path& projectRoot, Navigation::NavMesh& out,
-                       std::string& error);
+// The level's navmesh, as bots, level checks and Measure Walk use it: the scene's collision, sized to its characters,
+// with vault links. One navmesh is kept between calls and only the tiles whose geometry changed are rebuilt. Null
+// with error when there is nothing walkable.
+std::shared_ptr<Navigation::NavMesh> LevelNavMesh(Scene& scene, const std::filesystem::path& projectRoot,
+                                                  std::string& error, Navigation::NavUpdateStats* stats = nullptr,
+                                                  Navigation::NavGeometry* geometry = nullptr,
+                                                  int* skippedShapes = nullptr);
 WalkRoute MeasureWalk(const Navigation::NavMesh& navMesh, const TraversalMetrics& metrics, const Vec3& from,
                       const Vec3& to);
 // The same, building the level navmesh first; false with error when it can't be built.

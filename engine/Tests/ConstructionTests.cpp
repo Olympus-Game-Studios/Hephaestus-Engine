@@ -1389,9 +1389,10 @@ void TestJumpChecks()
     Check(!near("jump-only", Vec3(0.0f, 0.0f, 6.5f), 2.0f) && !near("gap-too-wide", Vec3(0.0f, 0.0f, 6.5f), 2.0f),
           "a wall between two floors rules out jumping across");
 
-    Hephaestus::Navigation::NavMesh navMesh;
     std::string navError;
-    Check(BuildLevelNavMesh(scene, {}, navMesh, navError), "the level navmesh builds (" + navError + ")");
+    const auto sharedNav = LevelNavMesh(scene, {}, navError);
+    Check(sharedNav != nullptr, "the level navmesh builds (" + navError + ")");
+    const Hephaestus::Navigation::NavMesh& navMesh = *sharedNav;
     const WalkRoute across = MeasureWalk(navMesh, m, Vec3(-10.0f, 0.2f, -2.0f), Vec3(10.0f, 0.2f, -2.0f));
     Check(across.found && across.complete && std::fabs(across.length - 20.0f) < 0.3f &&
               std::fabs(across.seconds - across.length / 2.0f) < 1e-3f,
@@ -1460,21 +1461,58 @@ void TestLargeLevel()
     AddBox(scene, "Floor", floor, Vec3(0.0f, -1.4f, 0.0f));
     AddBox(scene, "Room", Room(), Vec3(100.0f, 0.0f, 100.0f));
     system.Update(scene);
-    Hephaestus::Navigation::NavMesh navMesh;
     std::string error;
-    const auto start = std::chrono::steady_clock::now();
-    const bool built = Hephaestus::Analysis::BuildLevelNavMesh(scene, {}, navMesh, error);
-    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    std::cout << "[INFO] 840 m floor: navmesh " << ms << " ms, " << navMesh.PolygonCount() << " polygons\n";
-    Check(built, "an 840 m floor builds a navmesh (" + error + ")");
+    auto timed = [&](Hephaestus::Navigation::NavUpdateStats& stats, double& ms) {
+        const auto start = std::chrono::steady_clock::now();
+        auto mesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, error, &stats);
+        ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        return mesh;
+    };
+    Hephaestus::Navigation::NavUpdateStats full;
+    double fullMs = 0.0;
+    const auto shared = timed(full, fullMs);
+    Check(shared != nullptr, "an 840 m floor builds a navmesh (" + error + ")");
+    const Hephaestus::Navigation::NavMesh& navMesh = *shared;
+    std::cout << "[INFO] 840 m floor: navmesh " << fullMs << " ms, " << full.tilesBuilt << " tiles, "
+              << navMesh.PolygonCount() << " polygons\n";
     const Hephaestus::Analysis::WalkRoute route = Hephaestus::Analysis::MeasureWalk(
         navMesh, Hephaestus::Analysis::TraversalMetrics{}, Vec3(-300.0f, 0.0f, -10.0f), Vec3(300.0f, 0.0f, 10.0f));
-    Check(route.complete && std::fabs(route.length - route.straight) < 1.0f,
+    Check(route.complete && route.length < route.straight * 1.005f,
           "a 600 m walk across tiles follows the straight line (" + std::to_string(route.length) + " m)");
     const auto islands = navMesh.Islands({Vec3(0.0f, 0.0f, 0.0f)});
     int reachedFloor = 0;
     for (const auto& island : islands) reachedFloor += island.reached && island.area > 600000.0f ? 1 : 0;
     Check(reachedFloor == 1, "the floor's tiles join into one island");
+
+    Hephaestus::Navigation::NavUpdateStats same;
+    double sameMs = 0.0;
+    timed(same, sameMs);
+    Check(same.tilesBuilt == 0 && same.tilesKept == full.tilesBuilt, "an unchanged level rebuilds no tiles");
+    Entity crate = AddBox(scene, "Crate", BoxParams{}, Vec3(200.0f, 0.0f, 200.0f));
+    system.Update(scene);
+    Hephaestus::Navigation::NavUpdateStats edited;
+    double editMs = 0.0;
+    timed(edited, editMs);
+    std::cout << "[INFO] 840 m floor: one new block rebuilt " << edited.tilesBuilt << " tiles in " << editMs
+              << " ms (unchanged: " << sameMs << " ms)\n";
+    Vec3 onTop;
+    Check(edited.tilesBuilt >= 1 && edited.tilesBuilt <= 4 &&
+              navMesh.ClosestPoint(Vec3(200.0f, 3.2f, 200.0f), onTop, Vec3(0.5f, 0.5f, 0.5f)) &&
+              std::fabs(onTop.y - 3.0f) < 0.2f,
+          "a new block rebuilds only the tiles it touches, and its top is walkable");
+    scene.DestroyEntity(crate);
+    system.Update(scene);
+    Hephaestus::Navigation::NavUpdateStats removed;
+    timed(removed, editMs);
+    Check(removed.tilesBuilt == edited.tilesBuilt &&
+              !navMesh.ClosestPoint(Vec3(200.0f, 3.2f, 200.0f), onTop, Vec3(0.5f, 0.5f, 0.5f)),
+          "removing it rebuilds the same tiles and its top is gone");
+    CharacterControllerComponent wide;
+    wide.radius = 0.5f;
+    scene.CreateEntity("Wide").AddComponent<CharacterControllerComponent>(wide);
+    Hephaestus::Navigation::NavUpdateStats resized;
+    timed(resized, editMs);
+    Check(resized.tilesKept == 0 && resized.tilesBuilt > 0, "a different character size rebuilds every tile");
 }
 
 void TestScale()

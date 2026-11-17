@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class Scene;
@@ -94,6 +95,13 @@ struct NavIsland {
     std::vector<std::pair<Vec3, Vec3>> edges;  // its outline: polygon edges with nothing walkable beyond them
 };
 
+// What an Update did: tiles rebuilt because their geometry changed, kept as they were, and dropped.
+struct NavUpdateStats {
+    int tilesBuilt = 0;
+    int tilesKept = 0;
+    int tilesRemoved = 0;
+};
+
 class NavMesh {
 public:
     NavMesh() = default;
@@ -102,6 +110,10 @@ public:
     NavMesh& operator=(const NavMesh&) = delete;
 
     bool Build(const NavGeometry& geometry, const NavBuildSettings& settings, std::string& error);
+    // Brings the navmesh up to date with the geometry, rebuilding only the tiles whose geometry, links or settings
+    // changed since the last Build or Update. A change of agent settings rebuilds everything.
+    bool Update(const NavGeometry& geometry, const NavBuildSettings& settings, std::string& error,
+                NavUpdateStats* stats = nullptr);
     void Clear();
     bool IsReady() const { return m_query != nullptr; }
     int PolygonCount() const;
@@ -121,6 +133,9 @@ private:
     dtNavMesh* m_navMesh = nullptr;
     dtNavMeshQuery* m_query = nullptr;
     float m_vaultLinkCost = 1.0f;
+    std::unordered_map<std::int64_t, std::uint64_t> m_tileHashes;
+    std::uint64_t m_settingsHash = 0;
+    unsigned int m_tileBits = 0;
 };
 
 } // namespace Hephaestus::Navigation

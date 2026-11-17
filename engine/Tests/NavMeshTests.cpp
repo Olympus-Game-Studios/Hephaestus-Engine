@@ -178,7 +178,9 @@ int main()
         NavMesh blockMesh;
         Vec3 inside;
         const bool built = blockMesh.Build(blockGeometry, NavBuildSettings{}, error);
-        const bool found = built && blockMesh.ClosestPoint(Vec3(0.0f, 0.1f, 0.0f), inside, Vec3(0.5f, 0.5f, 0.5f));
+        // Detour may answer with a polygon whose bounds overlap the query but whose nearest point lies outside it.
+        const bool found = built && blockMesh.ClosestPoint(Vec3(0.0f, 0.1f, 0.0f), inside, Vec3(0.5f, 0.5f, 0.5f)) &&
+                           std::fabs(inside.x) < 2.0f && std::fabs(inside.z) < 2.0f && inside.y < 2.9f;
         Check(built && !found, "the inside of a block taller than an agent is not walkable");
         Vec3 top;
         Check(blockMesh.ClosestPoint(Vec3(0.0f, 3.0f, 0.0f), top, Vec3(0.5f, 0.5f, 0.5f)) && std::fabs(top.y - 3.0f) < 0.2f,

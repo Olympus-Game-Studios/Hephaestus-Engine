@@ -330,7 +330,7 @@ private:
     lua_State* m_State = nullptr;
     PluginScriptHost* m_PluginScripts = nullptr;
     Scene* m_Scene = nullptr;
-    std::unique_ptr<Hephaestus::Navigation::NavMesh> m_NavMesh;
+    std::shared_ptr<Hephaestus::Navigation::NavMesh> m_NavMesh;
     bool m_NavBuildAttempted = false;
     std::uint32_t m_NavRandomState = 0x2545F491u;
     GLFWwindow* m_Window = nullptr;

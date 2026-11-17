@@ -164,14 +164,12 @@ bool ConstructionTool::PressMeasure(Scene& scene, ConstructionSystem& system, co
         m_measureTo = point;
         m_measure = 2;
     } else {
-        // The level may have changed since the last measurement, so the navmesh is built again for each start.
         m_measureFrom = point;
         m_measureTo = point;
         m_measure = 1;
         m_walkError.clear();
-        auto navMesh = std::make_shared<Navigation::NavMesh>();
         const std::filesystem::path root = m_host.projectRoot ? m_host.projectRoot() : std::filesystem::path();
-        m_walkNav = Analysis::BuildLevelNavMesh(scene, root, *navMesh, m_walkError) ? navMesh : nullptr;
+        m_walkNav = Analysis::LevelNavMesh(scene, root, m_walkError);
         m_walkMetrics = Analysis::MetricsForScene(scene);
     }
     m_walkRoute = m_walkNav ? Analysis::MeasureWalk(*m_walkNav, m_walkMetrics, m_measureFrom, m_measureTo)
