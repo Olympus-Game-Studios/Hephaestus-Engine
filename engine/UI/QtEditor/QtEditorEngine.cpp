@@ -29,6 +29,7 @@
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
 #include "../../Scene/PrefabOverrideSystem.h"
+#include "../../Assets/AssetManager.h"
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Assets/SkeletalModelImporter.h"
@@ -232,6 +233,7 @@ void QtEditorEngine::ensureConstructionSink()
     host.discardUndo = [this]() { EditorUndoManager::DiscardLastSnapshot(&m_editorContext); };
     host.select = [this](entt::entity entity) { m_editorContext.SelectEntity(entity); };
     host.selected = [this]() { return m_editorContext.GetSelectedEntity(); };
+    host.projectRoot = []() { return std::filesystem::path(AssetManager::GetInstance().GetProjectRoot()); };
     host.changed = [this]() {
         m_editorContext.MarkDirty();
         emit sceneHierarchyChanged();
@@ -1519,6 +1521,11 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                 case 0x54: // Qt::Key_T - Draw Stairs, Shift+T Draw Ramp
                     if (!m_inputState.ctrlDown) {
                         SetConstructionToolMode(m_inputState.shiftDown ? ToolMode::DrawRamp : ToolMode::DrawStairs);
+                    }
+                    break;
+                case 0x4D: // Qt::Key_M - Measure Walk
+                    if (!m_inputState.ctrlDown) {
+                        SetConstructionToolMode(ToolMode::MeasureWalk);
                     }
                     break;
                 case 0x4C: // Qt::Key_L - Draw Wall

@@ -250,7 +250,58 @@ void CheckStairsAndRamps(Scene& scene, const TraversalMetrics& metrics, LevelChe
     }
 }
 
+bool BuildNavMesh(Scene& scene, const std::filesystem::path& projectRoot, Navigation::NavGeometry& geometry,
+                  Navigation::NavMesh& out, std::string& error)
+{
+    const Navigation::NavBuildSettings settings = Navigation::SettingsForScene(scene);
+    geometry = Navigation::CollectSceneGeometry(scene, nullptr, projectRoot);
+    Navigation::AddVaultLinks(scene, settings, geometry);
+    return out.Build(geometry, settings, error);
+}
+
 } // namespace
+
+bool BuildLevelNavMesh(Scene& scene, const std::filesystem::path& projectRoot, Navigation::NavMesh& out,
+                       std::string& error)
+{
+    Navigation::NavGeometry geometry;
+    return BuildNavMesh(scene, projectRoot, geometry, out, error);
+}
+
+WalkRoute MeasureWalk(const Navigation::NavMesh& navMesh, const TraversalMetrics& metrics, const Vec3& from,
+                      const Vec3& to)
+{
+    WalkRoute route;
+    route.straight = vlen(vsub(to, from));
+    Vec3 start;
+    Vec3 end;
+    std::vector<unsigned char> linkStarts;
+    if (!navMesh.ClosestPoint(from, start) || !navMesh.ClosestPoint(to, end) ||
+        !navMesh.FindPath(from, to, route.corners, &linkStarts) || route.corners.empty()) {
+        route.corners.clear();
+        return route;
+    }
+    route.found = true;
+    for (size_t n = 0; n + 1 < route.corners.size(); ++n) {
+        route.length += vlen(vsub(route.corners[n + 1], route.corners[n]));
+        route.links += n < linkStarts.size() && linkStarts[n] ? 1 : 0;
+    }
+    const Vec3 last = route.corners.back();
+    route.complete = std::hypot(last.x - end.x, last.z - end.z) < 0.1f && std::fabs(last.y - end.y) < 0.5f;
+    route.seconds = metrics.walkSpeed > 0.0f ? route.length / metrics.walkSpeed : 0.0f;
+    return route;
+}
+
+bool MeasureLevelWalk(Scene& scene, const std::filesystem::path& projectRoot, const Vec3& from, const Vec3& to,
+                      WalkRoute& out, std::string& error)
+{
+    Navigation::NavMesh navMesh;
+    if (!BuildLevelNavMesh(scene, projectRoot, navMesh, error)) {
+        return false;
+    }
+    out = MeasureWalk(navMesh, MetricsForScene(scene), from, to);
+    return true;
+}
 
 const char* SeverityName(Severity severity)
 {
@@ -318,11 +369,10 @@ LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRo
                                    Vec3(0.0f, 0.0f, 0.0f), entt::null});
         return report;
     }
-    Navigation::NavGeometry geometry = Navigation::CollectSceneGeometry(scene, nullptr, projectRoot);
-    Navigation::AddVaultLinks(scene, settings, geometry);
+    Navigation::NavGeometry geometry;
     Navigation::NavMesh navMesh;
     std::string error;
-    if (!navMesh.Build(geometry, settings, error)) {
+    if (!BuildNavMesh(scene, projectRoot, geometry, navMesh, error)) {
         report.problems.push_back({"navmesh", Severity::Error, "The navmesh could not be built: " + error + ".",
                                    starts.front(), entt::null});
         return report;

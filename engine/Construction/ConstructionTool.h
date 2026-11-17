@@ -2,12 +2,15 @@
 
 #include "ConstructionSystem.h"
 
+#include "../Analysis/LevelChecks.h"
 #include "../Core/EditorDebugDraw.h"
 #include "../Core/Math.h"
 
 #include <entt/entt.hpp>
 
+#include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,7 +18,7 @@ class Scene;
 
 namespace Hephaestus::Construction {
 
-enum class ToolMode { Select, DrawBox, DrawRoom, DrawStairs, DrawOpening, DrawWall, DrawRamp };
+enum class ToolMode { Select, DrawBox, DrawRoom, DrawStairs, DrawOpening, DrawWall, DrawRamp, MeasureWalk };
 
 struct ToolInput {
     Ray ray;
@@ -39,6 +42,7 @@ struct ToolHost {
     std::function<float()> stepHeight;                       // the player's step height, for new stairs
     std::function<void()> changed;                           // scene structure or data changed
     std::function<entt::entity()> selected;
+    std::function<std::filesystem::path()> projectRoot;      // where model files are found, for the navmesh
 };
 
 // Viewport interaction for construction shapes: drawing boxes, rooms, walls and openings, and dragging face and point
@@ -92,6 +96,8 @@ private:
     void CommitOpening(Scene& scene);
     float Snap(float value, const ToolInput& input) const;
     bool ApplyTyped(Scene& scene, ConstructionSystem& system);
+    bool PressMeasure(Scene& scene, ConstructionSystem& system, const ToolInput& input);
+    std::string MeasureStatus() const;
 
     ToolHost m_host;
     ToolMode m_mode = ToolMode::Select;
@@ -133,6 +139,15 @@ private:
     Vec3 m_wallCurrent;
     entt::entity m_opening = entt::null;
     OpeningParams m_startOpening;
+
+    // Measure Walk: 0 nothing placed, 1 the start placed and the end following the cursor, 2 both placed.
+    int m_measure = 0;
+    Vec3 m_measureFrom;
+    Vec3 m_measureTo;
+    std::shared_ptr<Navigation::NavMesh> m_walkNav;
+    Analysis::TraversalMetrics m_walkMetrics;
+    Analysis::WalkRoute m_walkRoute;
+    std::string m_walkError;
 };
 
 // Coordinates of a host-local point on a wall: x is distance along the wall from its centre, y is height.

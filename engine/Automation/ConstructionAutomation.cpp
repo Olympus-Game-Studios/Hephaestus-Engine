@@ -317,6 +317,39 @@ void RegisterConstructionAutomation(AutomationService& service)
                 {"islands", report.islands},
                 {"problems", std::move(problems)}});
         }));
+
+    RegisterOrThrow(service, Definition(
+        "level.measure_walk",
+        "The walking route between two world points on the open level's navmesh: its corners, length, the straight "
+        "distance, the time at the characters' walking speed, vaults on the way, and whether it reaches the end.",
+        ObjectSchema({{"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}}},
+                      {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}}}},
+                     Json::array({"from", "to"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            Scene* scene = RequireScene(context);
+            if (!scene) return Failure(ErrorCode::NoActiveScene, "No active scene");
+            Vec3 from;
+            Vec3 to;
+            if (!ReadVec3(arguments["from"], from) || !ReadVec3(arguments["to"], to)) {
+                return Failure(ErrorCode::InvalidArguments, "from and to must be three numbers each");
+            }
+            UpToDate(context, *scene);
+            Hephaestus::AssetManager* assets = context.Backend().Assets();
+            Analysis::WalkRoute route;
+            std::string error;
+            if (!Analysis::MeasureLevelWalk(
+                    *scene, assets ? std::filesystem::path(assets->GetProjectRoot()) : std::filesystem::path(), from, to,
+                    route, error)) {
+                return Failure(ErrorCode::InvalidArguments, "the navmesh could not be built: " + error);
+            }
+            const Analysis::TraversalMetrics metrics = Analysis::MetricsForScene(*scene);
+            Json corners = Json::array();
+            for (const Vec3& corner : route.corners) corners.push_back(Json::array({corner.x, corner.y, corner.z}));
+            return ToolResult::Success(Json{{"found", route.found}, {"complete", route.complete},
+                                            {"length", route.length}, {"straight", route.straight},
+                                            {"seconds", route.seconds}, {"walkSpeed", metrics.walkSpeed},
+                                            {"vaults", route.links}, {"corners", std::move(corners)}});
+        }));
 }
 
 } // namespace Hephaestus::Automation

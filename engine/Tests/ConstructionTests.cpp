@@ -1388,6 +1388,37 @@ void TestJumpChecks()
     Check(near("jump-only", Vec3(-18.0f, 0.0f, 0.0f), 2.0f), "a 1.5 m gap can be jumped");
     Check(!near("jump-only", Vec3(0.0f, 0.0f, 6.5f), 2.0f) && !near("gap-too-wide", Vec3(0.0f, 0.0f, 6.5f), 2.0f),
           "a wall between two floors rules out jumping across");
+
+    Hephaestus::Navigation::NavMesh navMesh;
+    std::string navError;
+    Check(BuildLevelNavMesh(scene, {}, navMesh, navError), "the level navmesh builds (" + navError + ")");
+    const WalkRoute across = MeasureWalk(navMesh, m, Vec3(-10.0f, 0.2f, -2.0f), Vec3(10.0f, 0.2f, -2.0f));
+    Check(across.found && across.complete && std::fabs(across.length - 20.0f) < 0.3f &&
+              std::fabs(across.seconds - across.length / 2.0f) < 1e-3f,
+          "a 20 m walk across open ground takes 10 s at 2 m/s (" + std::to_string(across.length) + " m)");
+    const WalkRoute around = MeasureWalk(navMesh, m, Vec3(4.0f, 0.2f, 0.0f), Vec3(8.0f, 0.2f, 0.0f));
+    Check(around.complete && around.length > around.straight + 0.3f,
+          "a walk past the platform goes around it, longer than the straight line");
+    const WalkRoute stranded = MeasureWalk(navMesh, m, Vec3(0.0f, 0.2f, 0.0f), Vec3(19.5f, 0.2f, 0.0f));
+    Check(stranded.found && !stranded.complete, "a walk to the far island stops short of it");
+
+    ConstructionTool tool;
+    tool.SetMode(ToolMode::MeasureWalk);
+    ToolCamera camera;
+    camera.eye = Vec3(0.0f, 20.0f, -3.0f);
+    Check(tool.OnPress(scene, system, camera.At(Vec3(-4.0f, 0.2f, -2.0f))), "Measure Walk places the start on a click");
+    tool.OnMove(scene, system, camera.At(Vec3(4.0f, 0.2f, -2.0f)));
+    const std::string following = tool.StatusText();
+    tool.OnPress(scene, system, camera.At(Vec3(4.0f, 0.2f, -2.0f)));
+    const std::string placed = tool.StatusText();
+    Check(following.find("Walk 8.0 m, 4.0 s at walking speed") != std::string::npos &&
+              following.find("Click to place the end") != std::string::npos &&
+              placed.find("Esc to clear") != std::string::npos,
+          "Measure Walk follows the cursor, then holds the measurement (" + following + ")");
+    std::vector<EditorDebugLine> lines;
+    std::vector<EditorDebugPoint> points;
+    tool.AppendOverlay(scene, system, lines, points);
+    Check(lines.size() >= 2 && points.size() >= 2, "the route and its ends are drawn");
 }
 
 void TestScale()

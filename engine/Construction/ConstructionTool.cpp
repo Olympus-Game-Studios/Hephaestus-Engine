@@ -1,12 +1,14 @@
 #include "ConstructionTool.h"
 #include "ConstructionGeometry.h"
 
+#include "../Navigation/NavMesh.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <sstream>
 
@@ -28,6 +30,8 @@ constexpr float kHalfPi = 1.57079633f;
 
 const Vec3 kPreviewColor(1.0f, 0.62f, 0.2f);
 const Vec3 kHandleColor(1.0f, 0.85f, 0.3f);
+const Vec3 kWalkColor(0.3f, 0.9f, 0.45f);
+const Vec3 kStraightColor(0.55f, 0.55f, 0.6f);
 const Vec3 kOpeningColor(0.35f, 0.75f, 1.0f);
 
 bool IntersectPlane(const Ray& ray, const Vec3& point, const Vec3& normal, Vec3& out)
@@ -146,6 +150,33 @@ void ConstructionTool::SetMode(ToolMode mode)
     m_typed.clear();
     m_hoverValid = false;
     m_mode = mode;
+    m_measure = 0;
+    m_walkNav.reset();
+}
+
+bool ConstructionTool::PressMeasure(Scene& scene, ConstructionSystem& system, const ToolInput& input)
+{
+    Vec3 point;
+    if (!PlacementPoint(scene, system, input, point)) {
+        return false;
+    }
+    if (m_measure == 1) {
+        m_measureTo = point;
+        m_measure = 2;
+    } else {
+        // The level may have changed since the last measurement, so the navmesh is built again for each start.
+        m_measureFrom = point;
+        m_measureTo = point;
+        m_measure = 1;
+        m_walkError.clear();
+        auto navMesh = std::make_shared<Navigation::NavMesh>();
+        const std::filesystem::path root = m_host.projectRoot ? m_host.projectRoot() : std::filesystem::path();
+        m_walkNav = Analysis::BuildLevelNavMesh(scene, root, *navMesh, m_walkError) ? navMesh : nullptr;
+        m_walkMetrics = Analysis::MetricsForScene(scene);
+    }
+    m_walkRoute = m_walkNav ? Analysis::MeasureWalk(*m_walkNav, m_walkMetrics, m_measureFrom, m_measureTo)
+                            : Analysis::WalkRoute{};
+    return true;
 }
 
 float ConstructionTool::Snap(float value, const ToolInput& input) const
@@ -248,6 +279,9 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
     if (m_phase != Phase::Idle) {
         return true;
     }
+    if (m_mode == ToolMode::MeasureWalk) {
+        return PressMeasure(scene, system, input);
+    }
     if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
         m_mode == ToolMode::DrawRamp) {
         Vec3 point;
@@ -348,7 +382,13 @@ void ConstructionTool::OnMove(Scene& scene, ConstructionSystem& system, const To
     case Phase::Idle: break;
     }
     m_hoverValid = false;
-    if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
+    if (m_mode == ToolMode::MeasureWalk) {
+        m_hoverValid = PlacementPoint(scene, system, input, m_hoverPoint);
+        if (m_measure == 1 && m_hoverValid && m_walkNav) {
+            m_measureTo = m_hoverPoint;
+            m_walkRoute = Analysis::MeasureWalk(*m_walkNav, m_walkMetrics, m_measureFrom, m_measureTo);
+        }
+    } else if (m_mode == ToolMode::DrawBox || m_mode == ToolMode::DrawRoom || m_mode == ToolMode::DrawStairs ||
         m_mode == ToolMode::DrawRamp ||
         m_mode == ToolMode::DrawWall) {
         m_hoverValid = PlacementPoint(scene, system, input, m_hoverPoint);
@@ -757,6 +797,10 @@ bool ConstructionTool::ApplyTyped(Scene& scene, ConstructionSystem&)
 
 bool ConstructionTool::OnKey(Scene& scene, ConstructionSystem& system, int qtKey)
 {
+    if (m_mode == ToolMode::MeasureWalk && m_measure != 0 && qtKey == kKeyEscape) {
+        m_measure = 0;
+        return true;
+    }
     if (m_phase == Phase::Idle) {
         return false;
     }
@@ -809,6 +853,33 @@ void ConstructionTool::Cancel(Scene& scene)
     m_path.clear();
 }
 
+std::string ConstructionTool::MeasureStatus() const
+{
+    if (m_measure == 0) {
+        return "Measure Walk: click where the walk starts, then where it ends.";
+    }
+    if (!m_walkNav) {
+        return "Measure Walk: the navmesh could not be built (" + m_walkError + ").";
+    }
+    if (!m_walkRoute.found) {
+        return "Measure Walk: there is no walkable floor here.";
+    }
+    char text[256];
+    std::snprintf(text, sizeof(text), "Walk %.1f m, %.1f s at walking speed (straight line %.1f m)",
+                  m_walkRoute.length, m_walkRoute.seconds, m_walkRoute.straight);
+    std::string status = text;
+    if (m_walkRoute.links > 0) {
+        status += ", " + std::to_string(m_walkRoute.links) + (m_walkRoute.links == 1 ? " vault" : " vaults");
+    }
+    if (!m_walkRoute.complete) {
+        status += ". The end can't be walked to; the route stops at the closest point.";
+    } else {
+        status += ".";
+    }
+    status += m_measure == 1 ? " Click to place the end." : " Click to measure again, Esc to clear.";
+    return status;
+}
+
 std::string ConstructionTool::StatusText() const
 {
     std::string text;
@@ -826,6 +897,7 @@ std::string ConstructionTool::StatusText() const
         else if (m_mode == ToolMode::DrawRamp) text = "Draw Ramp: drag the footprint (it rises along the longer side, away from where you start), then move up for the height.";
         else if (m_mode == ToolMode::DrawWall) text = "Draw Wall: click on the ground or a surface to place the first corner.";
         else if (m_mode == ToolMode::DrawOpening) text = "Draw Opening: drag on a wall. Click for a door near the floor or a window higher up. Drag an opening to move it.";
+        else if (m_mode == ToolMode::MeasureWalk) text = MeasureStatus();
         break;
     }
     if (!m_typed.empty()) {
@@ -838,6 +910,23 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
                                      std::vector<EditorDebugPoint>& points) const
 {
     const Mat4 identity = Mat4::Identity();
+    if (m_mode == ToolMode::MeasureWalk) {
+        if (m_hoverValid && m_measure != 1) {
+            points.push_back({m_hoverPoint, kPreviewColor, 0.15f});
+        }
+        if (m_measure == 0) {
+            return;
+        }
+        const Vec3 lift(0.0f, 0.05f, 0.0f);
+        const Vec3 routeColor = m_walkRoute.complete ? kWalkColor : kPreviewColor;
+        for (size_t n = 0; n + 1 < m_walkRoute.corners.size(); ++n) {
+            lines.push_back({vadd(m_walkRoute.corners[n], lift), vadd(m_walkRoute.corners[n + 1], lift), routeColor});
+        }
+        lines.push_back({m_measureFrom, m_measureTo, kStraightColor});
+        points.push_back({m_measureFrom, routeColor, 0.18f});
+        points.push_back({m_measureTo, routeColor, 0.18f});
+        return;
+    }
     if (m_phase == Phase::Base || m_phase == Phase::Height) {
         const Vec3 mn(std::min(m_anchor.x, m_corner.x), m_anchor.y, std::min(m_anchor.z, m_corner.z));
         const Vec3 mx(std::max(m_anchor.x, m_corner.x), m_anchor.y + (m_phase == Phase::Height ? m_height : 0.0f),

@@ -10,6 +10,10 @@
 
 class Scene;
 
+namespace Hephaestus::Navigation {
+class NavMesh;
+}
+
 namespace Hephaestus::Analysis {
 
 // What the scene's characters can do, from their Character Controllers: the largest body, and the smallest step,
@@ -21,8 +25,8 @@ struct TraversalMetrics {
     float maxSlopeDegrees = 45.0f;
     float jumpHeight = 0.0f;  // how high a standing jump lifts the feet
     // The character that jumps lowest: its take-off speed, walking speed, gravity and grace time after a ledge.
-    float jumpSpeed = 0.0f;
-    float walkSpeed = 0.0f;
+    float jumpSpeed = 5.5f;
+    float walkSpeed = 5.0f;
     float gravity = 9.81f;
     float coyoteTime = 0.0f;
     bool fromControllers = false;
@@ -50,6 +54,26 @@ struct LevelCheckReport {
     int navPolygons = 0;
     int islands = 0;
 };
+
+// The walking route between two points on the navmesh, as a character walks it.
+struct WalkRoute {
+    bool found = false;     // both points are near the navmesh
+    bool complete = false;  // the route ends at `to`; otherwise it stops at the closest point it can reach
+    std::vector<Vec3> corners;
+    float length = 0.0f;    // along the route
+    float straight = 0.0f;  // from start to end, as the crow flies
+    float seconds = 0.0f;   // at walking speed
+    int links = 0;          // vaults over cover on the way
+};
+
+// Builds the navmesh a level check uses: the scene's collision, sized to its characters, with vault links.
+bool BuildLevelNavMesh(Scene& scene, const std::filesystem::path& projectRoot, Navigation::NavMesh& out,
+                       std::string& error);
+WalkRoute MeasureWalk(const Navigation::NavMesh& navMesh, const TraversalMetrics& metrics, const Vec3& from,
+                      const Vec3& to);
+// The same, building the level navmesh first; false with error when it can't be built.
+bool MeasureLevelWalk(Scene& scene, const std::filesystem::path& projectRoot, const Vec3& from, const Vec3& to,
+                      WalkRoute& out, std::string& error);
 
 // Checks the level against what its characters can do. Construction shapes must already be evaluated (their
 // collision is what the navmesh is built from).
