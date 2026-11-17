@@ -304,6 +304,7 @@ struct LevelEntityInfo {
     std::uint64_t id = 0;             // as ISceneService ids
     const char* name = nullptr;       // valid until the check returns
     float position[3] = {0.0f, 0.0f, 0.0f};  // world space
+    const char* script = nullptr;     // its Lua script's path, or null; valid until the check returns
 };
 
 /// One run of a plugin's level check, valid only during its callback.
@@ -319,6 +320,11 @@ public:
     virtual std::uint32_t EntityCount() const = 0;
     virtual bool GetEntity(std::uint32_t index, LevelEntityInfo& out) const = 0;
     virtual void Report(const LevelProblemDescriptor& problem) = 0;
+    /// The value an entity's Lua script gives an Expose.* setting, as text (numbers in plain decimal, booleans as
+    /// "true"/"false"). False when the entity has no script or the setting is not stored with the scene.
+    virtual bool GetScriptValue(std::uint64_t entityId, const char* name, char* out, std::size_t outSize) const = 0;
+    /// The nearest walkable point within 2 m sideways and 4 m up or down, as Lua's Nav.closestPoint finds it.
+    virtual bool ClosestWalkable(const float point[3], float out[3]) const = 0;
 };
 
 using LevelCheckCallback = void (*)(ILevelCheckRun& run, void* userData);

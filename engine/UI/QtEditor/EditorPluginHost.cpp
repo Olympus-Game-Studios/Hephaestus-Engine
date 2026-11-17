@@ -18,6 +18,7 @@
 #include "../../Navigation/NavMesh.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
+#include "../../Scripting/LuaScriptComponent.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/SceneAuthoring.h"
 #include <QAction>
@@ -39,6 +40,8 @@
 #include <cstring>
 #include <fstream>
 #include <ranges>
+#include <sstream>
+#include <locale>
 
 namespace Hephaestus::QtEditor {
 
@@ -451,8 +454,10 @@ public:
         for (auto entity : scene.GetRegistry().view<TagComponent>()) {
             if (scene.GetRegistry().all_of<ConstructionGeneratedComponent>(entity)) continue;
             const Vec3 p = Mat4::TransformPoint(scene.GetWorldTransform(Entity(entity, &scene)), Vec3(0.0f, 0.0f, 0.0f));
+            const auto* script = scene.GetRegistry().try_get<LuaScriptComponent>(entity);
             entities_.push_back({static_cast<std::uint64_t>(static_cast<std::uint32_t>(entity)) + 1,
-                                 scene.GetRegistry().get<TagComponent>(entity).tag, p});
+                                 scene.GetRegistry().get<TagComponent>(entity).tag, p,
+                                 script ? script->scriptPath : std::string()});
         }
     }
     const Plugins::LevelMetrics& Metrics() const override { return metrics_; }
@@ -487,6 +492,40 @@ public:
         out.position[0] = named.position.x;
         out.position[1] = named.position.y;
         out.position[2] = named.position.z;
+        out.script = named.script.empty() ? nullptr : named.script.c_str();
+        return true;
+    }
+    bool ClosestWalkable(const float point[3], float out[3]) const override
+    {
+        Vec3 found;
+        if (!point || !out || !context_.navMesh.ClosestPoint(Vec3(point[0], point[1], point[2]), found)) return false;
+        out[0] = found.x;
+        out[1] = found.y;
+        out[2] = found.z;
+        return true;
+    }
+    bool GetScriptValue(std::uint64_t entityId, const char* name, char* out, std::size_t outSize) const override
+    {
+        const auto entity = static_cast<entt::entity>(static_cast<std::uint32_t>(entityId - 1));
+        const auto* script = entityId != 0 && name && out && outSize > 0 && context_.scene.GetRegistry().valid(entity)
+            ? context_.scene.GetRegistry().try_get<LuaScriptComponent>(entity) : nullptr;
+        const auto found = script ? script->variables.find(name) : decltype(script->variables)::const_iterator{};
+        if (!script || found == script->variables.end()) return false;
+        std::string text;
+        if (const std::string* value = found->second.AsString()) {
+            text = *value;
+        } else if (const bool* flag = std::get_if<bool>(&found->second.value)) {
+            text = *flag ? "true" : "false";
+        } else if (const double* number = std::get_if<double>(&found->second.value)) {
+            std::ostringstream stream;
+            stream.imbue(std::locale::classic());
+            stream << *number;
+            text = stream.str();
+        } else {
+            return false;
+        }
+        if (text.size() + 1 > outSize) return false;
+        std::memcpy(out, text.c_str(), text.size() + 1);
         return true;
     }
     void Report(const Plugins::LevelProblemDescriptor& problem) override
@@ -509,6 +548,7 @@ private:
         std::uint64_t id;
         std::string name;
         Vec3 position;
+        std::string script;
     };
     const Analysis::LevelCheckContext& context_;
     std::vector<Analysis::LevelProblem>& problems_;

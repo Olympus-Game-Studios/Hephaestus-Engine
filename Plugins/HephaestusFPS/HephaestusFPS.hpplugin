@@ -6,7 +6,7 @@
   "description": "First-person player, weapons, and HUD as plugin content and Lua.",
   "author": "Hephaestus Engine",
   "pluginVersion": "1.0.0",
-  "engineVersion": ">=2026.9.0",
+  "engineVersion": ">=2026.11.12",
   "type": "editor",
   "entry": "bin/HephaestusFPS.dll",
   "content": "Content",

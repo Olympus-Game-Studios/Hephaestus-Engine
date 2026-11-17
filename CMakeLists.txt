@@ -830,6 +830,7 @@ if(HEPHAESTUS_USE_QT)
 
         add_library(HephaestusFPS SHARED
             Plugins/HephaestusFPS/Source/HephaestusFPSEditor.cpp
+            Plugins/HephaestusFPS/Source/FPSLevelChecks.h
         )
         target_include_directories(HephaestusFPS PRIVATE engine extern)
         target_link_libraries(HephaestusFPS PRIVATE Qt6::Widgets)
@@ -2578,6 +2579,14 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         Plugins/HephaestusFPS/Source
     )
     add_test(NAME FPSInputMerge COMMAND FPSInputMergeTests)
+
+    add_executable(FPSLevelChecksTests engine/Tests/FPSLevelChecksTests.cpp)
+    target_include_directories(FPSLevelChecksTests PRIVATE
+        engine
+        extern
+        Plugins/HephaestusFPS/Source
+    )
+    add_test(NAME FPSLevelChecks COMMAND FPSLevelChecksTests)
 
     add_executable(FPSPluginLayoutTests engine/Tests/FPSPluginLayoutTests.cpp)
     target_link_libraries(FPSPluginLayoutTests PRIVATE HephaestusPluginCore)
