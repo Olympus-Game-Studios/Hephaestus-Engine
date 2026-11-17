@@ -22,6 +22,9 @@ namespace {
 constexpr int kMaxPathPolys = 256;
 constexpr unsigned short kWalkableFlag = 1;
 constexpr unsigned char kVaultArea = 1;
+// Cells along each side of a navmesh tile: 38 m at the default 0.15 m cell, so a tile stays far below Recast's
+// 2^24 spans per heightfield however large the level.
+constexpr int kTileCells = 256;
 
 struct HeightfieldDeleter { void operator()(rcHeightfield* p) const { rcFreeHeightField(p); } };
 struct CompactDeleter { void operator()(rcCompactHeightfield* p) const { rcFreeCompactHeightfield(p); } };
@@ -428,22 +431,19 @@ int NavMesh::PolygonCount() const
         return 0;
     }
     const dtNavMesh* mesh = m_navMesh;
-    const dtMeshTile* tile = mesh->getTile(0);
-    return tile && tile->header ? tile->header->polyCount : 0;
+    int count = 0;
+    for (int i = 0; i < mesh->getMaxTiles(); ++i) {
+        const dtMeshTile* tile = mesh->getTile(i);
+        if (tile && tile->header) count += tile->header->polyCount;
+    }
+    return count;
 }
 
-bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std::string& error)
-{
-    Clear();
-    if (geometry.Empty()) {
-        error = "no walkable geometry (static colliders) in the scene";
-        return false;
-    }
-    const float* verts = geometry.vertices.data();
-    const int vertCount = static_cast<int>(geometry.vertices.size() / 3);
-    const int* tris = geometry.triangles.data();
-    const int triCount = static_cast<int>(geometry.triangles.size() / 3);
+namespace {
 
+// The Recast settings shared by every tile.
+rcConfig BaseConfig(const NavBuildSettings& s)
+{
     rcConfig cfg{};
     cfg.cs = s.cellSize;
     cfg.ch = s.cellHeight;
@@ -458,30 +458,49 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     cfg.maxVertsPerPoly = 6;
     cfg.detailSampleDist = s.detailSampleDistance < 0.9f ? 0.0f : s.cellSize * s.detailSampleDistance;
     cfg.detailSampleMaxError = s.cellHeight * s.detailSampleMaxError;
-    rcCalcBounds(verts, vertCount, cfg.bmin, cfg.bmax);
-    rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
+    cfg.tileSize = kTileCells;
+    // Recast needs the agent's erosion plus a few cells of neighbouring geometry around each tile.
+    cfg.borderSize = cfg.walkableRadius + 3;
+    cfg.width = cfg.tileSize + cfg.borderSize * 2;
+    cfg.height = cfg.tileSize + cfg.borderSize * 2;
+    return cfg;
+}
 
+struct PieceBounds {
+    int firstTriangle = 0;
+    int endTriangle = 0;
+    bool solid = false;
+    float min[3] = {0.0f, 0.0f, 0.0f};
+    float max[3] = {0.0f, 0.0f, 0.0f};
+};
+
+// One tile of the navmesh, from the geometry overlapping cfg.bmin to cfg.bmax. Returns false with error on a Recast
+// failure, and true with no data for a tile with nothing walkable.
+bool BuildTile(const NavGeometry& geometry, const std::vector<PieceBounds>& pieces, const std::vector<unsigned char>& areas,
+               const NavBuildSettings& s, rcConfig cfg, int tileX, int tileY, unsigned char*& data, int& dataSize,
+               std::string& error)
+{
+    data = nullptr;
+    dataSize = 0;
+    const float* verts = geometry.vertices.data();
+    const int vertCount = static_cast<int>(geometry.vertices.size() / 3);
+    const int* tris = geometry.triangles.data();
     rcContext ctx(false);
     std::unique_ptr<rcHeightfield, HeightfieldDeleter> solid(rcAllocHeightfield());
     if (!solid || !rcCreateHeightfield(&ctx, *solid, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch)) {
         error = "could not create the heightfield";
         return false;
     }
-    std::vector<unsigned char> areas(static_cast<size_t>(triCount), 0);
-    rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, vertCount, tris, triCount, areas.data());
-    // Recast rasterizes surfaces only, so a block taller than an agent would have walkable floor inside it. Each
-    // solid is rasterized on its own and its columns are filled from its lowest to its highest point instead.
-    std::vector<NavGeometry::Piece> pieces = geometry.pieces;
-    if (pieces.empty() || pieces.front().firstTriangle > 0) {
-        pieces.insert(pieces.begin(), NavGeometry::Piece{0, false});
-    }
-    for (size_t n = 0; n < pieces.size(); ++n) {
-        const int t0 = pieces[n].firstTriangle;
-        const int t1 = n + 1 < pieces.size() ? pieces[n + 1].firstTriangle : triCount;
-        if (t1 <= t0) {
+    bool any = false;
+    for (const PieceBounds& piece : pieces) {
+        if (piece.max[0] < cfg.bmin[0] || piece.min[0] > cfg.bmax[0] || piece.max[2] < cfg.bmin[2] ||
+            piece.min[2] > cfg.bmax[2]) {
             continue;
         }
-        if (!pieces[n].solid) {
+        any = true;
+        const int t0 = piece.firstTriangle;
+        const int t1 = piece.endTriangle;
+        if (!piece.solid) {
             if (!rcRasterizeTriangles(&ctx, verts, vertCount, tris + t0 * 3, areas.data() + t0, t1 - t0, *solid,
                                       cfg.walkableClimb)) {
                 error = "could not rasterize the geometry";
@@ -489,34 +508,27 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
             }
             continue;
         }
-        float mn[3] = {verts[tris[t0 * 3] * 3], 0.0f, verts[tris[t0 * 3] * 3 + 2]};
-        float mx[3] = {mn[0], 0.0f, mn[2]};
-        for (int i = t0 * 3; i < t1 * 3; ++i) {
-            const float* v = &verts[tris[i] * 3];
-            mn[0] = std::min(mn[0], v[0]);
-            mn[2] = std::min(mn[2], v[2]);
-            mx[0] = std::max(mx[0], v[0]);
-            mx[2] = std::max(mx[2], v[2]);
-        }
-        const int ox = std::max(0, static_cast<int>(std::floor((mn[0] - cfg.bmin[0]) / cfg.cs)));
-        const int oz = std::max(0, static_cast<int>(std::floor((mn[2] - cfg.bmin[2]) / cfg.cs)));
-        const int w = std::min(cfg.width - ox, static_cast<int>(std::ceil((mx[0] - cfg.bmin[0]) / cfg.cs)) - ox + 1);
-        const int h = std::min(cfg.height - oz, static_cast<int>(std::ceil((mx[2] - cfg.bmin[2]) / cfg.cs)) - oz + 1);
+        // Recast rasterizes surfaces only, so a block taller than an agent would have walkable floor inside it.
+        // Each solid is rasterized on its own and its columns are filled from its lowest to its highest point.
+        const int ox = std::max(0, static_cast<int>(std::floor((piece.min[0] - cfg.bmin[0]) / cfg.cs)));
+        const int oz = std::max(0, static_cast<int>(std::floor((piece.min[2] - cfg.bmin[2]) / cfg.cs)));
+        const int w = std::min(cfg.width - ox, static_cast<int>(std::ceil((piece.max[0] - cfg.bmin[0]) / cfg.cs)) - ox + 1);
+        const int h = std::min(cfg.height - oz, static_cast<int>(std::ceil((piece.max[2] - cfg.bmin[2]) / cfg.cs)) - oz + 1);
         if (w <= 0 || h <= 0) {
             continue;
         }
         const float tbmin[3] = {cfg.bmin[0] + ox * cfg.cs, cfg.bmin[1], cfg.bmin[2] + oz * cfg.cs};
         const float tbmax[3] = {tbmin[0] + w * cfg.cs, cfg.bmax[1], tbmin[2] + h * cfg.cs};
-        std::unique_ptr<rcHeightfield, HeightfieldDeleter> piece(rcAllocHeightfield());
-        if (!piece || !rcCreateHeightfield(&ctx, *piece, w, h, tbmin, tbmax, cfg.cs, cfg.ch) ||
-            !rcRasterizeTriangles(&ctx, verts, vertCount, tris + t0 * 3, areas.data() + t0, t1 - t0, *piece,
+        std::unique_ptr<rcHeightfield, HeightfieldDeleter> part(rcAllocHeightfield());
+        if (!part || !rcCreateHeightfield(&ctx, *part, w, h, tbmin, tbmax, cfg.cs, cfg.ch) ||
+            !rcRasterizeTriangles(&ctx, verts, vertCount, tris + t0 * 3, areas.data() + t0, t1 - t0, *part,
                                   cfg.walkableClimb)) {
             error = "could not rasterize the geometry";
             return false;
         }
         for (int z = 0; z < h; ++z) {
             for (int x = 0; x < w; ++x) {
-                const rcSpan* span = piece->spans[x + z * w];
+                const rcSpan* span = part->spans[x + z * w];
                 if (!span) {
                     continue;
                 }
@@ -538,6 +550,9 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
             }
         }
     }
+    if (!any) {
+        return true;
+    }
     rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *solid);
     rcFilterLedgeSpans(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid);
     rcFilterWalkableLowHeightSpans(&ctx, cfg.walkableHeight, *solid);
@@ -549,7 +564,7 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     }
     solid.reset();
     if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf) || !rcBuildDistanceField(&ctx, *chf) ||
-        !rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea)) {
+        !rcBuildRegions(&ctx, *chf, cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea)) {
         error = "could not build walkable regions";
         return false;
     }
@@ -557,6 +572,9 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     if (!contours || !rcBuildContours(&ctx, *chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *contours)) {
         error = "could not build contours";
         return false;
+    }
+    if (contours->nconts == 0) {
+        return true;
     }
     std::unique_ptr<rcPolyMesh, PolyMeshDeleter> pmesh(rcAllocPolyMesh());
     if (!pmesh || !rcBuildPolyMesh(&ctx, *contours, cfg.maxVertsPerPoly, *pmesh)) {
@@ -569,8 +587,7 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
         return false;
     }
     if (pmesh->npolys == 0) {
-        error = "no walkable area";
-        return false;
+        return true;
     }
     for (int i = 0; i < pmesh->npolys; ++i) {
         pmesh->flags[i] = pmesh->areas[i] == RC_WALKABLE_AREA ? kWalkableFlag : 0;
@@ -592,46 +609,161 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     params.walkableHeight = s.agentHeight;
     params.walkableRadius = s.agentRadius;
     params.walkableClimb = s.agentMaxClimb;
+    params.tileX = tileX;
+    params.tileY = tileY;
+    params.tileLayer = 0;
     rcVcopy(params.bmin, pmesh->bmin);
     rcVcopy(params.bmax, pmesh->bmax);
     params.cs = cfg.cs;
     params.ch = cfg.ch;
     params.buildBvTree = true;
+    // Links belong to the tile their start is in; Detour joins their far ends across tiles.
     std::vector<float> linkVerts;
     std::vector<float> linkRadii;
     std::vector<unsigned char> linkDirs;
     std::vector<unsigned char> linkAreas;
     std::vector<unsigned short> linkFlags;
     std::vector<unsigned int> linkIds;
-    for (const NavLink& link : geometry.links) {
+    const float tileMin[2] = {cfg.bmin[0] + cfg.borderSize * cfg.cs, cfg.bmin[2] + cfg.borderSize * cfg.cs};
+    const float tileExtent = cfg.tileSize * cfg.cs;
+    for (size_t n = 0; n < geometry.links.size(); ++n) {
+        const NavLink& link = geometry.links[n];
+        if (link.from.x < tileMin[0] || link.from.x >= tileMin[0] + tileExtent || link.from.z < tileMin[1] ||
+            link.from.z >= tileMin[1] + tileExtent) {
+            continue;
+        }
         linkVerts.insert(linkVerts.end(), {link.from.x, link.from.y, link.from.z, link.to.x, link.to.y, link.to.z});
         linkRadii.push_back(s.agentRadius);
         linkDirs.push_back(DT_OFFMESH_CON_BIDIR);
         linkAreas.push_back(kVaultArea);
         linkFlags.push_back(kWalkableFlag);
-        linkIds.push_back(static_cast<unsigned int>(linkIds.size()));
+        linkIds.push_back(static_cast<unsigned int>(n));
     }
-    if (!geometry.links.empty()) {
+    if (!linkIds.empty()) {
         params.offMeshConVerts = linkVerts.data();
         params.offMeshConRad = linkRadii.data();
         params.offMeshConDir = linkDirs.data();
         params.offMeshConAreas = linkAreas.data();
         params.offMeshConFlags = linkFlags.data();
         params.offMeshConUserID = linkIds.data();
-        params.offMeshConCount = static_cast<int>(geometry.links.size());
+        params.offMeshConCount = static_cast<int>(linkIds.size());
     }
-
-    unsigned char* data = nullptr;
-    int dataSize = 0;
     if (!dtCreateNavMeshData(&params, &data, &dataSize)) {
         error = "could not create the navmesh data";
         return false;
     }
+    return true;
+}
+
+unsigned int Log2Ceil(unsigned int value)
+{
+    unsigned int bits = 0;
+    while ((1u << bits) < value) ++bits;
+    return bits;
+}
+
+} // namespace
+
+bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std::string& error)
+{
+    Clear();
+    if (geometry.Empty()) {
+        error = "no walkable geometry (static colliders) in the scene";
+        return false;
+    }
+    const float* verts = geometry.vertices.data();
+    const int vertCount = static_cast<int>(geometry.vertices.size() / 3);
+    const int* tris = geometry.triangles.data();
+    const int triCount = static_cast<int>(geometry.triangles.size() / 3);
+
+    rcConfig cfg = BaseConfig(s);
+    float bmin[3];
+    float bmax[3];
+    rcCalcBounds(verts, vertCount, bmin, bmax);
+    int gridWidth = 0;
+    int gridHeight = 0;
+    rcCalcGridSize(bmin, bmax, cfg.cs, &gridWidth, &gridHeight);
+    const int tilesX = (gridWidth + cfg.tileSize - 1) / cfg.tileSize;
+    const int tilesY = (gridHeight + cfg.tileSize - 1) / cfg.tileSize;
+    // 32-bit polygon references leave 22 bits for the tile and the polygon within it.
+    const unsigned int tileBits = Log2Ceil(static_cast<unsigned int>(tilesX * tilesY));
+    if (tileBits > 14) {
+        error = "the level is too large for the navmesh (" + std::to_string(tilesX * tilesY) + " tiles)";
+        return false;
+    }
+    const unsigned int polyBits = 22 - tileBits;
+
+    std::vector<unsigned char> areas(static_cast<size_t>(triCount), 0);
+    rcContext ctx(false);
+    rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, vertCount, tris, triCount, areas.data());
+    std::vector<PieceBounds> pieces;
+    {
+        std::vector<NavGeometry::Piece> listed = geometry.pieces;
+        if (listed.empty() || listed.front().firstTriangle > 0) {
+            listed.insert(listed.begin(), NavGeometry::Piece{0, false});
+        }
+        for (size_t n = 0; n < listed.size(); ++n) {
+            PieceBounds piece;
+            piece.firstTriangle = listed[n].firstTriangle;
+            piece.endTriangle = n + 1 < listed.size() ? listed[n + 1].firstTriangle : triCount;
+            piece.solid = listed[n].solid;
+            if (piece.endTriangle <= piece.firstTriangle) continue;
+            const float* first = &verts[tris[piece.firstTriangle * 3] * 3];
+            rcVcopy(piece.min, first);
+            rcVcopy(piece.max, first);
+            for (int i = piece.firstTriangle * 3; i < piece.endTriangle * 3; ++i) {
+                rcVmin(piece.min, &verts[tris[i] * 3]);
+                rcVmax(piece.max, &verts[tris[i] * 3]);
+            }
+            pieces.push_back(piece);
+        }
+    }
+
+    dtNavMeshParams meshParams{};
+    rcVcopy(meshParams.orig, bmin);
+    meshParams.tileWidth = cfg.tileSize * cfg.cs;
+    meshParams.tileHeight = cfg.tileSize * cfg.cs;
+    meshParams.maxTiles = 1 << tileBits;
+    meshParams.maxPolys = 1 << polyBits;
     m_navMesh = dtAllocNavMesh();
-    if (!m_navMesh || dtStatusFailed(m_navMesh->init(data, dataSize, DT_TILE_FREE_DATA))) {
-        dtFree(data);
+    if (!m_navMesh || dtStatusFailed(m_navMesh->init(&meshParams))) {
         Clear();
         error = "could not initialise the navmesh";
+        return false;
+    }
+    int tilesBuilt = 0;
+    for (int ty = 0; ty < tilesY; ++ty) {
+        for (int tx = 0; tx < tilesX; ++tx) {
+            rcConfig tile = cfg;
+            const float extent = cfg.tileSize * cfg.cs;
+            const float border = cfg.borderSize * cfg.cs;
+            tile.bmin[0] = bmin[0] + tx * extent - border;
+            tile.bmin[1] = bmin[1];
+            tile.bmin[2] = bmin[2] + ty * extent - border;
+            tile.bmax[0] = bmin[0] + (tx + 1) * extent + border;
+            tile.bmax[1] = bmax[1];
+            tile.bmax[2] = bmin[2] + (ty + 1) * extent + border;
+            unsigned char* data = nullptr;
+            int dataSize = 0;
+            if (!BuildTile(geometry, pieces, areas, s, tile, tx, ty, data, dataSize, error)) {
+                Clear();
+                return false;
+            }
+            if (!data) {
+                continue;
+            }
+            if (dtStatusFailed(m_navMesh->addTile(data, dataSize, DT_TILE_FREE_DATA, 0, nullptr))) {
+                dtFree(data);
+                Clear();
+                error = "could not add a navmesh tile";
+                return false;
+            }
+            ++tilesBuilt;
+        }
+    }
+    if (tilesBuilt == 0) {
+        Clear();
+        error = "no walkable area";
         return false;
     }
     m_query = dtAllocNavMeshQuery();
@@ -665,60 +797,88 @@ std::vector<NavIsland> NavMesh::Islands(const std::vector<Vec3>& starts, const V
 {
     std::vector<NavIsland> islands;
     const dtNavMesh* mesh = m_navMesh;
-    const dtMeshTile* tile = mesh ? mesh->getTile(0) : nullptr;
-    if (!m_query || !tile || !tile->header) {
+    if (!m_query || !mesh) {
         return islands;
     }
-    const int polyCount = tile->header->polyCount;
-    std::vector<int> islandOf(static_cast<size_t>(polyCount), -1);
-    for (int seed = 0; seed < polyCount; ++seed) {
-        if (islandOf[static_cast<size_t>(seed)] >= 0) continue;
-        const int id = static_cast<int>(islands.size());
-        NavIsland island;
-        bool first = true;
-        float weightedX = 0.0f, weightedY = 0.0f, weightedZ = 0.0f;
-        std::vector<int> open{seed};
-        islandOf[static_cast<size_t>(seed)] = id;
-        while (!open.empty()) {
-            const int index = open.back();
-            open.pop_back();
-            const dtPoly& poly = tile->polys[index];
-            for (unsigned int k = poly.firstLink; k != DT_NULL_LINK; k = tile->links[k].next) {
-                const unsigned int next = mesh->decodePolyIdPoly(tile->links[k].ref);
-                if (next < static_cast<unsigned int>(polyCount) && islandOf[next] < 0) {
-                    islandOf[next] = id;
-                    open.push_back(static_cast<int>(next));
-                }
-            }
-            if (poly.getType() != DT_POLYTYPE_GROUND) continue;
-            float area = 0.0f;
-            Vec3 sum(0.0f, 0.0f, 0.0f);
-            for (int v = 0; v < poly.vertCount; ++v) {
-                const float* a = &tile->verts[poly.verts[v] * 3];
-                const float* b = &tile->verts[poly.verts[(v + 1) % poly.vertCount] * 3];
-                if (poly.neis[v] == 0) {
-                    island.edges.push_back({Vec3(a[0], a[1], a[2]), Vec3(b[0], b[1], b[2])});
-                }
-                area += a[0] * b[2] - b[0] * a[2];
-                sum = vadd(sum, Vec3(a[0], a[1], a[2]));
-                const Vec3 point(a[0], a[1], a[2]);
-                island.min = first ? point : Vec3(std::min(island.min.x, point.x), std::min(island.min.y, point.y),
-                                                  std::min(island.min.z, point.z));
-                island.max = first ? point : Vec3(std::max(island.max.x, point.x), std::max(island.max.y, point.y),
-                                                  std::max(island.max.z, point.z));
-                first = false;
-            }
-            area = std::fabs(area) * 0.5f;
-            const Vec3 centre = vscale(sum, 1.0f / static_cast<float>(std::max<int>(1, poly.vertCount)));
-            island.area += area;
-            weightedX += centre.x * area;
-            weightedY += centre.y * area;
-            weightedZ += centre.z * area;
+    // Every polygon of every tile gets one index: the tile's offset plus its index in the tile.
+    std::vector<int> offsets(static_cast<size_t>(mesh->getMaxTiles()), -1);
+    int total = 0;
+    for (int i = 0; i < mesh->getMaxTiles(); ++i) {
+        const dtMeshTile* tile = mesh->getTile(i);
+        if (tile && tile->header) {
+            offsets[static_cast<size_t>(i)] = total;
+            total += tile->header->polyCount;
         }
-        if (island.area > 0.0f) {
-            island.centre = Vec3(weightedX / island.area, weightedY / island.area, weightedZ / island.area);
+    }
+    auto indexOf = [&](dtPolyRef ref) {
+        unsigned int salt = 0, tileIndex = 0, polyIndex = 0;
+        mesh->decodePolyId(ref, salt, tileIndex, polyIndex);
+        return tileIndex < offsets.size() && offsets[tileIndex] >= 0 ? offsets[tileIndex] + static_cast<int>(polyIndex)
+                                                                     : -1;
+    };
+    std::vector<int> islandOf(static_cast<size_t>(total), -1);
+    for (int ti = 0; ti < mesh->getMaxTiles(); ++ti) {
+        const dtMeshTile* seedTile = mesh->getTile(ti);
+        if (!seedTile || !seedTile->header) continue;
+        for (int seed = 0; seed < seedTile->header->polyCount; ++seed) {
+            if (islandOf[static_cast<size_t>(offsets[static_cast<size_t>(ti)] + seed)] >= 0) continue;
+            const int id = static_cast<int>(islands.size());
+            NavIsland island;
+            bool first = true;
+            float weightedX = 0.0f, weightedY = 0.0f, weightedZ = 0.0f;
+            std::vector<dtPolyRef> open{mesh->getPolyRefBase(seedTile) | static_cast<dtPolyRef>(seed)};
+            islandOf[static_cast<size_t>(offsets[static_cast<size_t>(ti)] + seed)] = id;
+            while (!open.empty()) {
+                const dtPolyRef ref = open.back();
+                open.pop_back();
+                const dtMeshTile* tile = nullptr;
+                const dtPoly* poly = nullptr;
+                if (dtStatusFailed(mesh->getTileAndPolyByRef(ref, &tile, &poly))) continue;
+                for (unsigned int k = poly->firstLink; k != DT_NULL_LINK; k = tile->links[k].next) {
+                    const int next = indexOf(tile->links[k].ref);
+                    if (next >= 0 && islandOf[static_cast<size_t>(next)] < 0) {
+                        islandOf[static_cast<size_t>(next)] = id;
+                        open.push_back(tile->links[k].ref);
+                    }
+                }
+                if (poly->getType() != DT_POLYTYPE_GROUND) continue;
+                float area = 0.0f;
+                Vec3 sum(0.0f, 0.0f, 0.0f);
+                for (int v = 0; v < poly->vertCount; ++v) {
+                    const float* a = &tile->verts[poly->verts[v] * 3];
+                    const float* b = &tile->verts[poly->verts[(v + 1) % poly->vertCount] * 3];
+                    // An edge on a tile border is open only where a link crosses it into the next tile.
+                    bool open = poly->neis[v] != 0;
+                    if (poly->neis[v] & DT_EXT_LINK) {
+                        open = false;
+                        for (unsigned int k = poly->firstLink; k != DT_NULL_LINK; k = tile->links[k].next) {
+                            open = open || tile->links[k].edge == v;
+                        }
+                    }
+                    if (!open) {
+                        island.edges.push_back({Vec3(a[0], a[1], a[2]), Vec3(b[0], b[1], b[2])});
+                    }
+                    area += a[0] * b[2] - b[0] * a[2];
+                    sum = vadd(sum, Vec3(a[0], a[1], a[2]));
+                    const Vec3 point(a[0], a[1], a[2]);
+                    island.min = first ? point : Vec3(std::min(island.min.x, point.x), std::min(island.min.y, point.y),
+                                                      std::min(island.min.z, point.z));
+                    island.max = first ? point : Vec3(std::max(island.max.x, point.x), std::max(island.max.y, point.y),
+                                                      std::max(island.max.z, point.z));
+                    first = false;
+                }
+                area = std::fabs(area) * 0.5f;
+                const Vec3 centre = vscale(sum, 1.0f / static_cast<float>(std::max<int>(1, poly->vertCount)));
+                island.area += area;
+                weightedX += centre.x * area;
+                weightedY += centre.y * area;
+                weightedZ += centre.z * area;
+            }
+            if (island.area > 0.0f) {
+                island.centre = Vec3(weightedX / island.area, weightedY / island.area, weightedZ / island.area);
+            }
+            islands.push_back(island);
         }
-        islands.push_back(island);
     }
     dtQueryFilter filter;
     const float extents[3] = {searchExtents.x, searchExtents.y, searchExtents.z};
@@ -727,9 +887,9 @@ std::vector<NavIsland> NavMesh::Islands(const std::vector<Vec3>& starts, const V
         dtPolyRef ref = 0;
         float nearest[3];
         if (dtStatusSucceed(m_query->findNearestPoly(p, extents, &filter, &ref, nearest)) && ref != 0) {
-            const unsigned int index = mesh->decodePolyIdPoly(ref);
-            if (index < static_cast<unsigned int>(polyCount)) {
-                islands[static_cast<size_t>(islandOf[index])].reached = true;
+            const int index = indexOf(ref);
+            if (index >= 0) {
+                islands[static_cast<size_t>(islandOf[static_cast<size_t>(index)])].reached = true;
             }
         }
     }

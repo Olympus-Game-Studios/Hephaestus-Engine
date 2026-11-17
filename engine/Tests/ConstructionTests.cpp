@@ -1446,6 +1446,37 @@ void TestJumpChecks()
     Check(!stillRuns && LevelCheckIds().empty(), "removing the owner's checks stops them running");
 }
 
+void TestLargeLevel()
+{
+    // Recast addresses a heightfield's spans with 24 bits, so one 840 m floor in a single tile built nothing.
+    Scene scene("Large");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams floor;
+    floor.width = 839.55f;
+    floor.depth = 839.55f;
+    floor.height = 1.4f;
+    AddBox(scene, "Floor", floor, Vec3(0.0f, -1.4f, 0.0f));
+    AddBox(scene, "Room", Room(), Vec3(100.0f, 0.0f, 100.0f));
+    system.Update(scene);
+    Hephaestus::Navigation::NavMesh navMesh;
+    std::string error;
+    const auto start = std::chrono::steady_clock::now();
+    const bool built = Hephaestus::Analysis::BuildLevelNavMesh(scene, {}, navMesh, error);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    std::cout << "[INFO] 840 m floor: navmesh " << ms << " ms, " << navMesh.PolygonCount() << " polygons\n";
+    Check(built, "an 840 m floor builds a navmesh (" + error + ")");
+    const Hephaestus::Analysis::WalkRoute route = Hephaestus::Analysis::MeasureWalk(
+        navMesh, Hephaestus::Analysis::TraversalMetrics{}, Vec3(-300.0f, 0.0f, -10.0f), Vec3(300.0f, 0.0f, 10.0f));
+    Check(route.complete && std::fabs(route.length - route.straight) < 1.0f,
+          "a 600 m walk across tiles follows the straight line (" + std::to_string(route.length) + " m)");
+    const auto islands = navMesh.Islands({Vec3(0.0f, 0.0f, 0.0f)});
+    int reachedFloor = 0;
+    for (const auto& island : islands) reachedFloor += island.reached && island.area > 600000.0f ? 1 : 0;
+    Check(reachedFloor == 1, "the floor's tiles join into one island");
+}
+
 void TestScale()
 {
     Scene scene("Scale");
@@ -1506,6 +1537,7 @@ int main()
     TestKits();
     TestLevelChecks();
     TestJumpChecks();
+    TestLargeLevel();
     TestScale();
     if (!g_pass) {
         return 1;

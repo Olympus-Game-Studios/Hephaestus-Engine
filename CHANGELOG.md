@@ -233,6 +233,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
 
 ### Fixed
+- 2026-11-17: The navmesh is built in tiles of 256 cells (38 m at the default cell size). A level with a floor larger than about 600 m across (more than Recast's 2^24 spans in one heightfield) used to build an empty navmesh, so bots, Check Level and Measure Walk found no walkable floor.
 - 2026-11-16: The editor kept drawing a model's old mesh after its file changed until the scene was reopened; reimporting a pack now reloads its models (`QtEditorEngine::ReloadMeshFiles`).
 - 2026-11-16: Mesh collision kept using a model's old triangles after the model file changed on disk, until the editor restarted: the old caches looked the changed file up again but never replaced the entry.
 - 2026-11-15: The navmesh no longer has walkable floor inside blocks taller than an agent: each solid's columns are filled from its lowest to its highest point instead of rasterizing only its surfaces.
