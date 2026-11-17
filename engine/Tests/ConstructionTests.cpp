@@ -1419,6 +1419,31 @@ void TestJumpChecks()
     std::vector<EditorDebugPoint> points;
     tool.AppendOverlay(scene, system, lines, points);
     Check(lines.size() >= 2 && points.size() >= 2, "the route and its ends are drawn");
+
+    LevelCheck added;
+    added.owner = "test-owner";
+    added.id = "test.floor-height";
+    added.name = "Floor height";
+    added.run = [](const LevelCheckContext& context, std::vector<LevelProblem>& problems) {
+        Vec3 hit;
+        const bool down = RaycastLevel(context.geometry, Vec3(2.0f, 5.0f, -2.0f), Vec3(2.0f, -5.0f, -2.0f), hit);
+        problems.push_back({"", Severity::Info, down ? "floor found" : "no floor", hit, entt::null});
+    };
+    std::string registerError;
+    Check(RegisterLevelCheck(added, registerError) && !RegisterLevelCheck(added, registerError),
+          "a level check registers once; a second check with its id is refused");
+    LevelCheckReport withAdded = CheckLevel(scene);
+    bool ran = false;
+    for (const LevelProblem& problem : withAdded.problems) {
+        ran = ran || (problem.check == "test.floor-height" && problem.message == "floor found" &&
+                      std::fabs(problem.position.y - 0.2f) < 1e-3f);
+    }
+    Check(ran, "a registered check runs with the level, and its raycast finds the top of the ground");
+    UnregisterLevelChecks("test-owner");
+    withAdded = CheckLevel(scene);
+    bool stillRuns = false;
+    for (const LevelProblem& problem : withAdded.problems) stillRuns = stillRuns || problem.check == "test.floor-height";
+    Check(!stillRuns && LevelCheckIds().empty(), "removing the owner's checks stops them running");
 }
 
 void TestScale()

@@ -5,6 +5,7 @@
 #include <entt/entt.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@ class Scene;
 
 namespace Hephaestus::Navigation {
 class NavMesh;
+struct NavGeometry;
 }
 
 namespace Hephaestus::Analysis {
@@ -75,7 +77,30 @@ WalkRoute MeasureWalk(const Navigation::NavMesh& navMesh, const TraversalMetrics
 bool MeasureLevelWalk(Scene& scene, const std::filesystem::path& projectRoot, const Vec3& from, const Vec3& to,
                       WalkRoute& out, std::string& error);
 
-// Checks the level against what its characters can do. Construction shapes must already be evaluated (their
+// What a check added by a plugin sees: the level's characters, collision and navmesh.
+struct LevelCheckContext {
+    Scene& scene;
+    const TraversalMetrics& metrics;
+    const Navigation::NavMesh& navMesh;
+    const Navigation::NavGeometry& geometry;
+};
+
+// A check that runs after the built-in ones whenever the level is checked, such as a plugin's genre rules.
+struct LevelCheck {
+    std::string owner;  // who registered it, so it can be removed with UnregisterLevelChecks
+    std::string id;     // unique; problems it reports without a check name get this one
+    std::string name;
+    std::function<void(const LevelCheckContext& context, std::vector<LevelProblem>& problems)> run;
+};
+
+bool RegisterLevelCheck(LevelCheck check, std::string& error);
+void UnregisterLevelChecks(const std::string& owner);
+std::vector<std::string> LevelCheckIds();
+
+// The nearest point where the segment from `from` to `to` meets the level's collision, as the navmesh is built from.
+bool RaycastLevel(const Navigation::NavGeometry& geometry, const Vec3& from, const Vec3& to, Vec3& hit);
+
+// Checks the level against what its characters can do, then runs every registered check. Construction shapes must already be evaluated (their
 // collision is what the navmesh is built from).
 LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRoot = {});
 

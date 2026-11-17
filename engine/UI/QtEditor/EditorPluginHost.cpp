@@ -4,6 +4,7 @@
 #include "EditorDockTitleBar.h"
 #include "EditorAssetServices.h"
 #include "EditorUndoCommand.h"
+#include "../../Analysis/LevelChecks.h"
 #include "../../Assets/AssetIntake.h"
 #include "../../Assets/AssetPathPolicy.h"
 #include "../../Automation/PluginToolBridge.h"
@@ -14,7 +15,9 @@
 #include "../MaterialEditor/MaterialNodeDefinitions.h"
 #include "../../Plugins/PluginSystem.h"
 #include "../../Construction/ConstructionSystem.h"
+#include "../../Navigation/NavMesh.h"
 #include "../../Scene/Components.h"
+#include "../../Scene/Entity.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/SceneAuthoring.h"
 #include <QAction>
@@ -99,7 +102,8 @@ QString HeaderButtonHiddenKey(const std::string& owner, const std::string& comma
 class EditorPluginHost::Context final : public Plugins::IPluginContext,
  public Plugins::ICommandService, public Plugins::IUIService, public Plugins::IAssetService,
  public Plugins::ISceneService, public Plugins::IUndoService, public Plugins::IProjectService,
- public Plugins::ISettingsService, public Plugins::IAutomationToolService, public Plugins::IMaterialNodeService {
+ public Plugins::ISettingsService, public Plugins::IAutomationToolService, public Plugins::IMaterialNodeService,
+ public Plugins::ILevelAnalysisService {
 public:
  Context(EditorPluginHost& h, Plugins::PluginManifest m):host(h),manifest(std::move(m)){}
  ~Context() override { host.RemoveOwner(manifest.id); }
@@ -110,6 +114,8 @@ public:
  Plugins::ISettingsService& Settings()override{return *this;}
  Plugins::IAutomationToolService* AutomationTools()override{return host.toolBridge_?this:nullptr;}
  Plugins::IMaterialNodeService* MaterialNodes()override{return this;}
+ Plugins::ILevelAnalysisService* LevelAnalysis()override{return this;}
+ bool RegisterCheck(const Plugins::LevelCheckDescriptor&d)override{return host.RegisterLevelCheck(manifest.id,d);}
  bool RegisterNode(const Plugins::MaterialNodeDescriptor&d)override{return host.RegisterMaterialNode(manifest.id,d);}
  bool RegisterTool(const Plugins::AutomationToolDescriptor&d)override{std::string e;return host.toolBridge_&&host.toolBridge_->Register(manifest.id,d,e);}
  bool CompleteCall(std::uint64_t id,bool ok,const char*json)override{return host.toolBridge_&&host.toolBridge_->Complete(id,ok,json);}
@@ -426,7 +432,113 @@ bool EditorPluginHost::RegisterMaterialNode(const std::string& owner, const Plug
     return true;
 }
 
-void EditorPluginHost::RemoveOwner(const std::string&o){MaterialEditor::UnregisterCustomNodes(o);if(toolBridge_)toolBridge_->RemoveOwner(o);auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=headerButtons_.begin();i!=headerButtons_.end();)if((*i)->owner==o){delete (*i)->button.data();i=headerButtons_.erase(i);}else++i;for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
+namespace {
+// The engine's view of the level, as a plugin's level check sees it during one run.
+class LevelCheckRun final : public Plugins::ILevelCheckRun {
+public:
+    LevelCheckRun(const Analysis::LevelCheckContext& context, std::vector<Analysis::LevelProblem>& problems)
+        : context_(context), problems_(problems)
+    {
+        const Analysis::TraversalMetrics& m = context.metrics;
+        metrics_.height = m.height;
+        metrics_.radius = m.radius;
+        metrics_.stepHeight = m.stepHeight;
+        metrics_.maxSlopeDegrees = m.maxSlopeDegrees;
+        metrics_.jumpHeight = m.jumpHeight;
+        metrics_.walkSpeed = m.walkSpeed;
+        metrics_.fromCharacters = m.fromControllers;
+        Scene& scene = context.scene;
+        for (auto entity : scene.GetRegistry().view<TagComponent>()) {
+            if (scene.GetRegistry().all_of<ConstructionGeneratedComponent>(entity)) continue;
+            const Vec3 p = Mat4::TransformPoint(scene.GetWorldTransform(Entity(entity, &scene)), Vec3(0.0f, 0.0f, 0.0f));
+            entities_.push_back({static_cast<std::uint64_t>(static_cast<std::uint32_t>(entity)) + 1,
+                                 scene.GetRegistry().get<TagComponent>(entity).tag, p});
+        }
+    }
+    const Plugins::LevelMetrics& Metrics() const override { return metrics_; }
+    bool Raycast(const float from[3], const float to[3], float hit[3]) const override
+    {
+        Vec3 point;
+        if (!from || !to || !hit ||
+            !Analysis::RaycastLevel(context_.geometry, Vec3(from[0], from[1], from[2]), Vec3(to[0], to[1], to[2]), point)) {
+            return false;
+        }
+        hit[0] = point.x;
+        hit[1] = point.y;
+        hit[2] = point.z;
+        return true;
+    }
+    bool WalkDistance(const float from[3], const float to[3], float* metres) const override
+    {
+        if (!from || !to) return false;
+        const Analysis::WalkRoute route = Analysis::MeasureWalk(context_.navMesh, context_.metrics,
+                                                                Vec3(from[0], from[1], from[2]), Vec3(to[0], to[1], to[2]));
+        if (!route.complete) return false;
+        if (metres) *metres = route.length;
+        return true;
+    }
+    std::uint32_t EntityCount() const override { return static_cast<std::uint32_t>(entities_.size()); }
+    bool GetEntity(std::uint32_t index, Plugins::LevelEntityInfo& out) const override
+    {
+        if (index >= entities_.size() || out.structSize < sizeof(Plugins::LevelEntityInfo)) return false;
+        const Named& named = entities_[index];
+        out.id = named.id;
+        out.name = named.name.c_str();
+        out.position[0] = named.position.x;
+        out.position[1] = named.position.y;
+        out.position[2] = named.position.z;
+        return true;
+    }
+    void Report(const Plugins::LevelProblemDescriptor& problem) override
+    {
+        if (problem.structSize < sizeof(Plugins::LevelProblemDescriptor) || !problem.message) return;
+        Analysis::LevelProblem out;
+        out.check = problem.check ? problem.check : "";
+        out.severity = problem.severity == Plugins::LevelProblemSeverity::Error ? Analysis::Severity::Error
+            : problem.severity == Plugins::LevelProblemSeverity::Info ? Analysis::Severity::Info
+                                                                      : Analysis::Severity::Warning;
+        out.message = problem.message;
+        out.position = Vec3(problem.position[0], problem.position[1], problem.position[2]);
+        const auto entity = static_cast<entt::entity>(static_cast<std::uint32_t>(problem.entityId - 1));
+        if (problem.entityId != 0 && context_.scene.GetRegistry().valid(entity)) out.entity = entity;
+        problems_.push_back(std::move(out));
+    }
+
+private:
+    struct Named {
+        std::uint64_t id;
+        std::string name;
+        Vec3 position;
+    };
+    const Analysis::LevelCheckContext& context_;
+    std::vector<Analysis::LevelProblem>& problems_;
+    Plugins::LevelMetrics metrics_;
+    std::vector<Named> entities_;
+};
+} // namespace
+
+bool EditorPluginHost::RegisterLevelCheck(const std::string& owner, const Plugins::LevelCheckDescriptor& descriptor) {
+    if (descriptor.structSize < sizeof(Plugins::LevelCheckDescriptor) || !descriptor.id || !descriptor.run) {
+        return false;
+    }
+    Analysis::LevelCheck check;
+    check.owner = owner;
+    check.id = descriptor.id;
+    check.name = descriptor.displayName ? descriptor.displayName : descriptor.id;
+    check.run = [run = descriptor.run, userData = descriptor.userData](const Analysis::LevelCheckContext& context,
+                                                                       std::vector<Analysis::LevelProblem>& problems) {
+        LevelCheckRun session(context, problems);
+        run(session, userData);
+    };
+    std::string error;
+    if (!Analysis::RegisterLevelCheck(std::move(check), error)) {
+        EngineLog::Warn("Plugin " + owner + ": " + error);
+        return false;
+    }
+    return true;
+}
+
+void EditorPluginHost::RemoveOwner(const std::string&o){MaterialEditor::UnregisterCustomNodes(o);Analysis::UnregisterLevelChecks(o);if(toolBridge_)toolBridge_->RemoveOwner(o);auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=headerButtons_.begin();i!=headerButtons_.end();)if((*i)->owner==o){delete (*i)->button.data();i=headerButtons_.erase(i);}else++i;for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
 
 } // namespace Hephaestus::QtEditor
 #endif

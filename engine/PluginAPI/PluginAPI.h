@@ -276,6 +276,69 @@ public:
     virtual bool RegisterNode(const MaterialNodeDescriptor& descriptor) = 0;
 };
 
+/// What the level's characters can do, from their Character Controllers (defaults when there are none).
+struct LevelMetrics {
+    std::uint32_t structSize = sizeof(LevelMetrics);
+    float height = 1.8f;
+    float radius = 0.3f;
+    float stepHeight = 0.3f;
+    float maxSlopeDegrees = 45.0f;
+    float jumpHeight = 0.0f;
+    float walkSpeed = 5.0f;
+    bool fromCharacters = false;
+};
+
+enum class LevelProblemSeverity : std::uint32_t { Error, Warning, Info };
+
+struct LevelProblemDescriptor {
+    std::uint32_t structSize = sizeof(LevelProblemDescriptor);
+    const char* check = nullptr;     // a short id such as "spawn-exposed"; the check's own id when null
+    LevelProblemSeverity severity = LevelProblemSeverity::Warning;
+    const char* message = nullptr;   // one sentence for the Check Level list
+    float position[3] = {0.0f, 0.0f, 0.0f};  // where the viewport frames the problem
+    std::uint64_t entityId = 0;      // the entity at fault (as ISceneService ids), or 0
+};
+
+struct LevelEntityInfo {
+    std::uint32_t structSize = sizeof(LevelEntityInfo);
+    std::uint64_t id = 0;             // as ISceneService ids
+    const char* name = nullptr;       // valid until the check returns
+    float position[3] = {0.0f, 0.0f, 0.0f};  // world space
+};
+
+/// One run of a plugin's level check, valid only during its callback.
+class ILevelCheckRun {
+public:
+    virtual ~ILevelCheckRun() = default;
+    virtual const LevelMetrics& Metrics() const = 0;
+    /// The nearest point where the segment meets the level's collision (what characters stand on and walk into).
+    virtual bool Raycast(const float from[3], const float to[3], float hit[3]) const = 0;
+    /// The walking distance between two points along the navmesh; false when `to` can't be walked to.
+    virtual bool WalkDistance(const float from[3], const float to[3], float* metres) const = 0;
+    /// The scene's named entities, such as spawn points, with their world positions.
+    virtual std::uint32_t EntityCount() const = 0;
+    virtual bool GetEntity(std::uint32_t index, LevelEntityInfo& out) const = 0;
+    virtual void Report(const LevelProblemDescriptor& problem) = 0;
+};
+
+using LevelCheckCallback = void (*)(ILevelCheckRun& run, void* userData);
+
+/// A check that runs with Build > Check Level (and MCP level.check), after the engine's own checks.
+struct LevelCheckDescriptor {
+    std::uint32_t structSize = sizeof(LevelCheckDescriptor);
+    const char* id = nullptr;           // unique, e.g. "fps.spawn-exposure"
+    const char* displayName = nullptr;
+    LevelCheckCallback run = nullptr;
+    void* userData = nullptr;
+};
+
+/// Level checks a plugin adds. They are removed when the plugin unloads.
+class ILevelAnalysisService {
+public:
+    virtual ~ILevelAnalysisService() = default;
+    virtual bool RegisterCheck(const LevelCheckDescriptor& descriptor) = 0;
+};
+
 class IPluginContext {
 public:
     virtual ~IPluginContext() = default;
@@ -292,6 +355,8 @@ public:
     virtual IAutomationToolService* AutomationTools() { return nullptr; }
     /// Appended to API 1 after AutomationTools; null where the host has no Material Editor.
     virtual IMaterialNodeService* MaterialNodes() { return nullptr; }
+    /// Appended to API 1 after MaterialNodes; null where the host has no level checks.
+    virtual ILevelAnalysisService* LevelAnalysis() { return nullptr; }
 };
 
 class IHephaestusPlugin {

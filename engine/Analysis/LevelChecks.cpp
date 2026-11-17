@@ -78,7 +78,8 @@ struct Jump {
     Vec3 landing;
 };
 
-bool SegmentHitsTriangle(const Vec3& origin, const Vec3& direction, const Vec3& a, const Vec3& b, const Vec3& c)
+bool SegmentHitsTriangle(const Vec3& origin, const Vec3& direction, const Vec3& a, const Vec3& b, const Vec3& c,
+                         float& t)
 {
     const Vec3 ab = vsub(b, a);
     const Vec3 ac = vsub(c, a);
@@ -92,20 +93,18 @@ bool SegmentHitsTriangle(const Vec3& origin, const Vec3& direction, const Vec3& 
     const Vec3 q = vcross(offset, ab);
     const float v = vdot(direction, q) * inverse;
     if (v < 0.0f || u + v > 1.0f) return false;
-    const float t = vdot(ac, q) * inverse;
+    t = vdot(ac, q) * inverse;
     return t > 0.0f && t < 1.0f;
 }
 
-// Whether level geometry stands between take-off and landing at the height of the body's middle.
-bool JumpBlocked(const Navigation::NavGeometry& geometry, const Vec3& from, const Vec3& to, float bodyHeight)
+// The segment parameter (0 to 1) of the nearest triangle hit, or a value above 1 for none.
+float NearestHit(const Navigation::NavGeometry& geometry, const Vec3& origin, const Vec3& direction)
 {
-    const Vec3 lift(0.0f, bodyHeight * 0.5f, 0.0f);
-    const Vec3 origin = vadd(from, lift);
-    const Vec3 direction = vsub(vadd(to, lift), origin);
     const Vec3 low(std::min(origin.x, origin.x + direction.x), std::min(origin.y, origin.y + direction.y),
                    std::min(origin.z, origin.z + direction.z));
     const Vec3 high(std::max(origin.x, origin.x + direction.x), std::max(origin.y, origin.y + direction.y),
                     std::max(origin.z, origin.z + direction.z));
+    float nearest = 2.0f;
     const float* v = geometry.vertices.data();
     for (size_t i = 0; i + 2 < geometry.triangles.size(); i += 3) {
         const float* a = v + geometry.triangles[i] * 3;
@@ -116,12 +115,27 @@ bool JumpBlocked(const Navigation::NavGeometry& geometry, const Vec3& from, cons
             std::max({a[2], b[2], c[2]}) < low.z || std::min({a[2], b[2], c[2]}) > high.z) {
             continue;
         }
+        float t = 0.0f;
         if (SegmentHitsTriangle(origin, direction, Vec3(a[0], a[1], a[2]), Vec3(b[0], b[1], b[2]),
-                                Vec3(c[0], c[1], c[2]))) {
-            return true;
+                                Vec3(c[0], c[1], c[2]), t)) {
+            nearest = std::min(nearest, t);
         }
     }
-    return false;
+    return nearest;
+}
+
+// Whether level geometry stands between take-off and landing at the height of the body's middle.
+bool JumpBlocked(const Navigation::NavGeometry& geometry, const Vec3& from, const Vec3& to, float bodyHeight)
+{
+    const Vec3 lift(0.0f, bodyHeight * 0.5f, 0.0f);
+    const Vec3 origin = vadd(from, lift);
+    return NearestHit(geometry, origin, vsub(vadd(to, lift), origin)) <= 1.0f;
+}
+
+std::vector<LevelCheck>& Registry()
+{
+    static std::vector<LevelCheck> checks;
+    return checks;
 }
 
 Jump EasiestJump(const Navigation::NavIsland& from, const Navigation::NavIsland& to, const TraversalMetrics& metrics,
@@ -349,6 +363,48 @@ float JumpReach(const TraversalMetrics& metrics, float rise)
     return metrics.walkSpeed * (airborne + metrics.coyoteTime);
 }
 
+bool RegisterLevelCheck(LevelCheck check, std::string& error)
+{
+    if (check.id.empty() || !check.run) {
+        error = "a level check needs an id and a function";
+        return false;
+    }
+    for (const LevelCheck& existing : Registry()) {
+        if (existing.id == check.id) {
+            error = "a level check named '" + check.id + "' is already registered";
+            return false;
+        }
+    }
+    Registry().push_back(std::move(check));
+    return true;
+}
+
+void UnregisterLevelChecks(const std::string& owner)
+{
+    std::erase_if(Registry(), [&](const LevelCheck& check) { return check.owner == owner; });
+}
+
+std::vector<std::string> LevelCheckIds()
+{
+    std::vector<std::string> ids;
+    for (const LevelCheck& check : Registry()) ids.push_back(check.id);
+    return ids;
+}
+
+bool RaycastLevel(const Navigation::NavGeometry& geometry, const Vec3& from, const Vec3& to, Vec3& hit)
+{
+    const Vec3 direction = vsub(to, from);
+    const float t = NearestHit(geometry, from, direction);
+    if (t > 1.0f) {
+        return false;
+    }
+    hit = vadd(from, vscale(direction, t));
+    return true;
+}
+
+void CheckReachability(const Navigation::NavMesh& navMesh, const Navigation::NavGeometry& geometry,
+                       const std::vector<Vec3>& starts, LevelCheckReport& report);
+
 LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRoot)
 {
     LevelCheckReport report;
@@ -362,22 +418,42 @@ LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRo
         if (!scene.GetRegistry().get<CharacterControllerComponent>(handle).enabled) continue;
         starts.push_back(Mat4::TransformPoint(scene.GetWorldTransform(Entity(handle, &scene)), Vec3(0.0f, 0.0f, 0.0f)));
     }
+    Navigation::NavGeometry geometry;
+    Navigation::NavMesh navMesh;
+    std::string error;
+    const bool navBuilt = BuildNavMesh(scene, projectRoot, geometry, navMesh, error);
     if (starts.empty()) {
         report.problems.push_back({"no-characters", Severity::Info,
                                    "No character in the scene, so reachability was not checked and the default "
                                    "player size was used.",
                                    Vec3(0.0f, 0.0f, 0.0f), entt::null});
-        return report;
-    }
-    Navigation::NavGeometry geometry;
-    Navigation::NavMesh navMesh;
-    std::string error;
-    if (!BuildNavMesh(scene, projectRoot, geometry, navMesh, error)) {
+    } else if (!navBuilt) {
         report.problems.push_back({"navmesh", Severity::Error, "The navmesh could not be built: " + error + ".",
                                    starts.front(), entt::null});
+    } else {
+        CheckReachability(navMesh, geometry, starts, report);
+    }
+    if (!navBuilt) {
         return report;
     }
     report.navPolygons = navMesh.PolygonCount();
+    const LevelCheckContext context{scene, report.metrics, navMesh, geometry};
+    // Copied, so a check that registers or removes checks while it runs does not disturb the loop.
+    const std::vector<LevelCheck> checks = Registry();
+    for (const LevelCheck& check : checks) {
+        std::vector<LevelProblem> found;
+        check.run(context, found);
+        for (LevelProblem& problem : found) {
+            if (problem.check.empty()) problem.check = check.id;
+            report.problems.push_back(std::move(problem));
+        }
+    }
+    return report;
+}
+
+void CheckReachability(const Navigation::NavMesh& navMesh, const Navigation::NavGeometry& geometry,
+                       const std::vector<Vec3>& starts, LevelCheckReport& report)
+{
     // A character's origin is at its feet or its centre; search down far enough for either.
     const std::vector<Navigation::NavIsland> islands =
         navMesh.Islands(starts, Vec3(1.0f, report.metrics.height + 1.0f, 1.0f));
@@ -442,7 +518,6 @@ LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRo
             report.problems.push_back({"unreachable-floor", Severity::Warning, text, island.centre, entt::null});
         }
     }
-    return report;
 }
 
 } // namespace Hephaestus::Analysis
