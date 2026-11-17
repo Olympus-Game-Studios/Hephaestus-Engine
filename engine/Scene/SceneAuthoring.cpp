@@ -116,4 +116,32 @@ bool RaycastBounds(Scene& scene,
     return found;
 }
 
+Vec3 SnapBoundsToNeighbours(const AABB& moving, const std::vector<AABB>& neighbours, float reach)
+{
+    float offset[3] = {0.0f, 0.0f, 0.0f};
+    bool found[3] = {false, false, false};
+    const float lo[3] = {moving.min.x, moving.min.y, moving.min.z};
+    const float hi[3] = {moving.max.x, moving.max.y, moving.max.z};
+    for (const AABB& other : neighbours) {
+        const float olo[3] = {other.min.x, other.min.y, other.min.z};
+        const float ohi[3] = {other.max.x, other.max.y, other.max.z};
+        for (int axis = 0; axis < 3; ++axis) {
+            bool beside = true;
+            for (int k = 0; k < 3; ++k) {
+                if (k == axis) continue;
+                beside = beside && lo[k] < ohi[k] + reach && hi[k] > olo[k] - reach;
+            }
+            if (!beside) continue;
+            // Face to face (touching) and face to face on the same side (flush).
+            for (const float move : {olo[axis] - hi[axis], ohi[axis] - lo[axis], olo[axis] - lo[axis], ohi[axis] - hi[axis]}) {
+                if (std::fabs(move) <= reach && (!found[axis] || std::fabs(move) < std::fabs(offset[axis]))) {
+                    offset[axis] = move;
+                    found[axis] = true;
+                }
+            }
+        }
+    }
+    return Vec3(offset[0], offset[1], offset[2]);
+}
+
 } // namespace Hephaestus::SceneAuthoring

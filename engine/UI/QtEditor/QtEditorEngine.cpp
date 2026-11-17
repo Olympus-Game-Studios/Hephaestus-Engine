@@ -1303,6 +1303,10 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                                         }
                                     }
                                 }
+                                if (m_editorContext.GetGizmoMode() == Hephaestus::GizmoMode::Translate &&
+                                    !m_inputState.shiftDown && !m_inputState.ctrlDown) {
+                                    SnapMovedFacesToNeighbours(*scene, selectedEntity, newWorldPrimary);
+                                }
 
                                 if (!m_gizmoDragEntityWorldStart.empty()) {
                                     const Mat4 invPrimaryStart = Mat4::Invert(m_gizmoDragPrimaryWorldStart);
@@ -1992,6 +1996,72 @@ bool QtEditorEngine::RaycastViewport(
         }
     }
     return false;
+}
+
+void QtEditorEngine::SnapMovedFacesToNeighbours(Scene& scene, entt::entity primary, Mat4& newWorldPrimary) const
+{
+    constexpr float kReach = 0.2f;
+    entt::registry& registry = scene.GetRegistry();
+    // The selection's bounds where this drag puts it (the gizmo is at the selection's centre when several move).
+    std::vector<std::pair<entt::entity, Mat4>> moved = m_gizmoDragEntityWorldStart;
+    if (moved.empty()) {
+        moved.push_back({primary, newWorldPrimary});
+    } else {
+        const Mat4 delta = Mat4::Multiply(newWorldPrimary, Mat4::Invert(m_gizmoDragPrimaryWorldStart));
+        for (auto& [entity, world] : moved) world = Mat4::Multiply(delta, world);
+    }
+    bool any = false;
+    AABB moving;
+    for (const auto& [entity, world] : moved) {
+        const auto* renderer = registry.try_get<MeshRendererComponent>(entity);
+        if (!renderer) continue;
+        const AABB bounds = Hephaestus::SceneAuthoring::TransformBounds(renderer->localBounds, world);
+        if (!any) {
+            moving = bounds;
+            any = true;
+        } else {
+            moving.min = Vec3(std::min(moving.min.x, bounds.min.x), std::min(moving.min.y, bounds.min.y),
+                              std::min(moving.min.z, bounds.min.z));
+            moving.max = Vec3(std::max(moving.max.x, bounds.max.x), std::max(moving.max.y, bounds.max.y),
+                              std::max(moving.max.z, bounds.max.z));
+        }
+    }
+    if (!any) {
+        return;
+    }
+    const auto& selection = m_editorContext.GetSelectedEntities();
+    auto movesWithSelection = [&](entt::entity handle) {
+        for (Entity entity(handle, &scene); entity; entity = scene.GetParent(entity)) {
+            if (std::find(selection.begin(), selection.end(), static_cast<entt::entity>(entity)) != selection.end()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<AABB> neighbours;
+    auto view = registry.view<TransformComponent, MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        if (registry.all_of<ConstructionGeneratedComponent>(handle) || !m_editorContext.IsEditorEntityShown(handle) ||
+            movesWithSelection(handle)) {
+            continue;
+        }
+        const AABB bounds = Hephaestus::SceneAuthoring::TransformBounds(
+            view.get<MeshRendererComponent>(handle).localBounds, scene.GetWorldTransform(Entity(handle, &scene)));
+        if (bounds.min.x > moving.max.x + kReach || bounds.max.x < moving.min.x - kReach ||
+            bounds.min.y > moving.max.y + kReach || bounds.max.y < moving.min.y - kReach ||
+            bounds.min.z > moving.max.z + kReach || bounds.max.z < moving.min.z - kReach) {
+            continue;
+        }
+        neighbours.push_back(bounds);
+    }
+    const Vec3 offset = Hephaestus::SceneAuthoring::SnapBoundsToNeighbours(moving, neighbours, kReach);
+    // Only along axes the drag moves, so a single-axis drag never slides sideways.
+    const float snap[3] = {offset.x, offset.y, offset.z};
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::fabs(newWorldPrimary.m[12 + axis] - m_gizmoDragPrimaryWorldStart.m[12 + axis]) > 1e-4f) {
+            newWorldPrimary.m[12 + axis] += snap[axis];
+        }
+    }
 }
 
 bool QtEditorEngine::viewportRay(float x, float y, Ray& outRay) const

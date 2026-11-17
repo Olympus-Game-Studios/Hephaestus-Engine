@@ -425,6 +425,8 @@ private:
     void simulateGameplayFrame(float dt);
     bool reloadRuntimeScene(const std::string& scenePath, std::string& outError);
     void captureGizmoMultiDragWorldStarts(Scene* scene);
+    // Moves a translated world transform so the moved shape's faces sit flush on nearby shapes' faces.
+    void SnapMovedFacesToNeighbours(Scene& scene, entt::entity primary, Mat4& newWorldPrimary) const;
     void clearGizmoMultiDragWorldStarts();
     void selectEntitiesInViewportRect(float x0, float y0, float x1, float y1,
                                       bool add, bool toggle);
