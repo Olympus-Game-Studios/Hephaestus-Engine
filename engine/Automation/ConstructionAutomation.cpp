@@ -371,6 +371,56 @@ void RegisterConstructionAutomation(AutomationService& service)
         }, true));
 
     RegisterOrThrow(service, Definition(
+        "construction.add_roof",
+        "Put a roof on a room with no storey above it: style 'flat' (a slab over the walls, any room) or 'pitched' "
+        "(two 30 degree slopes meeting along the longer side, rooms made as hollow boxes), overhanging the walls by "
+        "overhang metres (default 0.3). The room's ceiling is removed. Returns the roof.",
+        ObjectSchema({{"entity", {{"type", "string"}}},
+                      {"style", {{"type", "string"}, {"enum", Json::array({"flat", "pitched"})}}},
+                      {"overhang", {{"type", "number"}, {"minimum", 0.0}}}},
+                     Json::array({"entity", "style"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = ResolveEntity(context, arguments, failure);
+            if (!resolved) return failure;
+            const Construction::RoofStyle style = arguments["style"] == "pitched" ? Construction::RoofStyle::Pitched
+                                                                                 : Construction::RoofStyle::Flat;
+            const float overhang = arguments.contains("overhang") && arguments["overhang"].is_number()
+                ? arguments["overhang"].get<float>() : 0.3f;
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Add roof", mutationFailure)) return mutationFailure;
+            std::string error;
+            const entt::entity roof = Construction::AddRoof(*resolved->scene, resolved->handle, style, overhang, error);
+            context.Backend().CompleteEditorMutation(roof != entt::null);
+            if (roof == entt::null) return Failure(ErrorCode::InvalidArguments, error);
+            UpToDate(context, *resolved->scene);
+            return ToolResult::Success(Json{{"roof", context.Entities().Bind(*resolved->scene, roof).value}});
+        }, true));
+
+    RegisterOrThrow(service, Definition(
+        "construction.add_balcony",
+        "Build a balcony outside a doorway (an opening entity whose sill is at its wall's floor): a slab level with the "
+        "floor, depth metres out (default 1.5) and a metre wider than the door each side, with railings on its open "
+        "edges. Returns the balcony.",
+        ObjectSchema({{"entity", {{"type", "string"}}}, {"depth", {{"type", "number"}, {"minimum", 0.5}}}},
+                     Json::array({"entity"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = ResolveEntity(context, arguments, failure);
+            if (!resolved) return failure;
+            const float depth = arguments.contains("depth") && arguments["depth"].is_number()
+                ? arguments["depth"].get<float>() : 1.5f;
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Add balcony", mutationFailure)) return mutationFailure;
+            std::string error;
+            const entt::entity balcony = Construction::AddBalcony(*resolved->scene, resolved->handle, depth, error);
+            context.Backend().CompleteEditorMutation(balcony != entt::null);
+            if (balcony == entt::null) return Failure(ErrorCode::InvalidArguments, error);
+            UpToDate(context, *resolved->scene);
+            return ToolResult::Success(ShapeJson(context, *resolved->scene, balcony));
+        }, true));
+
+    RegisterOrThrow(service, Definition(
         "construction.make_editable",
         "Turn a solid block or a ramp into an editable mesh with the same shape, whose corners can then be moved "
         "(construction.set_params with mesh: {vertices: [[x, y, z]...], faces: [[i, j, k...]...]}, faces wound "

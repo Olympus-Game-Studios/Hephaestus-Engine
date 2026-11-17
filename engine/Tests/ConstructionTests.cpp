@@ -1584,6 +1584,82 @@ void TestStoreysAnyShape()
           "and its upper floor can be walked to up the turning flight");
 }
 
+void TestRoofsAndBalconies()
+{
+    Scene scene("Roofs");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size = Room();
+    size.width = 8.0f;
+    size.depth = 6.0f;
+    size.ceiling = true;
+    Entity house = AddBox(scene, "House", size);
+    std::string error;
+    const entt::entity upper = AddStorey(scene, house, error);
+    Check(AddRoof(scene, house, RoofStyle::Flat, 0.3f, error) == entt::null && error.find("top storey") != std::string::npos,
+          "a roof goes on the top storey, not under it");
+    const entt::entity flat = AddRoof(scene, upper, RoofStyle::Flat, 0.3f, error);
+    Check(flat != entt::null && AddRoof(scene, upper, RoofStyle::Pitched, 0.3f, error) == entt::null &&
+              !scene.GetRegistry().get<ConstructionShapeComponent>(upper).box.ceiling,
+          "a flat roof goes on once and replaces the ceiling");
+    const auto& flatShape = scene.GetRegistry().get<ConstructionShapeComponent>(flat);
+    const Vec3 flatBase = Mat4::TransformPoint(scene.GetWorldTransform(Entity(flat, &scene)), Vec3(0, 0, 0));
+    Check(!flatShape.box.hollow && std::fabs(flatShape.box.width - 8.6f) < 1e-4f && std::fabs(flatBase.y - 6.0f) < 1e-4f,
+          "the flat roof is a slab on top of the walls, overhanging by 0.3 m");
+
+    Entity cottage = AddBox(scene, "Cottage", size, Vec3(20.0f, 0.0f, 0.0f));
+    const entt::entity pitched = AddRoof(scene, cottage, RoofStyle::Pitched, 0.3f, error);
+    int slopes = 0;
+    if (pitched != entt::null) {
+        for (entt::entity child : scene.GetRegistry().get<TransformComponent>(pitched).children) {
+            slopes += scene.GetRegistry().get<ConstructionShapeComponent>(child).recipe == Recipe::Ramp ? 1 : 0;
+        }
+    }
+    system.Update(scene);
+    float ridge = 0.0f;
+    for (auto handle : scene.GetRegistry().view<ConstructionShapeComponent>()) {
+        if (scene.GetRegistry().get<ConstructionShapeComponent>(handle).recipe != Recipe::Ramp) continue;
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        const EvaluatedGeometry* g = system.Geometry(handle);
+        ridge = std::max(ridge, Mat4::TransformPoint(world, Vec3(0.0f, g->mesh.bounds.max.y, 0.0f)).y);
+    }
+    Check(slopes == 2 && std::fabs(ridge - (3.0f + 3.3f * std::tan(0.5236f))) < 1e-3f,
+          "a pitched roof is two 30 degree slopes meeting along the longer side (ridge at " + std::to_string(ridge) + ")");
+    Entity lHouse = AddWall(scene, "L House", {{0, 0}, {9, 0}, {9, 8}, {5, 8}, {5, 4}, {0, 4}}, true,
+                            Vec3(-30.0f, 0.0f, 0.0f));
+    Check(AddRoof(scene, lHouse, RoofStyle::Pitched, 0.3f, error) == entt::null &&
+              AddRoof(scene, lHouse, RoofStyle::Flat, 0.0f, error) != entt::null,
+          "a room drawn with walls takes a flat roof over its outline");
+
+    // A balcony outside an upper floor's door.
+    OpeningParams door = Door();
+    door.offset = 1.0f;  // on the +Z wall of the upper storey
+    const entt::entity upperDoor = AddOpening(scene, Entity(upper, &scene), door);
+    OpeningParams window = Door();
+    window.side = WallSide::PosX;
+    window.sill = 1.0f;
+    window.height = 1.0f;
+    const entt::entity upperWindow = AddOpening(scene, Entity(upper, &scene), window);
+    Check(AddBalcony(scene, upperWindow, 1.5f, error) == entt::null && error.find("window") != std::string::npos,
+          "a window takes no balcony");
+    const entt::entity balcony = AddBalcony(scene, upperDoor, 1.5f, error);
+    Check(balcony != entt::null && scene.GetRegistry().get<TransformComponent>(balcony).children.size() == 3,
+          "a balcony goes outside a door, with three railings (" + error + ")");
+    const Vec3 balconyTop =
+        Mat4::TransformPoint(scene.GetWorldTransform(Entity(balcony, &scene)), Vec3(0.0f, 0.2f, 0.0f));
+    Check(std::fabs(balconyTop.y - 3.2f) < 1e-4f && balconyTop.z > 3.0f + 0.5f && std::fabs(balconyTop.x - 1.0f) < 1e-4f,
+          "its floor is level with the storey's floor, outside the wall, centred on the door");
+    Entity player = scene.CreateEntity("Player");
+    player.AddComponent<CharacterControllerComponent>();
+    system.Update(scene);
+    std::string navError;
+    const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, navError);
+    Check(navMesh && Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{},
+                                                       Vec3(-1.0f, 3.2f, 0.0f), Vec3(1.0f, 3.2f, 3.9f)).complete,
+          "the balcony can be walked onto through the door");
+}
+
 void TestEditableMesh()
 {
     ConstructionShapeComponent room;
@@ -1862,6 +1938,7 @@ int main()
     TestJumpChecks();
     TestStoreys();
     TestStoreysAnyShape();
+    TestRoofsAndBalconies();
     TestEditableMesh();
     TestPlaytestHeatmap();
     TestLargeLevel();

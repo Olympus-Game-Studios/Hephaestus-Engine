@@ -16,6 +16,7 @@
 
 #include "../../Construction/ConstructionShape.h"
 
+#include <functional>
 #include <vector>
 
 namespace Hephaestus::Construction {
@@ -97,6 +98,11 @@ private:
     QPushButton* m_makeEditable = nullptr;
     QPushButton* m_addStorey = nullptr;
     QPushButton* m_addStairs = nullptr;
+    QPushButton* m_flatRoof = nullptr;
+    QPushButton* m_pitchedRoof = nullptr;
+    QPushButton* m_addBalcony = nullptr;
+    void runBuildingAction(const char* label, const std::function<entt::entity(Scene&, std::string&)>& action,
+                           const QString& done);
     QLabel* m_storeyInfo = nullptr;
     QLabel* m_meshInfo = nullptr;
 };

@@ -304,4 +304,156 @@ entt::entity AddStairsUp(Scene& scene, entt::entity room, float maxRise, std::st
     return stairs;
 }
 
+namespace {
+
+constexpr float kRoofPitch = 0.5236f;  // 30 degrees
+constexpr float kRailHeight = 1.0f;
+constexpr float kRailThickness = 0.06f;
+
+Entity AddChildShape(Scene& scene, entt::entity parent, const std::string& name, const ConstructionShapeComponent& shape,
+                     const Vec3& position, float yaw)
+{
+    Entity entity = scene.CreateEntity(name);
+    scene.SetParent(entity, Entity(parent, &scene), false);
+    auto& transform = entity.GetComponent<TransformComponent>();
+    transform.position = position;
+    transform.rotation = Vec3(0.0f, yaw, 0.0f);
+    transform.scale = Vec3(1.0f, 1.0f, 1.0f);
+    entity.AddComponent<ConstructionShapeComponent>(shape);
+    ConstructionSystem::AddBlockoutMaterial(scene, entity);
+    return entity;
+}
+
+ConstructionShapeComponent Block(const std::string& role, float width, float height, float depth)
+{
+    ConstructionShapeComponent block;
+    block.recipe = Recipe::Box;
+    block.role = role;
+    block.box.width = width;
+    block.box.height = height;
+    block.box.depth = depth;
+    return block;
+}
+
+bool HasRoof(Scene& scene, entt::entity room)
+{
+    entt::registry& registry = scene.GetRegistry();
+    for (entt::entity child : registry.get<TransformComponent>(room).children) {
+        const auto* shape = registry.try_get<ConstructionShapeComponent>(child);
+        const auto* tag = registry.try_get<TagComponent>(child);
+        if ((shape && shape->role == "roof") || (!shape && tag && tag->tag == "Roof")) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+entt::entity AddRoof(Scene& scene, entt::entity room, RoofStyle style, float overhang, std::string& error)
+{
+    entt::registry& registry = scene.GetRegistry();
+    auto* shape = registry.valid(room) ? registry.try_get<ConstructionShapeComponent>(room) : nullptr;
+    if (!IsRoom(shape)) {
+        error = "only rooms can have a roof added";
+        return entt::null;
+    }
+    if (StoreyAbove(scene, room) != entt::null) {
+        error = "this room has a storey above it; put the roof on the top storey";
+        return entt::null;
+    }
+    if (HasRoof(scene, room)) {
+        error = "this room already has a roof";
+        return entt::null;
+    }
+    const bool box = shape->recipe == Recipe::Box;
+    if (style == RoofStyle::Pitched && !box) {
+        error = "pitched roofs are for rooms made as hollow blocks; use a flat roof on rooms drawn with walls";
+        return entt::null;
+    }
+    const float t = shape->box.wallThickness;
+    const float height = shape->box.height;
+    overhang = std::max(0.0f, overhang);
+    shape->box.ceiling = false;
+    if (style == RoofStyle::Flat) {
+        if (box) {
+            return AddChildShape(scene, room, "Roof",
+                                 Block("roof", shape->box.width + 2.0f * overhang, t, shape->box.depth + 2.0f * overhang),
+                                 Vec3(0.0f, height, 0.0f), 0.0f);
+        }
+        // A wall room one slab high with a floor is a slab over its whole outline.
+        ConstructionShapeComponent slab = *shape;
+        slab.role = "roof";
+        slab.kit.clear();
+        slab.kitSwaps.clear();
+        slab.faceMaterials.clear();
+        slab.box.height = t;
+        slab.box.floor = true;
+        return AddChildShape(scene, room, "Roof", slab, Vec3(0.0f, height, 0.0f), 0.0f);
+    }
+    // Two slopes meeting over the middle, the ridge along the longer side.
+    const bool ridgeAlongX = shape->box.width >= shape->box.depth;
+    const float along = (ridgeAlongX ? shape->box.width : shape->box.depth) + 2.0f * overhang;
+    const float half = (ridgeAlongX ? shape->box.depth : shape->box.width) * 0.5f + overhang;
+    const float rise = half * std::tan(kRoofPitch);
+    Entity roof = scene.CreateEntity("Roof");
+    scene.SetParent(roof, Entity(room, &scene), false);
+    auto& roofTransform = roof.GetComponent<TransformComponent>();
+    roofTransform.position = Vec3(0.0f, height, 0.0f);
+    roofTransform.rotation = Vec3(0.0f, ridgeAlongX ? 0.0f : 1.57079633f, 0.0f);
+    roofTransform.scale = Vec3(1.0f, 1.0f, 1.0f);
+    ConstructionShapeComponent slope;
+    slope.recipe = Recipe::Ramp;
+    slope.role = "roof";
+    slope.box.width = along;
+    slope.box.height = rise;
+    slope.box.depth = half;
+    // A ramp rises towards its +Z; one climbs from the -Z eave and the other, turned round, from the +Z eave.
+    AddChildShape(scene, roof, "Roof Slope", slope, Vec3(0.0f, 0.0f, -half * 0.5f), 0.0f);
+    AddChildShape(scene, roof, "Roof Slope", slope, Vec3(0.0f, 0.0f, half * 0.5f), 3.14159265f);
+    return roof;
+}
+
+entt::entity AddBalcony(Scene& scene, entt::entity opening, float depth, std::string& error)
+{
+    entt::registry& registry = scene.GetRegistry();
+    const auto* door = registry.valid(opening) ? registry.try_get<ConstructionShapeComponent>(opening) : nullptr;
+    const entt::entity host = door ? registry.get<TransformComponent>(opening).parent : entt::null;
+    const auto* hostShape = host != entt::null && registry.valid(host)
+        ? registry.try_get<ConstructionShapeComponent>(host) : nullptr;
+    WallFrame frame;
+    if (!door || door->recipe != Recipe::Opening || !hostShape || !CanHostOpenings(*hostShape) ||
+        !GetHostWallFrame(*hostShape, door->opening.side, door->opening.segment, frame)) {
+        error = "select a doorway in a wall to add a balcony outside it";
+        return entt::null;
+    }
+    const float floorTop = HostFloorTop(*hostShape);
+    if (door->opening.sill > floorTop + 0.05f) {
+        error = "balconies go outside doorways; this opening is a window";
+        return entt::null;
+    }
+    depth = std::max(0.5f, depth);
+    const float t = frame.thickness;
+    const Vec3 middle = vadd(vadd(frame.center, vscale(frame.u, door->opening.offset)), vscale(frame.normal, -t * 0.5f));
+    Vec3 outward = frame.normal;
+    if (IsRoom(hostShape)) {
+        const Vec3 probe = vadd(middle, vscale(frame.normal, t));
+        if (PointInPolygon(RoomOutline(*hostShape), probe.x, probe.z)) outward = vscale(frame.normal, -1.0f);
+    }
+    const float width = door->opening.width + 2.0f;
+    const float slab = std::max(hostShape->box.wallThickness, 0.1f);
+    const Vec3 centre = vadd(middle, vscale(outward, t * 0.5f + depth * 0.5f));
+    const float yaw = std::atan2(-frame.u.z, frame.u.x);
+    Entity balcony = AddChildShape(scene, host, "Balcony", Block("balcony", width, slab, depth),
+                                   Vec3(centre.x, floorTop - slab, centre.z), yaw);
+    // The slab's own +Z, to tell which of its long edges is the outer one.
+    const Vec3 localZ(-frame.u.z, 0.0f, frame.u.x);
+    const float out = vdot(localZ, outward) > 0.0f ? 1.0f : -1.0f;
+    AddChildShape(scene, balcony, "Railing", Block("railing", width, kRailHeight, kRailThickness),
+                  Vec3(0.0f, slab, out * (depth - kRailThickness) * 0.5f), 0.0f);
+    for (const float side : {-1.0f, 1.0f}) {
+        AddChildShape(scene, balcony, "Railing", Block("railing", kRailThickness, kRailHeight, depth),
+                      Vec3(side * (width - kRailThickness) * 0.5f, slab, 0.0f), 0.0f);
+    }
+    return balcony;
+}
+
 } // namespace Hephaestus::Construction

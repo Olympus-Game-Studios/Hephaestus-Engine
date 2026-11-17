@@ -5,6 +5,7 @@
 
 #include "../../Assets/AssetManager.h"
 #include "../../Construction/ConstructionBuilding.h"
+#include "../../Construction/ConstructionGeometry.h"
 #include "../../Construction/ConstructionKit.h"
 #include "../../Navigation/NavMesh.h"
 #include "../../Construction/ConstructionShape.h"
@@ -233,6 +234,20 @@ void ConstructionShapeInspector::buildUI()
     storeys->addWidget(m_addStorey);
     storeys->addWidget(m_addStairs);
     layout->addLayout(storeys);
+    auto* roofs = new QHBoxLayout();
+    m_flatRoof = new QPushButton(tr("Flat Roof"));
+    m_flatRoof->setToolTip(tr("Put a flat roof on this room: a slab over its walls, overhanging them by 30 cm on a "
+                              "room made as a block. Its ceiling goes, since the roof replaces it."));
+    m_pitchedRoof = new QPushButton(tr("Pitched Roof"));
+    m_pitchedRoof->setToolTip(tr("Put a roof of two 30 degree slopes on this room, the ridge along its longer side and "
+                                 "overhanging the walls by 30 cm. For rooms made as blocks."));
+    roofs->addWidget(m_flatRoof);
+    roofs->addWidget(m_pitchedRoof);
+    layout->addLayout(roofs);
+    m_addBalcony = new QPushButton(tr("Add Balcony"));
+    m_addBalcony->setToolTip(tr("Build a balcony outside this doorway: a 1.5 m deep slab level with the floor, a "
+                                "metre wider than the door on each side, with railings on its open edges."));
+    layout->addWidget(m_addBalcony);
     m_storeyInfo = new QLabel();
     m_storeyInfo->setWordWrap(true);
     layout->addWidget(m_storeyInfo);
@@ -286,6 +301,21 @@ void ConstructionShapeInspector::connectSignals()
         EndEdit();
         Refresh();
     });
+    connect(m_flatRoof, &QPushButton::clicked, this, [this]() {
+        runBuildingAction("Add roof", [this](Scene& scene, std::string& error) {
+            return Construction::AddRoof(scene, GetEntity(), Construction::RoofStyle::Flat, 0.3f, error);
+        }, tr("Added a flat roof."));
+    });
+    connect(m_pitchedRoof, &QPushButton::clicked, this, [this]() {
+        runBuildingAction("Add roof", [this](Scene& scene, std::string& error) {
+            return Construction::AddRoof(scene, GetEntity(), Construction::RoofStyle::Pitched, 0.3f, error);
+        }, tr("Added a pitched roof."));
+    });
+    connect(m_addBalcony, &QPushButton::clicked, this, [this]() {
+        runBuildingAction("Add balcony", [this](Scene& scene, std::string& error) {
+            return Construction::AddBalcony(scene, GetEntity(), 1.5f, error);
+        }, tr("Added a balcony."));
+    });
     connect(m_addStorey, &QPushButton::clicked, this, [this]() {
         if (!m_ctx || !m_ctx->HasActiveScene()) return;
         Scene& scene = *m_ctx->GetActiveScene();
@@ -331,6 +361,23 @@ void ConstructionShapeInspector::connectSignals()
         EndEdit();
         emit componentRemoved(GetEntity(), QString::fromStdString(TypeName()));
     });
+}
+
+void ConstructionShapeInspector::runBuildingAction(const char* label,
+                                                   const std::function<entt::entity(Scene&, std::string&)>& action,
+                                                   const QString& done)
+{
+    if (!m_ctx || !m_ctx->HasActiveScene()) return;
+    BeginEdit(label);
+    std::string error;
+    const entt::entity made = action(*m_ctx->GetActiveScene(), error);
+    EndEdit();
+    m_storeyInfo->setText(made == entt::null ? QString::fromStdString(error) : done);
+    m_storeyInfo->setVisible(true);
+    if (made != entt::null) {
+        m_ctx->MarkDirty();
+        emit componentRemoved(GetEntity(), QString());
+    }
 }
 
 void ConstructionShapeInspector::applyToComponent()
@@ -455,6 +502,23 @@ void ConstructionShapeInspector::Refresh()
                                            "with its floor on this room's walls."));
     m_addStairs->setVisible(room);
     m_addStairs->setEnabled(hasStorey);
+    bool roofed = false;
+    if (room) {
+        for (entt::entity child : m_ctx->GetActiveScene()->GetRegistry().get<TransformComponent>(GetEntity()).children) {
+            const auto* childShape = m_ctx->GetActiveScene()->GetRegistry().try_get<ConstructionShapeComponent>(child);
+            const auto* childTag = m_ctx->GetActiveScene()->GetRegistry().try_get<TagComponent>(child);
+            roofed = roofed || (childShape && childShape->role == "roof") ||
+                     (!childShape && childTag && childTag->tag == "Roof");
+        }
+    }
+    m_flatRoof->setVisible(room && !hasStorey && !roofed);
+    m_pitchedRoof->setVisible(room && !hasStorey && !roofed && primary->recipe == Recipe::Box);
+    const auto* hostTransform = primary && primary->recipe == Recipe::Opening
+        ? m_ctx->GetActiveScene()->GetRegistry().try_get<TransformComponent>(GetEntity()) : nullptr;
+    const auto* host = hostTransform && hostTransform->parent != entt::null
+        ? m_ctx->GetActiveScene()->GetRegistry().try_get<ConstructionShapeComponent>(hostTransform->parent) : nullptr;
+    m_addBalcony->setVisible(Targets().size() == 1 && host &&
+                             primary->opening.sill <= Construction::HostFloorTop(*host) + 0.05f);
     m_storeyInfo->setVisible(room && !m_storeyInfo->text().isEmpty());
     m_meshInfo->setVisible(editable);
     m_meshInfo->setText(tr("%1 corners, %2 faces. Select the shape and drag a corner's handle in the viewport to move "
