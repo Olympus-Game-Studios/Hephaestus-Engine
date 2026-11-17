@@ -223,6 +223,7 @@ public:
     void SetConstructionToolMode(Hephaestus::Construction::ToolMode mode);
     Hephaestus::Construction::ToolMode GetConstructionToolMode() const { return m_constructionTool.Mode(); }
     std::string ConstructionStatusText() const { return m_constructionTool.StatusText(); }
+    std::string MeasureSummary() const { return m_constructionTool.MeasureSummary(); }
     /// Evaluate construction shapes now, so automation sees up-to-date geometry and collision.
     void UpdateConstruction();
 

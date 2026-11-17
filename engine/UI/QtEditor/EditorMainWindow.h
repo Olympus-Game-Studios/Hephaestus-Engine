@@ -379,6 +379,7 @@ private:
     QAction* m_drawWallAction = nullptr;
     QAction* m_drawRampAction = nullptr;
     QAction* m_measureWalkAction = nullptr;
+    QLabel* m_measureReadout = nullptr;
     QAction* m_drawStairsAction = nullptr;
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;

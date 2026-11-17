@@ -3217,6 +3217,15 @@ void EditorMainWindow::setupCentralWidget()
     m_topToolbar->setContentsMargins(0, 0, 0, 0);
     m_topToolbar->layout()->setContentsMargins(0, 0, 0, 0);
     tbLayout->addWidget(m_topToolbar, 0, Qt::AlignVCenter);
+    m_measureReadout = new QLabel(m_viewportToolbar);
+    m_measureReadout->setObjectName("MeasureReadout");
+    m_measureReadout->setToolTip(tr("Measure Walk: the walking route between the two points you clicked, its time at "
+                                    "walking speed and the straight-line distance"));
+    QFont readoutFont = m_measureReadout->font();
+    readoutFont.setBold(true);
+    m_measureReadout->setFont(readoutFont);
+    m_measureReadout->setVisible(false);
+    tbLayout->addWidget(m_measureReadout, 0, Qt::AlignVCenter);
     tbLayout->addStretch(1);
 
     const QSize tbIconSize(14, 14);
@@ -3796,6 +3805,11 @@ void EditorMainWindow::setupEditorCallbacks()
                     statusBar()->clearMessage();
                 } else {
                     statusBar()->showMessage(status);
+                }
+                if (m_measureReadout) {
+                    const QString summary = QString::fromStdString(m_engine->MeasureSummary());
+                    m_measureReadout->setText(summary);
+                    m_measureReadout->setVisible(!summary.isEmpty());
                 }
             },
             Qt::UniqueConnection);

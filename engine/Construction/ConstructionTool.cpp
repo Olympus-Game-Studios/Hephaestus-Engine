@@ -853,30 +853,45 @@ void ConstructionTool::Cancel(Scene& scene)
     m_path.clear();
 }
 
+std::string ConstructionTool::MeasureSummary() const
+{
+    if (m_mode != ToolMode::MeasureWalk) {
+        return {};
+    }
+    if (m_measure == 0) {
+        return "Click where the walk starts";
+    }
+    if (!m_walkNav) {
+        return "No navmesh: " + m_walkError;
+    }
+    if (!m_walkRoute.found) {
+        return "No walkable floor at one of the points";
+    }
+    char text[160];
+    std::snprintf(text, sizeof(text), "Walk %.1f m, %.1f s (straight line %.1f m)", m_walkRoute.length,
+                  m_walkRoute.seconds, m_walkRoute.straight);
+    std::string summary = text;
+    if (m_walkRoute.links > 0) {
+        summary += ", " + std::to_string(m_walkRoute.links) + (m_walkRoute.links == 1 ? " vault" : " vaults");
+    }
+    if (!m_walkRoute.complete) {
+        summary += ", the end can't be walked to";
+    }
+    return summary;
+}
+
 std::string ConstructionTool::MeasureStatus() const
 {
     if (m_measure == 0) {
-        return "Measure Walk: click where the walk starts, then where it ends.";
+        return "Measure Walk: click where the walk starts, then where it ends. The route characters would walk is "
+               "drawn in green, with its length and walking time.";
     }
-    if (!m_walkNav) {
-        return "Measure Walk: the navmesh could not be built (" + m_walkError + ").";
+    std::string status = "Measure Walk: " + MeasureSummary() + ".";
+    if (m_walkNav && m_walkRoute.found) {
+        status += m_walkRoute.complete ? " Times are at walking speed."
+                                       : " The orange route stops at the closest point it reaches.";
+        status += m_measure == 1 ? " Click to place the end." : " Click to measure again, Esc to clear.";
     }
-    if (!m_walkRoute.found) {
-        return "Measure Walk: there is no walkable floor here.";
-    }
-    char text[256];
-    std::snprintf(text, sizeof(text), "Walk %.1f m, %.1f s at walking speed (straight line %.1f m)",
-                  m_walkRoute.length, m_walkRoute.seconds, m_walkRoute.straight);
-    std::string status = text;
-    if (m_walkRoute.links > 0) {
-        status += ", " + std::to_string(m_walkRoute.links) + (m_walkRoute.links == 1 ? " vault" : " vaults");
-    }
-    if (!m_walkRoute.complete) {
-        status += ". The end can't be walked to; the route stops at the closest point.";
-    } else {
-        status += ".";
-    }
-    status += m_measure == 1 ? " Click to place the end." : " Click to measure again, Esc to clear.";
     return status;
 }
 

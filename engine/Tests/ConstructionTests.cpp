@@ -1411,7 +1411,7 @@ void TestJumpChecks()
     const std::string following = tool.StatusText();
     tool.OnPress(scene, system, camera.At(Vec3(4.0f, 0.2f, -2.0f)));
     const std::string placed = tool.StatusText();
-    Check(following.find("Walk 8.0 m, 4.0 s at walking speed") != std::string::npos &&
+    Check(following.find("Walk 8.0 m, 4.0 s (straight line 8.0 m)") != std::string::npos &&
               following.find("Click to place the end") != std::string::npos &&
               placed.find("Esc to clear") != std::string::npos,
           "Measure Walk follows the cursor, then holds the measurement (" + following + ")");

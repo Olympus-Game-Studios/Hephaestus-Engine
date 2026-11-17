@@ -66,6 +66,8 @@ public:
 
     // What the tool is doing right now, for the viewport hint strip.
     std::string StatusText() const;
+    // Measure Walk's result in a few words, for a readout beside the tools; empty in other modes.
+    std::string MeasureSummary() const;
 
 private:
     enum class Phase { Idle, Base, Height, Handle, OpeningDraw, OpeningMove, Path };
