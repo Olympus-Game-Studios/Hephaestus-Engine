@@ -1531,6 +1531,59 @@ void TestStoreys()
     Check(shortTreads, "stairs with 0.25 m treads are reported: bots can't path up treads one navmesh cell deep");
 }
 
+void TestStoreysAnyShape()
+{
+    Scene scene("Shaped storeys");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity player = scene.CreateEntity("Player");
+    player.AddComponent<CharacterControllerComponent>();
+    auto reaches = [&](const Vec3& from, const Vec3& to) {
+        system.Update(scene);
+        std::string error;
+        const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, error);
+        return navMesh && Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{}, from, to).complete;
+    };
+
+    // An L-shaped room drawn with walls: a 9 x 4 m arm along X and a 4 x 4 m arm going up in Z from its +X end.
+    Entity lHouse = AddWall(scene, "L House", {{0, 0}, {9, 0}, {9, 8}, {5, 8}, {5, 4}, {0, 4}}, true);
+    OpeningParams lDoor = Door();
+    lDoor.segment = 0;
+    lDoor.offset = -2.0f;  // x 1.9 to 3.1 on the long wall the flight would otherwise start along
+    AddOpening(scene, lHouse, lDoor);
+    std::string error;
+    const entt::entity lUpper = AddStorey(scene, lHouse, error);
+    Check(lUpper != entt::null && scene.GetRegistry().get<ConstructionShapeComponent>(lUpper).wall.points.size() == 6,
+          "a room drawn with walls gets a storey with the same outline (" + error + ")");
+    const entt::entity lStairs = AddStairsUp(scene, lHouse, 0.285f, error);
+    Check(lStairs != entt::null &&
+              scene.GetRegistry().get<ConstructionShapeComponent>(lStairs).stairs.turn == StairTurn::Straight,
+          "a straight flight goes along one of its long inside walls (" + error + ")");
+    system.Update(scene);
+    const EvaluatedGeometry* upperFloor = system.Geometry(lUpper);
+    BoxParams yard;
+    yard.width = 40.0f;
+    yard.depth = 40.0f;
+    yard.height = 0.2f;
+    AddBox(scene, "Yard", yard, Vec3(4.5f, -0.2f, 4.0f));
+    Check(upperFloor && reaches(Vec3(2.5f, 0.0f, -3.0f), Vec3(7.0f, 3.2f, 6.0f)),
+          "the L's upper floor, holed for the stairwell, can be walked to from outside, in through the door");
+
+    // A 4.6 m square room is too short for a straight flight of 11 steps with room to step on; it turns back.
+    BoxParams square = Room();
+    square.width = 4.6f;
+    square.depth = 4.6f;
+    Entity tower = AddBox(scene, "Tower", square, Vec3(30.0f, 0.0f, 0.0f));
+    AddStorey(scene, tower, error);
+    const entt::entity turning = AddStairsUp(scene, tower, 0.285f, error);
+    Check(turning != entt::null &&
+              scene.GetRegistry().get<ConstructionShapeComponent>(turning).stairs.turn == StairTurn::UTurnLeft,
+          "a room too short for a straight flight gets one that turns back (" + error + ")");
+    Check(reaches(Vec3(30.0f, 0.2f, 1.5f), Vec3(31.2f, 3.2f, 1.5f)),
+          "and its upper floor can be walked to up the turning flight");
+}
+
 void TestEditableMesh()
 {
     ConstructionShapeComponent room;
@@ -1808,6 +1861,7 @@ int main()
     TestLevelChecks();
     TestJumpChecks();
     TestStoreys();
+    TestStoreysAnyShape();
     TestEditableMesh();
     TestPlaytestHeatmap();
     TestLargeLevel();

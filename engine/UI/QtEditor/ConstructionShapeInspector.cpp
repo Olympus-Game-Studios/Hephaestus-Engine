@@ -444,8 +444,9 @@ void ConstructionShapeInspector::Refresh()
     const auto* primary = m_ctx && m_ctx->HasActiveScene()
         ? m_ctx->GetActiveScene()->GetRegistry().try_get<ConstructionShapeComponent>(GetEntity()) : nullptr;
     const bool room = Targets().size() == 1 && primary && primary->source == Construction::SourceKind::Recipe &&
-                      primary->recipe == Recipe::Box && primary->box.hollow &&
-                      primary->operation == Construction::Operation::Add;
+                      primary->operation == Construction::Operation::Add &&
+                      ((primary->recipe == Recipe::Box && primary->box.hollow) ||
+                       (primary->recipe == Recipe::Wall && primary->wall.closed && primary->box.floor));
     const bool hasStorey = room && Construction::StoreyAbove(*m_ctx->GetActiveScene(), GetEntity()) != entt::null;
     m_addStorey->setVisible(room);
     m_addStorey->setEnabled(!hasStorey);

@@ -785,6 +785,124 @@ void AddPrism(EvaluatedGeometry& out, const std::vector<WallPoint>& polygon, flo
     AddSolid(out, corners);
 }
 
+// A horizontal slab over a polygon (any winding) from y0 to y1, less the parts inside cut boxes that reach into it.
+// The polygon is split into strips at every vertex, every cut edge and every place a polygon edge crosses a cut edge,
+// so inside a strip each piece is a quad bounded by two straight lines; holes get their own side faces.
+void EmitSlab(EvaluatedGeometry& out, const std::vector<WallPoint>& polygon, float y0, float y1,
+              const std::vector<LocalBox>& allCuts, FaceGroup topGroup)
+{
+    struct Edge {
+        float x0, z0, x1, z1;
+        float At(float x) const { return z0 + (z1 - z0) * (x - x0) / (x1 - x0); }
+    };
+    // A piece boundary: a polygon edge, or a flat line at a cut's z.
+    struct Bound {
+        const Edge* edge = nullptr;
+        float z = 0.0f;
+        float At(float x) const { return edge ? edge->At(x) : z; }
+    };
+    std::vector<Edge> edges;
+    for (size_t n = 0; n < polygon.size(); ++n) {
+        WallPoint a = polygon[n];
+        WallPoint b = polygon[(n + 1) % polygon.size()];
+        if (std::fabs(a.x - b.x) < 1e-6f) continue;
+        if (a.x > b.x) std::swap(a, b);
+        edges.push_back({a.x, a.z, b.x, b.z});
+    }
+    std::vector<LocalBox> cuts;
+    for (const LocalBox& cut : allCuts) {
+        if (cut.min.y < y1 && cut.max.y > y0) cuts.push_back(cut);
+    }
+    std::vector<float> xs;
+    for (const WallPoint& p : polygon) xs.push_back(p.x);
+    for (const LocalBox& cut : cuts) {
+        xs.push_back(cut.min.x);
+        xs.push_back(cut.max.x);
+        for (const Edge& e : edges) {
+            for (float line : {cut.min.z, cut.max.z}) {
+                if ((e.z0 - line) * (e.z1 - line) < 0.0f) {
+                    const float x = e.x0 + (e.x1 - e.x0) * (line - e.z0) / (e.z1 - e.z0);
+                    if (x > cut.min.x && x < cut.max.x) xs.push_back(x);
+                }
+            }
+        }
+    }
+    Unique(xs);
+    const Vec3 up(0.0f, 1.0f, 0.0f);
+    const Vec3 down(0.0f, -1.0f, 0.0f);
+    const FaceTag top{topGroup, -1, -1};
+    const FaceTag bottom{FaceGroup::Bottom, -1, -1};
+    const FaceTag reveal{FaceGroup::Reveal, -1, -1};
+    auto wall = [&](const Vec3& a, const Vec3& b, const Vec3& normal) {
+        PushFacing(out, Vec3(a.x, y0, a.z), Vec3(b.x, y0, b.z), Vec3(b.x, y1, b.z), normal, reveal);
+        PushFacing(out, Vec3(a.x, y0, a.z), Vec3(b.x, y1, b.z), Vec3(a.x, y1, a.z), normal, reveal);
+    };
+    for (size_t i = 0; i + 1 < xs.size(); ++i) {
+        const float xa = xs[i];
+        const float xb = xs[i + 1];
+        if (xb - xa < 1e-5f) continue;
+        const float xm = (xa + xb) * 0.5f;
+        std::vector<const Edge*> crossing;
+        for (const Edge& e : edges) {
+            if (e.x0 <= xa + 1e-5f && e.x1 >= xb - 1e-5f) crossing.push_back(&e);
+        }
+        std::sort(crossing.begin(), crossing.end(), [&](const Edge* a, const Edge* b) { return a->At(xm) < b->At(xm); });
+        std::vector<std::pair<Bound, Bound>> pieces;
+        for (size_t k = 0; k + 1 < crossing.size(); k += 2) {
+            pieces.push_back({Bound{crossing[k]}, Bound{crossing[k + 1]}});
+        }
+        std::vector<const LocalBox*> active;
+        for (const LocalBox& cut : cuts) {
+            if (cut.min.x <= xa + 1e-5f && cut.max.x >= xb - 1e-5f) active.push_back(&cut);
+        }
+        for (const LocalBox* cut : active) {
+            std::vector<std::pair<Bound, Bound>> kept;
+            for (const auto& [lo, hi] : pieces) {
+                if (cut->max.z <= lo.At(xm) || cut->min.z >= hi.At(xm)) {
+                    kept.push_back({lo, hi});
+                    continue;
+                }
+                if (cut->min.z > lo.At(xm)) kept.push_back({lo, Bound{nullptr, cut->min.z}});
+                if (cut->max.z < hi.At(xm)) kept.push_back({Bound{nullptr, cut->max.z}, hi});
+            }
+            pieces = std::move(kept);
+        }
+        for (const auto& [lo, hi] : pieces) {
+            const Vec3 a(xa, 0.0f, lo.At(xa)), b(xb, 0.0f, lo.At(xb)), c(xb, 0.0f, hi.At(xb)), d(xa, 0.0f, hi.At(xa));
+            // A piece narrowing to a point (a polygon corner) has one triangle of no area, which is left out.
+            auto face = [&](const Vec3& p, const Vec3& q, const Vec3& r, float y, const Vec3& normal, FaceTag tag) {
+                if (std::fabs((q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x)) < 1e-8f) return;
+                PushFacing(out, Vec3(p.x, y, p.z), Vec3(q.x, y, q.z), Vec3(r.x, y, r.z), normal, tag);
+            };
+            face(a, b, c, y1, up, top);
+            face(a, c, d, y1, up, top);
+            face(a, b, c, y0, down, bottom);
+            face(a, c, d, y0, down, bottom);
+            std::vector<Vec3> corners;
+            for (const Vec3& p : {a, b, c, d}) {
+                corners.push_back(Vec3(p.x, y0, p.z));
+                corners.push_back(Vec3(p.x, y1, p.z));
+            }
+            AddSolid(out, corners);
+            // Sides facing a hole: a flat bound is a cut's edge; a strip side is one where a cut begins or ends.
+            if (!lo.edge) wall(b, a, Vec3(0.0f, 0.0f, -1.0f));
+            if (!hi.edge) wall(d, c, Vec3(0.0f, 0.0f, 1.0f));
+            for (const LocalBox& cut : cuts) {
+                for (const auto& [x, normalX] : {std::pair{xb, 1.0f}, std::pair{xa, -1.0f}}) {
+                    const bool begins = normalX > 0.0f ? std::fabs(cut.min.x - x) < 1e-5f : std::fabs(cut.max.x - x) < 1e-5f;
+                    if (!begins) continue;
+                    const float z0 = std::max(lo.At(x), cut.min.z);
+                    const float z1 = std::min(hi.At(x), cut.max.z);
+                    if (z1 - z0 > 1e-5f) wall(Vec3(x, 0.0f, z0), Vec3(x, 0.0f, z1), Vec3(normalX, 0.0f, 0.0f));
+                }
+            }
+        }
+    }
+}
+
+
+} // namespace
+
 bool PointInPolygon(const std::vector<WallPoint>& polygon, float x, float z)
 {
     bool inside = false;
@@ -797,8 +915,6 @@ bool PointInPolygon(const std::vector<WallPoint>& polygon, float x, float z)
     }
     return inside;
 }
-
-} // namespace
 
 std::vector<int> TriangulatePolygon(const std::vector<WallPoint>& polygon)
 {
@@ -998,56 +1114,9 @@ bool EvaluateWall(const ConstructionShapeComponent& shape, const std::vector<Ope
         AddPrism(out, wedge, 0.0f, h);
     }
 
-    // The floor slab, under the walls' centre line so its edges are hidden inside them.
+    // The floor slab, under the walls' centre line so its edges are hidden inside them; subtract boxes cut it.
     if (shape.wall.closed && shape.box.floor && count >= 3) {
-        const std::vector<WallPoint>& polygon = shape.wall.points;
-        const std::vector<int> triangles = TriangulatePolygon(polygon);
-        for (size_t n = 0; n + 2 < triangles.size(); n += 3) {
-            const WallPoint& a = polygon[static_cast<size_t>(triangles[n])];
-            const WallPoint& b = polygon[static_cast<size_t>(triangles[n + 1])];
-            const WallPoint& c = polygon[static_cast<size_t>(triangles[n + 2])];
-            PushFacing(out, Vec3(a.x, t, a.z), Vec3(b.x, t, b.z), Vec3(c.x, t, c.z), up, FaceTag{FaceGroup::Floor, -1, -1});
-            PushFacing(out, Vec3(a.x, 0.0f, a.z), Vec3(b.x, 0.0f, b.z), Vec3(c.x, 0.0f, c.z), Vec3(0.0f, -1.0f, 0.0f),
-                       FaceTag{FaceGroup::Bottom, -1, -1});
-        }
-        bool rectilinear = true;
-        for (size_t n = 0; n < polygon.size(); ++n) {
-            const WallPoint& a = polygon[n];
-            const WallPoint& b = polygon[(n + 1) % polygon.size()];
-            rectilinear = rectilinear && (std::fabs(a.x - b.x) < 1e-4f || std::fabs(a.z - b.z) < 1e-4f);
-        }
-        if (rectilinear) {
-            // Exact boxes: the grid of every point's x and z, keeping the cells inside the path.
-            std::vector<float> xs;
-            std::vector<float> zs;
-            for (const WallPoint& point : polygon) {
-                xs.push_back(point.x);
-                zs.push_back(point.z);
-            }
-            Unique(xs);
-            Unique(zs);
-            std::vector<Prism> cells;
-            for (size_t i = 0; i + 1 < xs.size(); ++i) {
-                for (size_t k = 0; k + 1 < zs.size(); ++k) {
-                    if (PointInPolygon(polygon, (xs[i] + xs[i + 1]) * 0.5f, (zs[k] + zs[k + 1]) * 0.5f)) {
-                        cells.push_back(Prism{{xs[i], 0.0f, zs[k]}, {xs[i + 1], t, zs[k + 1]}});
-                    }
-                }
-            }
-            if (!cells.empty()) {
-                EmitSolids(CellGrid(cells), out);
-            }
-        } else {
-            for (size_t n = 0; n + 2 < triangles.size(); n += 3) {
-                std::vector<Vec3> prism;
-                for (size_t m = 0; m < 3; ++m) {
-                    const WallPoint& point = polygon[static_cast<size_t>(triangles[n + m])];
-                    prism.push_back(Vec3(point.x, 0.0f, point.z));
-                    prism.push_back(Vec3(point.x, t, point.z));
-                }
-                out.hulls.push_back(prism);
-            }
-        }
+        EmitSlab(out, shape.wall.points, 0.0f, t, cuts, FaceGroup::Floor);
     }
 
     if (out.mesh.vertices.empty()) {

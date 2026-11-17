@@ -1,5 +1,6 @@
 #include "ConstructionBuilding.h"
 
+#include "ConstructionGeometry.h"
 #include "ConstructionShape.h"
 #include "ConstructionSystem.h"
 
@@ -19,13 +20,60 @@ namespace {
 
 constexpr float kStepRun = 0.32f;  // tread depth of generated stairs: two navmesh cells for the default player
 constexpr float kFlightWidth = 1.2f;
-constexpr float kMinApproach = 0.7f;  // floor in front of the first step
-constexpr float kHalfPi = 1.57079633f;
 
 bool IsRoom(const ConstructionShapeComponent* shape)
 {
-    return shape && shape->source == SourceKind::Recipe && shape->recipe == Recipe::Box && shape->box.hollow &&
-           shape->operation == Operation::Add;
+    if (!shape || shape->source != SourceKind::Recipe || shape->operation != Operation::Add) {
+        return false;
+    }
+    return (shape->recipe == Recipe::Box && shape->box.hollow) ||
+           (shape->recipe == Recipe::Wall && shape->wall.closed && shape->box.floor && shape->wall.points.size() >= 3);
+}
+
+// The centre line of a room's walls in its own frame.
+std::vector<WallPoint> RoomOutline(const ConstructionShapeComponent& shape)
+{
+    if (shape.recipe == Recipe::Wall) {
+        return shape.wall.points;
+    }
+    const float hx = (shape.box.width - shape.box.wallThickness) * 0.5f;
+    const float hz = (shape.box.depth - shape.box.wallThickness) * 0.5f;
+    return {{-hx, -hz}, {hx, -hz}, {hx, hz}, {-hx, hz}};
+}
+
+// A rectangle on the floor, in the room's frame.
+struct Rect {
+    float x0, z0, x1, z1;
+};
+
+bool Overlap(const Rect& a, const Rect& b)
+{
+    return a.x0 < b.x1 - 0.01f && a.x1 > b.x0 + 0.01f && a.z0 < b.z1 - 0.01f && a.z1 > b.z0 + 0.01f;
+}
+
+// Whether a rectangle lies on the room's floor: its corners inside the walls' inside faces and no wall corner in it.
+bool InsideRoom(const std::vector<WallPoint>& outline, float thickness, const Rect& r)
+{
+    const float half = thickness * 0.5f - 1e-3f;
+    auto distanceToWalls = [&](float x, float z) {
+        float best = 1e9f;
+        for (size_t n = 0; n < outline.size(); ++n) {
+            const WallPoint& a = outline[n];
+            const WallPoint& b = outline[(n + 1) % outline.size()];
+            const float dx = b.x - a.x, dz = b.z - a.z;
+            const float l2 = dx * dx + dz * dz;
+            const float u = l2 > 0.0f ? std::clamp(((x - a.x) * dx + (z - a.z) * dz) / l2, 0.0f, 1.0f) : 0.0f;
+            best = std::min(best, std::hypot(x - (a.x + dx * u), z - (a.z + dz * u)));
+        }
+        return best;
+    };
+    for (const auto& [x, z] : {std::pair{r.x0, r.z0}, std::pair{r.x1, r.z0}, std::pair{r.x1, r.z1}, std::pair{r.x0, r.z1}}) {
+        if (!PointInPolygon(outline, x, z) || distanceToWalls(x, z) < half) return false;
+    }
+    for (const WallPoint& p : outline) {
+        if (p.x > r.x0 - half && p.x < r.x1 + half && p.z > r.z0 - half && p.z < r.z1 + half) return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -53,7 +101,7 @@ entt::entity AddStorey(Scene& scene, entt::entity room, std::string& error)
     entt::registry& registry = scene.GetRegistry();
     auto* shape = registry.valid(room) ? registry.try_get<ConstructionShapeComponent>(room) : nullptr;
     if (!IsRoom(shape)) {
-        error = "only rooms (hollow blocks) can have a storey added";
+        error = "only rooms (hollow blocks, or walls closed into a room with a floor) can have a storey added";
         return entt::null;
     }
     if (StoreyAbove(scene, room) != entt::null) {
@@ -92,32 +140,14 @@ entt::entity AddStairsUp(Scene& scene, entt::entity room, float maxRise, std::st
     const BoxParams box = shape->box;
     const float t = box.wallThickness;
     const float floorTop = box.floor ? t : 0.0f;
-    const float insideWidth = box.width - 2.0f * t;
-    const float insideDepth = box.depth - 2.0f * t;
     // From this room's floor to the top of the storey's floor, which sits on this room's walls.
     const float rise = box.height + registry.get<ConstructionShapeComponent>(above).box.wallThickness - floorTop;
-    const int steps = std::max(1, static_cast<int>(std::ceil(rise / std::max(maxRise, 0.05f) - 1e-4f)));
+    const int steps = std::max(3, static_cast<int>(std::ceil(rise / std::max(maxRise, 0.05f) - 1e-4f)));
     const float length = steps * kStepRun;
-    const bool alongX = insideWidth >= insideDepth;
-    const float longSide = alongX ? insideWidth : insideDepth;
-    const float shortSide = alongX ? insideDepth : insideWidth;
-    const float flightWidth = std::min(kFlightWidth, shortSide - 0.2f);
-    // Room at the foot of the flight to step onto it; up to a metre.
-    const float approach = std::min(1.0f, longSide - 0.1f - length);
-    if (approach < kMinApproach || flightWidth < 0.8f) {
-        char text[160];
-        std::snprintf(text, sizeof(text),
-                      "the room is too small for stairs: %d steps need %.1f m along one inside wall and 1.0 m across",
-                      steps, length + 0.1f + kMinApproach);
-        error = text;
-        return entt::null;
-    }
+    const std::vector<WallPoint> outline = RoomOutline(*shape);
 
-    // Rectangles on the floor (room frame, x then z) already taken by flights and by the stairwell of the flight
-    // from the storey below, which would leave a new flight standing over a hole.
-    struct Rect {
-        float x0, z0, x1, z1;
-    };
+    // Floor already taken: flights, and the stairwell of the flight from the storey below (a flight there would stand
+    // over a hole).
     std::vector<Rect> taken;
     for (entt::entity child : registry.get<TransformComponent>(room).children) {
         const auto* other = registry.try_get<ConstructionShapeComponent>(child);
@@ -128,51 +158,130 @@ entt::entity AddStairsUp(Scene& scene, entt::entity room, float maxRise, std::st
         const float hz = (turned ? other->box.width : other->box.depth) * 0.5f;
         taken.push_back({placed.position.x - hx, placed.position.z - hz, placed.position.x + hx, placed.position.z + hz});
     }
-    // Along a long inside wall, foot first: -Z (or -X) wall climbing +X (or +Z), then the other wall back the other way.
-    const float halfLong = longSide * 0.5f;
-    const float halfShort = shortSide * 0.5f;
-    bool placed = false;
-    float flightMin = 0.0f, sideMin = 0.0f;
-    int direction = 1;
-    for (const auto& [side, dir] : {std::pair{-1, 1}, std::pair{1, -1}, std::pair{-1, -1}, std::pair{1, 1}}) {
-        const float footStart = dir > 0 ? -halfLong : halfLong - approach;
-        const float lo = dir > 0 ? -halfLong : halfLong - approach - length;
-        const float hi = lo + approach + length;
-        const float s0 = side < 0 ? -halfShort : halfShort - flightWidth;
-        const Rect area = alongX ? Rect{lo, s0, hi, s0 + flightWidth} : Rect{s0, lo, s0 + flightWidth, hi};
-        const bool clear = std::none_of(taken.begin(), taken.end(), [&](const Rect& r) {
-            return area.x0 < r.x1 - 0.01f && area.x1 > r.x0 + 0.01f && area.z0 < r.z1 - 0.01f && area.z1 > r.z0 + 0.01f;
-        });
-        if (clear) {
-            flightMin = dir > 0 ? footStart + approach : lo;
-            sideMin = s0;
-            direction = dir;
-            placed = true;
-            break;
+    // And the floor inside each doorway, so a flight never blocks the way in.
+    for (entt::entity child : registry.get<TransformComponent>(room).children) {
+        const auto* opening = registry.try_get<ConstructionShapeComponent>(child);
+        WallFrame frame;
+        if (!opening || opening->recipe != Recipe::Opening || opening->opening.sill > floorTop + 0.05f ||
+            !GetHostWallFrame(*shape, opening->opening.side, opening->opening.segment, frame)) {
+            continue;
+        }
+        // The frame sits on one face of the wall; start from the wall's centre line and go into the room.
+        const Vec3 middle = vadd(vadd(frame.center, vscale(frame.u, opening->opening.offset)),
+                                 vscale(frame.normal, -frame.thickness * 0.5f));
+        const Vec3 probe = vadd(middle, vscale(frame.normal, t));
+        const Vec3 inward = PointInPolygon(outline, probe.x, probe.z) ? frame.normal : vscale(frame.normal, -1.0f);
+        const float half = opening->opening.width * 0.5f + 0.3f;
+        Rect clear{1e9f, 1e9f, -1e9f, -1e9f};
+        for (const float along : {-half, half}) {
+            for (const float in : {0.0f, t * 0.5f + 1.5f}) {
+                const Vec3 p = vadd(middle, vadd(vscale(frame.u, along), vscale(inward, in)));
+                clear = {std::min(clear.x0, p.x), std::min(clear.z0, p.z), std::max(clear.x1, p.x), std::max(clear.z1, p.z)};
+            }
+        }
+        taken.push_back(clear);
+    }
+    auto free = [&](const Rect& r) {
+        return InsideRoom(outline, t, r) && std::none_of(taken.begin(), taken.end(), [&](const Rect& o) { return Overlap(r, o); });
+    };
+
+    // Each straight, axis-aligned inside wall, longest first; the flight stands against it.
+    struct Side {
+        Vec3 start;   // on the inside face
+        Vec3 along;   // unit, along the wall
+        Vec3 inward;  // unit, into the room
+        float length;
+    };
+    std::vector<Side> sides;
+    for (size_t n = 0; n < outline.size(); ++n) {
+        const WallPoint& a = outline[n];
+        const WallPoint& b = outline[(n + 1) % outline.size()];
+        const Vec3 d(b.x - a.x, 0.0f, b.z - a.z);
+        const float len = vlen(d);
+        if (len < 1e-3f || (std::fabs(d.x) > 1e-3f && std::fabs(d.z) > 1e-3f)) continue;
+        const Vec3 along = vscale(d, 1.0f / len);
+        Vec3 inward(-along.z, 0.0f, along.x);
+        const Vec3 mid((a.x + b.x) * 0.5f, 0.0f, (a.z + b.z) * 0.5f);
+        if (!PointInPolygon(outline, mid.x + inward.x * t, mid.z + inward.z * t)) inward = vscale(inward, -1.0f);
+        sides.push_back({vadd(Vec3(a.x, 0.0f, a.z), vscale(inward, t * 0.5f)), along, inward, len});
+    }
+    std::sort(sides.begin(), sides.end(), [](const Side& a, const Side& b) { return a.length > b.length; });
+
+    // A rectangle on the floor from `s0` to `s1` along a side and from `w0` to `w1` in from its face.
+    auto rectOn = [](const Side& side, float s0, float s1, float w0, float w1) {
+        const Vec3 p0 = vadd(side.start, vadd(vscale(side.along, s0), vscale(side.inward, w0)));
+        const Vec3 p1 = vadd(side.start, vadd(vscale(side.along, s1), vscale(side.inward, w1)));
+        return Rect{std::min(p0.x, p1.x), std::min(p0.z, p1.z), std::max(p0.x, p1.x), std::max(p0.z, p1.z)};
+    };
+    constexpr float kSlide = 0.25f;  // how far along a wall each try moves
+    const float approach = 1.0f;
+
+    Rect footprint{};
+    Vec3 climb;       // the flight's local +Z in the room
+    bool uTurn = false;
+    bool found = false;
+    for (const Side& side : sides) {
+        for (float s0 = 0.0f; !found && s0 + approach + length <= side.length + 1e-3f; s0 += kSlide) {
+            for (int dir : {1, -1}) {
+                const float footAt = dir > 0 ? s0 : side.length - s0 - approach;
+                const float flight0 = dir > 0 ? s0 + approach : side.length - s0 - approach - length;
+                const Rect flight = rectOn(side, flight0, flight0 + length, 0.0f, kFlightWidth);
+                const Rect front = rectOn(side, footAt, footAt + approach, 0.0f, kFlightWidth);
+                if (free(flight) && free(front)) {
+                    footprint = flight;
+                    climb = vscale(side.along, static_cast<float>(dir));
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (found) break;
+    }
+    // A flight that turns back on itself fits rooms too short for a straight one: two flights side by side, with the
+    // landing against the wall and the foot and the top facing into the room.
+    const int first = steps / 2;
+    const float turnDepth = static_cast<float>(first) * kStepRun + kFlightWidth;
+    for (size_t n = 0; !found && n < sides.size(); ++n) {
+        const Side& side = sides[n];
+        for (float s0 = 0.0f; s0 + 2.0f * kFlightWidth <= side.length + 1e-3f; s0 += kSlide) {
+            const Rect flight = rectOn(side, s0, s0 + 2.0f * kFlightWidth, 0.0f, turnDepth);
+            const Rect front = rectOn(side, s0, s0 + 2.0f * kFlightWidth, turnDepth, turnDepth + approach);
+            if (free(flight) && free(front)) {
+                footprint = flight;
+                climb = vscale(side.inward, -1.0f);
+                uTurn = true;
+                found = true;
+                break;
+            }
         }
     }
-    if (!placed) {
-        error = "there is no free inside wall for another flight in this room";
+    if (!found) {
+        char text[200];
+        std::snprintf(text, sizeof(text),
+                      "the room is too small for stairs: %d steps need a free straight wall %.1f m long with %.1f m of "
+                      "floor beside it, or for a flight that turns back, %.1f m of wall and %.1f m of floor in front",
+                      steps, length + approach, kFlightWidth, 2.0f * kFlightWidth, turnDepth + approach);
+        error = text;
         return entt::null;
     }
-    const float along = flightMin + length * 0.5f;
-    const float across = sideMin + flightWidth * 0.5f;
-    Vec3 centre = alongX ? Vec3(along, floorTop, across) : Vec3(across, floorTop, along);
-    const float yaw = alongX ? (direction > 0 ? kHalfPi : -kHalfPi) : (direction > 0 ? 0.0f : 2.0f * kHalfPi);
+
+    const Vec3 centre((footprint.x0 + footprint.x1) * 0.5f, floorTop, (footprint.z0 + footprint.z1) * 0.5f);
     Entity stairs = scene.CreateEntity("Stairs Up");
     scene.SetParent(stairs, Entity(room, &scene), false);
     auto& stairsTransform = stairs.GetComponent<TransformComponent>();
     stairsTransform.position = centre;
-    stairsTransform.rotation = Vec3(0.0f, yaw, 0.0f);
+    stairsTransform.rotation = Vec3(0.0f, std::atan2(climb.x, climb.z), 0.0f);
     stairsTransform.scale = Vec3(1.0f, 1.0f, 1.0f);
     ConstructionShapeComponent flight;
     flight.recipe = Recipe::Stairs;
     flight.role = "stairs";
-    flight.box.width = flightWidth;
-    flight.box.depth = length;
+    flight.box.width = uTurn ? 2.0f * kFlightWidth : kFlightWidth;
+    flight.box.depth = uTurn ? turnDepth : length;
     flight.box.height = rise;
     flight.stairs.steps = steps;
     flight.stairs.maxRise = maxRise;
+    flight.stairs.turn = uTurn ? StairTurn::UTurnLeft : StairTurn::Straight;
+    flight.stairs.flightWidth = kFlightWidth;
     stairs.AddComponent<ConstructionShapeComponent>(flight);
     ConstructionSystem::AddBlockoutMaterial(scene, stairs);
 
@@ -187,8 +296,8 @@ entt::entity AddStairsUp(Scene& scene, entt::entity room, float maxRise, std::st
     ConstructionShapeComponent cut;
     cut.recipe = Recipe::Box;
     cut.role = "stairwell";
-    cut.box.width = (alongX ? length : flightWidth) - 0.02f;
-    cut.box.depth = (alongX ? flightWidth : length) - 0.02f;
+    cut.box.width = footprint.x1 - footprint.x0 - 0.02f;
+    cut.box.depth = footprint.z1 - footprint.z0 - 0.02f;
     cut.box.height = storey.wallThickness + 0.1f;
     well.AddComponent<ConstructionShapeComponent>(cut);
     ConstructionSystem::SetOperation(scene, well, Operation::Subtract);

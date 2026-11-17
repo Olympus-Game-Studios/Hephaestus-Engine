@@ -82,6 +82,7 @@ bool EvaluateWall(const ConstructionShapeComponent& shape, const std::vector<Ope
                   EvaluatedGeometry& out, const std::vector<LocalBox>& cuts = {});
 
 // Triangles covering a simple polygon on the XZ plane, as index triples, wound counter-clockwise in (x, z).
+bool PointInPolygon(const std::vector<WallPoint>& polygon, float x, float z);
 std::vector<int> TriangulatePolygon(const std::vector<WallPoint>& polygon);
 
 // Evaluates any shape with its own geometry (HasOwnGeometry), using the openings for boxes.
