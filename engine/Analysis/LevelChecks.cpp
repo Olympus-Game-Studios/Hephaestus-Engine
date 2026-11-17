@@ -234,7 +234,7 @@ void CheckOpenings(Scene& scene, const TraversalMetrics& metrics, float cellSize
     }
 }
 
-void CheckStairsAndRamps(Scene& scene, const TraversalMetrics& metrics, LevelCheckReport& report)
+void CheckStairsAndRamps(Scene& scene, const TraversalMetrics& metrics, float cellSize, LevelCheckReport& report)
 {
     using namespace Construction;
     entt::registry& registry = scene.GetRegistry();
@@ -249,6 +249,16 @@ void CheckStairsAndRamps(Scene& scene, const TraversalMetrics& metrics, LevelChe
                 report.problems.push_back({"step-too-high", Severity::Error,
                                            NameOf(scene, entity) + " has " + Metres(rise) + " steps; characters step up " +
                                                Metres(metrics.stepHeight) + ". Add steps or lower them.",
+                                           position, entity});
+            }
+            // Recast drops a tread one cell deep as a ledge (its neighbours differ by more than a step), so bots
+            // need two cells; the player can still climb.
+            const float tread = shape.box.depth / static_cast<float>(StairCount(shape));
+            if (shape.stairs.turn == StairTurn::Straight && tread < 2.0f * cellSize - 1e-3f) {
+                report.problems.push_back({"tread-too-short", Severity::Warning,
+                                           NameOf(scene, entity) + " has " + Metres(tread) + " treads; bots need " +
+                                               Metres(2.0f * cellSize) +
+                                               " to find a path up them. Make the stairs longer or use fewer steps.",
                                            position, entity});
             }
         } else if (shape.recipe == Recipe::Ramp && shape.box.depth > 0.0f) {
@@ -409,7 +419,7 @@ LevelCheckReport CheckLevel(Scene& scene, const std::filesystem::path& projectRo
     report.metrics = MetricsForScene(scene);
     Navigation::NavBuildSettings settings = Navigation::SettingsForScene(scene);
     CheckOpenings(scene, report.metrics, settings.cellSize, report);
-    CheckStairsAndRamps(scene, report.metrics, report);
+    CheckStairsAndRamps(scene, report.metrics, settings.cellSize, report);
 
     std::vector<Vec3> starts;
     for (auto handle : scene.GetRegistry().view<CharacterControllerComponent>()) {

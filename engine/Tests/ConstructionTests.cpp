@@ -1,5 +1,6 @@
 #include "Analysis/LevelChecks.h"
 #include "Analysis/Playtest.h"
+#include "Construction/ConstructionBuilding.h"
 #include "Construction/ConstructionGeometry.h"
 #include "Construction/ConstructionKit.h"
 #include "Construction/ConstructionSystem.h"
@@ -1448,6 +1449,88 @@ void TestJumpChecks()
     Check(!stillRuns && LevelCheckIds().empty(), "removing the owner's checks stops them running");
 }
 
+void TestStoreys()
+{
+    Scene scene("Storeys");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams ground = Room();
+    ground.width = 8.0f;
+    ground.depth = 6.0f;
+    ground.ceiling = true;
+    Entity house = AddBox(scene, "House", ground, Vec3(10.0f, 0.0f, 0.0f));
+    AddOpening(scene, house, Door());
+    system.Update(scene);
+    std::string error;
+    const entt::entity firstFloor = AddStorey(scene, house, error);
+    Check(firstFloor != entt::null && StoreyAbove(scene, house) == firstFloor && AddStorey(scene, house, error) == entt::null,
+          "a storey goes on a room once (" + error + ")");
+    const auto& upper = scene.GetRegistry().get<ConstructionShapeComponent>(firstFloor);
+    const Mat4 upperWorld = scene.GetWorldTransform(Entity(firstFloor, &scene));
+    const Vec3 upperBase = Mat4::TransformPoint(upperWorld, Vec3(0.0f, 0.0f, 0.0f));
+    Check(upper.box.width == 8.0f && upper.box.floor && upper.box.ceiling &&
+              !house.GetComponent<ConstructionShapeComponent>().box.ceiling &&
+              std::fabs(upperBase.y - 3.0f) < 1e-4f && std::fabs(upperBase.x - 10.0f) < 1e-4f,
+          "the storey sits on the room's walls with the same footprint; its floor replaces the room's ceiling");
+    const entt::entity secondFloor = AddStorey(scene, firstFloor, error);
+    Check(secondFloor != entt::null &&
+              std::fabs(Mat4::TransformPoint(scene.GetWorldTransform(Entity(secondFloor, &scene)), Vec3(0, 0, 0)).y - 6.0f) < 1e-4f,
+          "storeys stack on storeys");
+
+    const entt::entity flight = AddStairsUp(scene, house, 0.285f, error);
+    Check(flight != entt::null && AddStairsUp(scene, secondFloor, 0.285f, error) == entt::null &&
+              error.find("storey above") != std::string::npos,
+          "stairs go up to a storey above, and only where there is one");
+    const auto& stairs = scene.GetRegistry().get<ConstructionShapeComponent>(flight);
+    Check(stairs.recipe == Recipe::Stairs && std::fabs(stairs.box.height - 3.0f) < 1e-4f && stairs.stairs.steps == 11 &&
+              stairs.box.height / stairs.stairs.steps <= 0.285f,
+          "the flight climbs from the floor to the top of the floor above in steps no taller than allowed");
+    BoxParams cramped = Room();
+    cramped.width = 3.0f;
+    cramped.depth = 3.0f;
+    Entity shed = AddBox(scene, "Shed", cramped, Vec3(-20.0f, 0.0f, 0.0f));
+    AddStorey(scene, shed, error);
+    Check(AddStairsUp(scene, shed, 0.285f, error) == entt::null && error.find("too small") != std::string::npos,
+          "a room too short for the flight says so (" + error + ")");
+
+    // Walk from outside, through the door and up the stairs to the first floor.
+    Entity player = scene.CreateEntity("Player");
+    player.AddComponent<CharacterControllerComponent>();
+    system.Update(scene);
+    std::string navError;
+    const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, navError);
+    Check(navMesh != nullptr, "the building's navmesh builds (" + navError + ")");
+    if (navMesh) {
+        const Hephaestus::Analysis::WalkRoute route = Hephaestus::Analysis::MeasureWalk(
+            *navMesh, Hephaestus::Analysis::TraversalMetrics{}, Vec3(10.0f, 0.2f, 1.0f), Vec3(12.0f, 3.2f, 1.5f));
+        Check(route.complete && route.corners.back().y > 3.0f,
+              "the first floor can be walked to from the ground floor, up the stairs (" +
+                  std::to_string(route.length) + " m)");
+    }
+    const entt::entity secondFlight = AddStairsUp(scene, firstFloor, 0.285f, error);
+    Check(secondFlight != entt::null, "a second flight goes from the first floor to the second (" + error + ")");
+    if (secondFlight != entt::null) {
+        const Vec3 lower = scene.GetRegistry().get<TransformComponent>(flight).position;
+        const Vec3 upperFlight = scene.GetRegistry().get<TransformComponent>(secondFlight).position;
+        Check(std::fabs(upperFlight.z - lower.z) > 1.0f,
+              "the second flight runs along the other wall, clear of the stairwell it would otherwise stand over");
+        system.Update(scene);
+        const auto tall = Hephaestus::Analysis::LevelNavMesh(scene, {}, navError);
+        const Hephaestus::Analysis::WalkRoute toTop = Hephaestus::Analysis::MeasureWalk(
+            *tall, Hephaestus::Analysis::TraversalMetrics{}, Vec3(10.0f, 0.2f, 1.0f), Vec3(12.0f, 6.2f, 1.0f));
+        Check(toTop.complete, "the second floor can be walked to from the ground floor (" +
+                                  std::to_string(toTop.length) + " m)");
+    }
+    auto& steep = scene.GetRegistry().get<ConstructionShapeComponent>(flight);
+    steep.box.depth = 11 * 0.25f;
+    bool shortTreads = false;
+    for (const auto& problem : Hephaestus::Analysis::CheckLevel(scene).problems) {
+        shortTreads = shortTreads || (problem.check == "tread-too-short" && problem.entity == flight);
+    }
+    Check(shortTreads, "stairs with 0.25 m treads are reported: bots can't path up treads one navmesh cell deep");
+}
+
 void TestEditableMesh()
 {
     ConstructionShapeComponent room;
@@ -1724,6 +1807,7 @@ int main()
     TestKits();
     TestLevelChecks();
     TestJumpChecks();
+    TestStoreys();
     TestEditableMesh();
     TestPlaytestHeatmap();
     TestLargeLevel();

@@ -95,6 +95,9 @@ private:
 
     QPushButton* m_remove = nullptr;
     QPushButton* m_makeEditable = nullptr;
+    QPushButton* m_addStorey = nullptr;
+    QPushButton* m_addStairs = nullptr;
+    QLabel* m_storeyInfo = nullptr;
     QLabel* m_meshInfo = nullptr;
 };
 

@@ -5,6 +5,7 @@
 #include "Analysis/LevelChecks.h"
 #include "Analysis/Playtest.h"
 #include "Assets/AssetManager.h"
+#include "Construction/ConstructionBuilding.h"
 #include "Construction/ConstructionSystem.h"
 #include "Scene/Entity.h"
 #include "Scene/Json.h"
@@ -328,6 +329,46 @@ void RegisterConstructionAutomation(AutomationService& service)
                 {"islands", report.islands},
                 {"problems", std::move(problems)}});
         }));
+
+    RegisterOrThrow(service, Definition(
+        "construction.add_storey",
+        "Stack a copy of a room (hollow box) on top of it, as its child: same footprint, walls, kit and look, its "
+        "floor on the room's walls. The room's ceiling is removed. Returns the new storey.",
+        ObjectSchema({{"entity", {{"type", "string"}}}}, Json::array({"entity"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = ResolveEntity(context, arguments, failure);
+            if (!resolved) return failure;
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Add storey", mutationFailure)) return mutationFailure;
+            std::string error;
+            const entt::entity storey = Construction::AddStorey(*resolved->scene, resolved->handle, error);
+            context.Backend().CompleteEditorMutation(storey != entt::null);
+            if (storey == entt::null) return Failure(ErrorCode::InvalidArguments, error);
+            UpToDate(context, *resolved->scene);
+            return ToolResult::Success(ShapeJson(context, *resolved->scene, storey));
+        }, true));
+
+    RegisterOrThrow(service, Definition(
+        "construction.add_stairs_up",
+        "Put a straight flight of stairs inside a room, along its longer inside wall with floor in front of its foot, "
+        "up to the floor of the storey above (construction.add_storey first), and cut the stairwell in that floor. "
+        "Steps follow the characters' step height. Returns the stairs.",
+        ObjectSchema({{"entity", {{"type", "string"}}}}, Json::array({"entity"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = ResolveEntity(context, arguments, failure);
+            if (!resolved) return failure;
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Add stairs up", mutationFailure)) return mutationFailure;
+            std::string error;
+            const float maxRise = Analysis::MetricsForScene(*resolved->scene).stepHeight * 0.95f;
+            const entt::entity stairs = Construction::AddStairsUp(*resolved->scene, resolved->handle, maxRise, error);
+            context.Backend().CompleteEditorMutation(stairs != entt::null);
+            if (stairs == entt::null) return Failure(ErrorCode::InvalidArguments, error);
+            UpToDate(context, *resolved->scene);
+            return ToolResult::Success(ShapeJson(context, *resolved->scene, stairs));
+        }, true));
 
     RegisterOrThrow(service, Definition(
         "construction.make_editable",

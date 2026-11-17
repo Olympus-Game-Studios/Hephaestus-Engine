@@ -4,7 +4,9 @@
 #include "PropertyEditors.h"
 
 #include "../../Assets/AssetManager.h"
+#include "../../Construction/ConstructionBuilding.h"
 #include "../../Construction/ConstructionKit.h"
+#include "../../Navigation/NavMesh.h"
 #include "../../Construction/ConstructionShape.h"
 #include "../../Construction/ConstructionSystem.h"
 #include "../../Scene/Entity.h"
@@ -221,6 +223,19 @@ void ConstructionShapeInspector::buildUI()
     kitLayout->addWidget(m_clearSwaps);
     layout->addWidget(m_kitGroup);
 
+    auto* storeys = new QHBoxLayout();
+    m_addStorey = new QPushButton(tr("Add Storey Above"));
+    m_addStorey->setToolTip(tr("Stack a copy of this room on top of it: same footprint, walls and look, with its floor "
+                               "on this room's walls. This room's ceiling goes, since the new floor replaces it."));
+    m_addStairs = new QPushButton(tr("Add Stairs Up"));
+    m_addStairs->setToolTip(tr("Put a flight of stairs along this room's longer inside wall, up to the storey above, "
+                               "and cut the stairwell in its floor. Steps follow the player's step height."));
+    storeys->addWidget(m_addStorey);
+    storeys->addWidget(m_addStairs);
+    layout->addLayout(storeys);
+    m_storeyInfo = new QLabel();
+    m_storeyInfo->setWordWrap(true);
+    layout->addWidget(m_storeyInfo);
     m_meshInfo = new QLabel();
     m_meshInfo->setWordWrap(true);
     layout->addWidget(m_meshInfo);
@@ -270,6 +285,33 @@ void ConstructionShapeInspector::connectSignals()
         });
         EndEdit();
         Refresh();
+    });
+    connect(m_addStorey, &QPushButton::clicked, this, [this]() {
+        if (!m_ctx || !m_ctx->HasActiveScene()) return;
+        Scene& scene = *m_ctx->GetActiveScene();
+        BeginEdit("Add storey");
+        std::string error;
+        const entt::entity storey = Construction::AddStorey(scene, GetEntity(), error);
+        EndEdit();
+        m_storeyInfo->setText(storey == entt::null ? QString::fromStdString(error)
+                                                   : tr("Added a storey. Select it in the Hierarchy (it sits under this "
+                                                        "room) to add another on top, or add stairs from here."));
+        m_ctx->MarkDirty();
+        emit componentRemoved(GetEntity(), QString());
+    });
+    connect(m_addStairs, &QPushButton::clicked, this, [this]() {
+        if (!m_ctx || !m_ctx->HasActiveScene()) return;
+        Scene& scene = *m_ctx->GetActiveScene();
+        BeginEdit("Add stairs up");
+        std::string error;
+        const float maxRise = Navigation::SettingsForScene(scene).agentMaxClimb * 0.95f;
+        const entt::entity stairs = Construction::AddStairsUp(scene, GetEntity(), maxRise, error);
+        EndEdit();
+        m_storeyInfo->setText(stairs == entt::null ? QString::fromStdString(error)
+                                                   : tr("Added stairs and a stairwell. Move or resize them like any "
+                                                        "other shape."));
+        m_ctx->MarkDirty();
+        emit componentRemoved(GetEntity(), QString());
     });
     connect(m_makeEditable, &QPushButton::clicked, this, [this]() {
         BeginEdit("Make editable");
@@ -399,6 +441,20 @@ void ConstructionShapeInspector::Refresh()
         meshFaces = static_cast<int>(shape.mesh.faces.size());
     });
     m_makeEditable->setVisible(convertible && !editable);
+    const auto* primary = m_ctx && m_ctx->HasActiveScene()
+        ? m_ctx->GetActiveScene()->GetRegistry().try_get<ConstructionShapeComponent>(GetEntity()) : nullptr;
+    const bool room = Targets().size() == 1 && primary && primary->source == Construction::SourceKind::Recipe &&
+                      primary->recipe == Recipe::Box && primary->box.hollow &&
+                      primary->operation == Construction::Operation::Add;
+    const bool hasStorey = room && Construction::StoreyAbove(*m_ctx->GetActiveScene(), GetEntity()) != entt::null;
+    m_addStorey->setVisible(room);
+    m_addStorey->setEnabled(!hasStorey);
+    m_addStorey->setToolTip(hasStorey ? tr("This room already has a storey above it.")
+                                      : tr("Stack a copy of this room on top of it: same footprint, walls and look, "
+                                           "with its floor on this room's walls."));
+    m_addStairs->setVisible(room);
+    m_addStairs->setEnabled(hasStorey);
+    m_storeyInfo->setVisible(room && !m_storeyInfo->text().isEmpty());
     m_meshInfo->setVisible(editable);
     m_meshInfo->setText(tr("%1 corners, %2 faces. Select the shape and drag a corner's handle in the viewport to move "
                            "it; hold Shift to move it up or down. It collides as the smallest convex shape around its "
