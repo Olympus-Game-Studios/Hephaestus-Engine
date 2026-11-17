@@ -135,6 +135,8 @@ The Plane, Cylinder and Sphere buttons make construction shapes too. Their size,
 
 Construction shapes work in packaged games too: they're built from their sizes when the level loads.
 
+For shapes a recipe can't make, such as a wedge with a slanted top, a tapered pillar or a skewed platform, select a block or ramp and press **Make Editable** in its Construction settings. It keeps its shape, but instead of size handles it gets a handle on every corner: drag one to move that corner across at its own height, or hold `Shift` to move it straight up or down. Corners snap to the grid like everything else (`Ctrl` turns snapping off), each drag is one undo step, and `Esc` puts the corner back. Every face of an editable mesh can be painted on its own. It collides as the smallest convex shape around its corners, so a corner pulled inwards still collides as if it were not. Ctrl+Z after Make Editable turns it back into a block.
+
 ### Dressing walls with a kit
 
 A kit turns a blockout into finished walls made from your own art. It's a `.hpkit` file in your project's `assets` folder that lists prefabs (wall panels, a filler, a corner post, door and window frames) with the width of each. Select a wall or a room and pick the kit in the **Kit** section of its Construction settings: the panels are laid along every wall, corner posts go at the corners and frames go over doors and windows. Each stretch gets the mix of panels that needs the least stretching, and anything the kit can't fill shows as a red box in the editor, so you can tell at a glance where you need another piece. The Kit section says how many pieces were placed, how far they stretched and how many gaps there are.

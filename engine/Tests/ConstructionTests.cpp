@@ -1448,6 +1448,93 @@ void TestJumpChecks()
     Check(!stillRuns && LevelCheckIds().empty(), "removing the owner's checks stops them running");
 }
 
+void TestEditableMesh()
+{
+    ConstructionShapeComponent room;
+    room.box = Room();
+    Check(!CanMakeEditable(room), "a room is not made editable (its walls and openings are a recipe)");
+    ConstructionShapeComponent ramp;
+    ramp.recipe = Recipe::Ramp;
+    ramp.box.width = 2.0f;
+    ramp.box.height = 1.0f;
+    ramp.box.depth = 4.0f;
+    EvaluatedGeometry rampRecipe;
+    EvaluateShape(ramp, {}, rampRecipe);
+    Check(MakeEditable(ramp) && ramp.mesh.vertices.size() == 6 && ramp.mesh.faces.size() == 5,
+          "a ramp becomes six corners and five faces");
+    EvaluatedGeometry rampMesh;
+    Check(EvaluateShape(ramp, {}, rampMesh) && WindingMatchesNormals(rampMesh) &&
+              rampMesh.mesh.indices.size() == rampRecipe.mesh.indices.size() &&
+              std::fabs(rampMesh.mesh.bounds.max.y - 1.0f) < 1e-5f,
+          "the editable ramp has the recipe's triangles, facing outwards");
+
+    Scene scene("Editable");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size;
+    size.width = 2.0f;
+    size.height = 3.0f;
+    size.depth = 4.0f;
+    Entity block = AddBox(scene, "Block", size);
+    system.Update(scene);
+    auto& shape = block.GetComponent<ConstructionShapeComponent>();
+    Check(MakeEditable(shape) && shape.source == SourceKind::EditableMesh && shape.mesh.vertices.size() == 8 &&
+              HasOwnGeometry(shape) && !CanHostOpenings(shape) && !MakeEditable(shape),
+          "a block becomes eight corners, keeps its geometry, takes no openings and converts once");
+    Check(system.Update(scene) == 1, "making it editable re-evaluates it");
+    const EvaluatedGeometry* geometry = system.Geometry(block);
+    int top = 0;
+    for (const FaceTag& tag : geometry->triangleTags) top += tag.group == FaceGroup::Top && tag.segment == 0 ? 1 : 0;
+    Check(geometry && geometry->mesh.indices.size() == 36 && WindingMatchesNormals(*geometry) &&
+              geometry->hulls.size() == 1 && geometry->hulls[0].size() == 8 && top == 2,
+          "it draws twelve outward triangles, collides as one hull, and its top face is face 0");
+
+    ConstructionTool tool;
+    entt::entity selected = block;
+    int undoSteps = 0;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    tool.SetMode(ToolMode::Select);
+    const ToolCamera camera;
+    const Vec3 corner(1.0f, 3.0f, 2.0f);  // the top corner nearest the camera on the +X side
+    Check(tool.OnPress(scene, system, camera.At(corner)) && undoSteps == 1 &&
+              tool.StatusText().find("corner") != std::string::npos,
+          "pressing a corner handle starts moving that corner as one undo step");
+    tool.OnMove(scene, system, camera.At(Vec3(2.0f, 3.0f, 2.5f)));
+    const Vec3 moved = shape.mesh.vertices[6];
+    tool.OnRelease(scene, system, camera.At(Vec3(2.0f, 3.0f, 2.5f)));
+    Check(std::fabs(moved.x - 2.0f) < 1e-4f && std::fabs(moved.y - 3.0f) < 1e-4f && std::fabs(moved.z - 2.5f) < 1e-4f,
+          "dragging moves the corner across at its own height, on the grid (" + std::to_string(moved.x) + ", " +
+              std::to_string(moved.z) + ")");
+    tool.OnPress(scene, system, camera.At(Vec3(2.0f, 3.0f, 2.5f)));
+    ToolInput up = camera.At(Vec3(2.0f, 4.0f, 2.5f));
+    up.shift = true;
+    tool.OnMove(scene, system, up);
+    tool.OnRelease(scene, system, up);
+    Check(std::fabs(shape.mesh.vertices[6].y - 4.0f) < 1e-4f && std::fabs(shape.mesh.vertices[6].x - 2.0f) < 1e-4f,
+          "with Shift the corner moves straight up");
+    Check(system.Update(scene) == 1 && system.Geometry(block)->mesh.bounds.max.y > 3.9f,
+          "the moved corners re-shape the mesh");
+    tool.OnPress(scene, system, camera.At(Vec3(2.0f, 4.0f, 2.5f)));
+    tool.OnMove(scene, system, camera.At(Vec3(0.0f, 4.0f, 0.0f)));
+    tool.Cancel(scene);
+    Check(std::fabs(shape.mesh.vertices[6].x - 2.0f) < 1e-4f, "Esc puts a corner back where the drag started");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    const auto& reloaded = loaded.FindEntityByName("Block").GetComponent<ConstructionShapeComponent>();
+    Check(reloaded.source == SourceKind::EditableMesh && reloaded.mesh.faces.size() == 6 &&
+              std::fabs(reloaded.mesh.vertices[6].y - 4.0f) < 1e-4f,
+          "an editable mesh saves and loads with its corners");
+}
+
 void TestPlaytestHeatmap()
 {
     using namespace Hephaestus::Analysis;
@@ -1637,6 +1724,7 @@ int main()
     TestKits();
     TestLevelChecks();
     TestJumpChecks();
+    TestEditableMesh();
     TestPlaytestHeatmap();
     TestLargeLevel();
     TestScale();

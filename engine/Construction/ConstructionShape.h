@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "../Core/Math.h"
 #include "../Scene/Json.h"
 
 namespace Hephaestus::Construction {
@@ -85,6 +86,13 @@ struct FaceMaterial {
     std::string material;  // project material asset path
 };
 
+// A shape edited corner by corner: points in the shape's local frame and faces as loops of point indices, wound
+// anticlockwise seen from outside. Made from a block or ramp with MakeEditable.
+struct EditableMesh {
+    std::vector<Vec3> vertices;
+    std::vector<std::vector<int>> faces;
+};
+
 // A kit piece picked by hand for one spot of a dressed shape, in place of the kit's own choice.
 struct KitSwap {
     std::string slot;    // KitPlacement::slot
@@ -126,6 +134,7 @@ struct ConstructionShapeComponent {
     // A .hpkit that dresses this wall or room with prefab pieces; the shape stays the collision and navmesh shell.
     std::string kit;
     std::vector<Hephaestus::Construction::KitSwap> kitSwaps;
+    Hephaestus::Construction::EditableMesh mesh;  // source EditableMesh
     int segments = 24;  // around a cylinder or sphere
     int evaluatorVersion = Hephaestus::Construction::kEvaluatorVersion;
 };
@@ -155,6 +164,11 @@ const char* DisplayName(const ConstructionShapeComponent& shape);
 bool CanHostOpenings(const ConstructionShapeComponent& shape);
 // Segments of a wall's path (closed paths have one more, back to the first point).
 int WallSegmentCount(const ConstructionShapeComponent& shape);
+
+// Turns a solid block or a ramp into an editable mesh with the same shape (source EditableMesh). False for other
+// shapes, which keep their recipe.
+bool MakeEditable(ConstructionShapeComponent& shape);
+bool CanMakeEditable(const ConstructionShapeComponent& shape);
 
 // Clamps parameters to values the evaluator accepts (positive sizes, walls thinner than the box).
 void Sanitize(ConstructionShapeComponent& shape);

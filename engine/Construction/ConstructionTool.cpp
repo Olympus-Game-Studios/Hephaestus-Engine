@@ -203,6 +203,15 @@ std::vector<ConstructionTool::Handle> ConstructionTool::HandlesFor(const Constru
     const BoxParams& b = shape.box;
     const float hw = b.width * 0.5f;
     const float hd = b.depth * 0.5f;
+    if (shape.source == SourceKind::EditableMesh) {
+        std::vector<Handle> handles;
+        for (size_t n = 0; n < shape.mesh.vertices.size(); ++n) {
+            Handle handle{1, 1, shape.mesh.vertices[n], -1};
+            handle.vertex = static_cast<int>(n);
+            handles.push_back(handle);
+        }
+        return handles;
+    }
     if (shape.recipe == Recipe::Wall) {
         std::vector<Handle> handles;
         for (size_t n = 0; n < shape.wall.points.size(); ++n) {
@@ -354,6 +363,7 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
     const auto& shape = scene.GetRegistry().get<ConstructionShapeComponent>(entity);
     m_startBox = shape.box;
     m_startWall = shape.wall;
+    m_startMesh = shape.mesh;
     m_startPosition = scene.GetRegistry().get<TransformComponent>(entity).position;
     const Mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
     m_handleWorldOrigin = Mat4::TransformPoint(world, handle.local);
@@ -362,7 +372,7 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
     if (!ClosestOnLine(m_handleWorldOrigin, m_handleWorldAxis, input.ray, m_handleStartT)) {
         return false;
     }
-    if (m_host.pushUndo) m_host.pushUndo("Resize shape");
+    if (m_host.pushUndo) m_host.pushUndo(handle.vertex >= 0 ? "Move corner" : "Resize shape");
     m_phase = Phase::Handle;
     return true;
 }
@@ -581,6 +591,27 @@ void ConstructionTool::UpdateHandleDrag(Scene& scene, const ToolInput& input)
     }
     float t = 0.0f;
     if (!ClosestOnLine(m_handleWorldOrigin, m_handleWorldAxis, input.ray, t)) {
+        return;
+    }
+    if (m_handle.vertex >= 0) {
+        auto& shape = registry.get<ConstructionShapeComponent>(m_target);
+        if (m_handle.vertex >= static_cast<int>(shape.mesh.vertices.size()) ||
+            m_handle.vertex >= static_cast<int>(m_startMesh.vertices.size())) {
+            return;
+        }
+        const Vec3 start = m_startMesh.vertices[static_cast<size_t>(m_handle.vertex)];
+        Vec3& vertex = shape.mesh.vertices[static_cast<size_t>(m_handle.vertex)];
+        if (input.shift) {
+            vertex = Vec3(start.x, Snap(start.y + (t - m_handleStartT), input), start.z);
+            return;
+        }
+        Vec3 world;
+        if (!IntersectPlane(input.ray, m_handleWorldOrigin, Mat4::TransformDirection(
+                scene.GetWorldTransform(Entity(m_target, &scene)), Vec3(0, 1, 0)), world)) {
+            return;
+        }
+        const Vec3 local = Mat4::TransformPoint(Mat4::Invert(scene.GetWorldTransform(Entity(m_target, &scene))), world);
+        vertex = Vec3(Snap(local.x, input), start.y, Snap(local.z, input));
         return;
     }
     if (m_handle.point >= 0) {
@@ -839,6 +870,7 @@ void ConstructionTool::Cancel(Scene& scene)
     if (m_phase == Phase::Handle && registry.valid(m_target) && registry.all_of<ConstructionShapeComponent>(m_target)) {
         registry.get<ConstructionShapeComponent>(m_target).box = m_startBox;
         registry.get<ConstructionShapeComponent>(m_target).wall = m_startWall;
+        registry.get<ConstructionShapeComponent>(m_target).mesh = m_startMesh;
         registry.get<TransformComponent>(m_target).position = m_startPosition;
         if (m_host.discardUndo) m_host.discardUndo();
     } else if (m_phase == Phase::OpeningMove && registry.valid(m_opening) &&
@@ -899,7 +931,10 @@ std::string ConstructionTool::StatusText() const
     switch (m_phase) {
     case Phase::Base: text = PhaseHint(1); break;
     case Phase::Height: text = PhaseHint(2); break;
-    case Phase::Handle: text = PhaseHint(3); break;
+    case Phase::Handle:
+        text = m_handle.vertex >= 0 ? "Drag the corner across. Hold Shift to move it up and down. Ctrl turns snapping off. Esc cancels."
+                                    : PhaseHint(3);
+        break;
     case Phase::OpeningDraw: text = PhaseHint(4); break;
     case Phase::OpeningMove: text = PhaseHint(5); break;
     case Phase::Path: text = PhaseHint(6); break;
@@ -1035,12 +1070,12 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
             const float distance = vlen(vsub(p, m_lastInput.ray.origin));
             const float s = std::max(0.04f, distance * 0.012f);
             const bool active = m_phase == Phase::Handle && m_handle.axis == handle.axis && m_handle.dir == handle.dir &&
-                                m_handle.point == handle.point;
+                                m_handle.point == handle.point && m_handle.vertex == handle.vertex;
             const Vec3 a = vscale(Axis((handle.axis + 1) % 3), s);
             const Vec3 b = vscale(Axis((handle.axis + 2) % 3), s);
             Vec3 corners[4] = {vadd(p, vadd(a, b)), vadd(p, vsub(a, b)), vsub(p, vadd(a, b)), vsub(p, vsub(a, b))};
             AddRectLines(lines, corners, active ? kPreviewColor : kHandleColor);
-            if (handle.point >= 0) continue;
+            if (handle.point >= 0 || handle.vertex >= 0) continue;
             lines.push_back({p, vadd(p, vscale(Mat4::TransformDirection(world, vscale(Axis(handle.axis), float(handle.dir))), s * 3.0f)),
                              active ? kPreviewColor : kHandleColor});
         }

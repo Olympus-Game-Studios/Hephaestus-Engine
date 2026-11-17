@@ -221,6 +221,13 @@ void ConstructionShapeInspector::buildUI()
     kitLayout->addWidget(m_clearSwaps);
     layout->addWidget(m_kitGroup);
 
+    m_meshInfo = new QLabel();
+    m_meshInfo->setWordWrap(true);
+    layout->addWidget(m_meshInfo);
+    m_makeEditable = new QPushButton(tr("Make Editable"));
+    m_makeEditable->setToolTip(tr("Turn this block or ramp into a mesh whose corners you drag one by one in the "
+                                  "viewport. Its size settings go away; Ctrl+Z turns it back."));
+    layout->addWidget(m_makeEditable);
     m_remove = new QPushButton(tr("Remove Component"));
     layout->addWidget(m_remove);
 }
@@ -260,6 +267,14 @@ void ConstructionShapeInspector::connectSignals()
         BeginEdit("Clear kit swaps");
         ForEachTarget<ConstructionShapeComponent>([](ConstructionShapeComponent& shape, entt::entity) {
             shape.kitSwaps.clear();
+        });
+        EndEdit();
+        Refresh();
+    });
+    connect(m_makeEditable, &QPushButton::clicked, this, [this]() {
+        BeginEdit("Make editable");
+        ForEachTarget<ConstructionShapeComponent>([](ConstructionShapeComponent& shape, entt::entity) {
+            Construction::MakeEditable(shape);
         });
         EndEdit();
         Refresh();
@@ -370,11 +385,26 @@ void ConstructionShapeInspector::Refresh()
 
     m_updating = true;
     m_kind->setText(kind.isEmpty() ? tr("Mixed") : kind);
-    m_generalForm->setRowVisible(m_operation, recipe == Recipe::Box);
     SetComboFromMixed(m_operation, operation.mixed, static_cast<int>(operation.value));
     m_role->setText(role.mixed ? QString() : QString::fromStdString(role.value));
     m_role->setPlaceholderText(role.mixed ? tr("Mixed") : QString());
-    m_boxGroup->setVisible(recipe != Recipe::Opening);
+    bool editable = false;
+    bool convertible = true;
+    int meshCorners = 0;
+    int meshFaces = 0;
+    VisitTargets<ConstructionShapeComponent>([&](const ConstructionShapeComponent& shape, entt::entity) {
+        editable = editable || shape.source == Construction::SourceKind::EditableMesh;
+        convertible = convertible && Construction::CanMakeEditable(shape);
+        meshCorners = static_cast<int>(shape.mesh.vertices.size());
+        meshFaces = static_cast<int>(shape.mesh.faces.size());
+    });
+    m_makeEditable->setVisible(convertible && !editable);
+    m_meshInfo->setVisible(editable);
+    m_meshInfo->setText(tr("%1 corners, %2 faces. Select the shape and drag a corner's handle in the viewport to move "
+                           "it; hold Shift to move it up or down. It collides as the smallest convex shape around its "
+                           "corners.").arg(meshCorners).arg(meshFaces));
+    m_generalForm->setRowVisible(m_operation, recipe == Recipe::Box && !editable);
+    m_boxGroup->setVisible(recipe != Recipe::Opening && !editable);
     const bool wall = recipe == Recipe::Wall;
     m_boxForm->setRowVisible(m_height, recipe != Recipe::Plane);
     m_boxForm->setRowVisible(m_width, !wall);

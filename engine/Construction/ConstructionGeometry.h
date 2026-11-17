@@ -72,6 +72,8 @@ bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out, co
 
 // A solid slope from the ground at -Z up to height at +Z; it collides as one convex hull.
 bool EvaluateRamp(const BoxParams& size, EvaluatedGeometry& out);
+// Fan-triangulates each face; collision is the convex hull of all the points.
+bool EvaluateEditableMesh(const EditableMesh& mesh, EvaluatedGeometry& out);
 
 // A wall of BoxParams height and wallThickness along the shape's path. Each segment is a solid box, so its openings
 // (by OpeningParams::segment) and the cuts work as on blocks; corners are filled with mitred prisms, and a closed

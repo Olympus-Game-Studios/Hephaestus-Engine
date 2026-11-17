@@ -1099,9 +1099,53 @@ bool EvaluateRamp(const BoxParams& size, EvaluatedGeometry& out)
     return true;
 }
 
+bool EvaluateEditableMesh(const EditableMesh& mesh, EvaluatedGeometry& out)
+{
+    out = EvaluatedGeometry{};
+    if (mesh.vertices.size() < 4 || mesh.faces.empty()) {
+        return false;
+    }
+    for (size_t f = 0; f < mesh.faces.size(); ++f) {
+        const std::vector<int>& face = mesh.faces[f];
+        Vec3 normal(0.0f, 0.0f, 0.0f);
+        for (size_t k = 0; k < face.size(); ++k) {
+            const Vec3& a = mesh.vertices[static_cast<size_t>(face[k])];
+            const Vec3& b = mesh.vertices[static_cast<size_t>(face[(k + 1) % face.size()])];
+            normal = vadd(normal, Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)));
+        }
+        normal = vnorm(normal);
+        const float ax = std::fabs(normal.x), ay = std::fabs(normal.y), az = std::fabs(normal.z);
+        const FaceGroup group = ay >= ax && ay >= az ? (normal.y > 0.0f ? FaceGroup::Top : FaceGroup::Bottom)
+            : ax >= az ? (normal.x > 0.0f ? FaceGroup::PosX : FaceGroup::NegX)
+                       : (normal.z > 0.0f ? FaceGroup::PosZ : FaceGroup::NegZ);
+        const FaceTag tag{group, -1, static_cast<std::int16_t>(f)};
+        for (size_t k = 1; k + 1 < face.size(); ++k) {
+            const Vec3& a = mesh.vertices[static_cast<size_t>(face[0])];
+            const Vec3& b = mesh.vertices[static_cast<size_t>(face[k])];
+            const Vec3& c = mesh.vertices[static_cast<size_t>(face[k + 1])];
+            const Vec3 own = vcross(vsub(b, a), vsub(c, a));
+            if (vlen(own) < 1e-8f) continue;
+            // A face bent by a dragged corner shades each triangle by its own facing.
+            PushFacing(out, a, b, c, vnorm(own), tag);
+        }
+    }
+    out.hulls.push_back(mesh.vertices);
+    const LocalBox bounds = BoundsOfPoints(mesh.vertices);
+    out.mesh.bounds = AABB(bounds.min, bounds.max);
+    MeshData::Submesh all;
+    all.indexCount = static_cast<uint32_t>(out.mesh.indices.size());
+    all.name = "Construction";
+    all.bounds = out.mesh.bounds;
+    out.mesh.submeshes.push_back(all);
+    return !out.mesh.indices.empty();
+}
+
 bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningParams> openings,
                    EvaluatedGeometry& out, const std::vector<LocalBox>& cuts)
 {
+    if (shape.source == SourceKind::EditableMesh) {
+        return EvaluateEditableMesh(shape.mesh, out);
+    }
     if (shape.recipe == Recipe::Wall) {
         SortOpenings(openings);
         return EvaluateWall(shape, openings, out, cuts);
@@ -1159,6 +1203,16 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
     }
     h.Bytes(shape.kit.data(), shape.kit.size());
     h.Int(0);
+    h.Int(static_cast<std::int64_t>(shape.mesh.vertices.size()));
+    for (const Vec3& p : shape.mesh.vertices) {
+        h.Float(p.x);
+        h.Float(p.y);
+        h.Float(p.z);
+    }
+    for (const std::vector<int>& face : shape.mesh.faces) {
+        h.Int(static_cast<std::int64_t>(face.size()));
+        for (int index : face) h.Int(index);
+    }
     h.Int(static_cast<std::int64_t>(shape.kitSwaps.size()));
     for (const KitSwap& swap : shape.kitSwaps) {
         h.Bytes(swap.slot.data(), swap.slot.size());

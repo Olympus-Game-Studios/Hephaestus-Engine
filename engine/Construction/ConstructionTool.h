@@ -77,6 +77,7 @@ private:
         int dir = 1;
         Vec3 local;
         int point = -1;  // a wall path point, dragged on the ground plane
+        int vertex = -1;  // an editable mesh corner, dragged across (Shift: up and down)
     };
 
     std::vector<Handle> HandlesFor(const ConstructionShapeComponent& shape) const;
@@ -128,6 +129,7 @@ private:
     Handle m_handle;
     BoxParams m_startBox;
     WallParams m_startWall;
+    EditableMesh m_startMesh;
     Vec3 m_startPosition;
     Vec3 m_handleWorldOrigin;
     Vec3 m_handleWorldAxis;

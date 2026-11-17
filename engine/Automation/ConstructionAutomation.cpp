@@ -77,6 +77,13 @@ bool ApplyParams(ConstructionShapeComponent& shape, const Json& arguments, std::
         data["kit"] = kit;
     }
     if (arguments.contains("kitSwaps")) data["kitSwaps"] = arguments["kitSwaps"];
+    if (arguments.contains("mesh")) {
+        if (shape.source != Construction::SourceKind::EditableMesh) {
+            error = "mesh is only for editable meshes; use construction.make_editable first";
+            return false;
+        }
+        data["mesh"] = arguments["mesh"];
+    }
     if (arguments.contains("params")) {
         if (!arguments["params"].is_object()) {
             error = "params must be an object";
@@ -234,6 +241,9 @@ void RegisterConstructionAutomation(AutomationService& service)
                       {"kit", {{"type", "string"},
                                {"description", "a .hpkit that dresses a wall or hollow room with prefab pieces; "
                                                "empty removes it"}}},
+                      {"mesh", {{"type", "object"},
+                                {"description", "an editable mesh's corners and faces, replacing them: "
+                                                "{vertices: [[x, y, z]...], faces: [[i, j, k...]...]}"}}},
                       {"kitSwaps", {{"type", "array"},
                                     {"description", "pieces swapped by hand, replacing the list: [{slot, prefab}]. "
                                                     "slot is a spot such as 0:r0.2 (face 0, run 0, piece 2), 1:c "
@@ -318,6 +328,28 @@ void RegisterConstructionAutomation(AutomationService& service)
                 {"islands", report.islands},
                 {"problems", std::move(problems)}});
         }));
+
+    RegisterOrThrow(service, Definition(
+        "construction.make_editable",
+        "Turn a solid block or a ramp into an editable mesh with the same shape, whose corners can then be moved "
+        "(construction.set_params with mesh: {vertices: [[x, y, z]...], faces: [[i, j, k...]...]}, faces wound "
+        "anticlockwise seen from outside). Collision becomes the convex hull of the corners.",
+        ObjectSchema({{"entity", {{"type", "string"}}}}, Json::array({"entity"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = ResolveEntity(context, arguments, failure);
+            if (!resolved) return failure;
+            auto* shape = resolved->scene->GetRegistry().try_get<ConstructionShapeComponent>(resolved->handle);
+            if (!shape || !Construction::CanMakeEditable(*shape)) {
+                return Failure(ErrorCode::InvalidArguments, "only solid blocks and ramps can be made editable");
+            }
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Make editable", mutationFailure)) return mutationFailure;
+            Construction::MakeEditable(*shape);
+            context.Backend().CompleteEditorMutation(false);
+            UpToDate(context, *resolved->scene);
+            return ToolResult::Success(ShapeJson(context, *resolved->scene, resolved->handle));
+        }, true));
 
     RegisterOrThrow(service, Definition(
         "level.playtest_begin",

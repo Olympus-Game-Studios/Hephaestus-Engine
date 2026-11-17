@@ -94,6 +94,8 @@ private:
     Hephaestus::Construction::ConstructionSystem* m_system = nullptr;
 
     QPushButton* m_remove = nullptr;
+    QPushButton* m_makeEditable = nullptr;
+    QLabel* m_meshInfo = nullptr;
 };
 
 } // namespace QtEditor

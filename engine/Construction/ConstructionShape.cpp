@@ -288,6 +288,20 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
     if (!shape.kit.empty()) {
         oss << ",\n" << in << "\"kit\": \"" << Escape(shape.kit) << "\"";
     }
+    if (shape.source == SourceKind::EditableMesh) {
+        oss << ",\n" << in << "\"mesh\": {\"vertices\": [";
+        for (size_t n = 0; n < shape.mesh.vertices.size(); ++n) {
+            const Vec3& p = shape.mesh.vertices[n];
+            oss << (n ? ", " : "") << "[" << Number(p.x) << ", " << Number(p.y) << ", " << Number(p.z) << "]";
+        }
+        oss << "], \"faces\": [";
+        for (size_t n = 0; n < shape.mesh.faces.size(); ++n) {
+            oss << (n ? ", " : "") << "[";
+            for (size_t k = 0; k < shape.mesh.faces[n].size(); ++k) oss << (k ? ", " : "") << shape.mesh.faces[n][k];
+            oss << "]";
+        }
+        oss << "]}";
+    }
     if (!shape.kitSwaps.empty()) {
         oss << ",\n" << in << "\"kitSwaps\": [";
         for (size_t n = 0; n < shape.kitSwaps.size(); ++n) {
@@ -398,6 +412,29 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
     if (!shape.kit.empty()) {
         out.objectValue["kit"] = text(shape.kit);
     }
+    if (shape.source == SourceKind::EditableMesh) {
+        JsonValue mesh;
+        mesh.type = JsonValue::Type::Object;
+        JsonValue vertices;
+        vertices.type = JsonValue::Type::Array;
+        for (const Vec3& p : shape.mesh.vertices) {
+            JsonValue point;
+            point.type = JsonValue::Type::Array;
+            point.arrayValue = {number(p.x), number(p.y), number(p.z)};
+            vertices.arrayValue.push_back(std::move(point));
+        }
+        JsonValue faces;
+        faces.type = JsonValue::Type::Array;
+        for (const std::vector<int>& face : shape.mesh.faces) {
+            JsonValue loop;
+            loop.type = JsonValue::Type::Array;
+            for (int index : face) loop.arrayValue.push_back(number(index));
+            faces.arrayValue.push_back(std::move(loop));
+        }
+        mesh.objectValue["vertices"] = std::move(vertices);
+        mesh.objectValue["faces"] = std::move(faces);
+        out.objectValue["mesh"] = std::move(mesh);
+    }
     if (!shape.kitSwaps.empty()) {
         JsonValue swaps;
         swaps.type = JsonValue::Type::Array;
@@ -437,10 +474,51 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
         outError = "ConstructionShape component is not an object.";
         return false;
     }
-    if (const JsonValue* source = data.Find("source"); source && source->IsString() &&
-        source->AsString() != SourceKindName(SourceKind::Recipe)) {
-        outError = "ConstructionShape source '" + source->AsString() + "' is not supported by this editor.";
-        return false;
+    if (const JsonValue* source = data.Find("source"); source && source->IsString()) {
+        if (source->AsString() == SourceKindName(SourceKind::EditableMesh)) {
+            shape.source = SourceKind::EditableMesh;
+        } else if (source->AsString() == SourceKindName(SourceKind::Recipe)) {
+            shape.source = SourceKind::Recipe;
+        } else {
+            outError = "ConstructionShape source '" + source->AsString() + "' is not supported by this editor.";
+            return false;
+        }
+    }
+    if (const JsonValue* mesh = data.Find("mesh"); mesh && mesh->IsObject()) {
+        EditableMesh read;
+        const JsonValue* vertices = mesh->Find("vertices");
+        const JsonValue* faces = mesh->Find("faces");
+        if (!vertices || !vertices->IsArray() || !faces || !faces->IsArray()) {
+            outError = "ConstructionShape mesh needs vertices and faces.";
+            return false;
+        }
+        for (const JsonValue& point : vertices->AsArray()) {
+            if (!point.IsArray() || point.AsArray().size() != 3 || !point.AsArray()[0].IsNumber() ||
+                !point.AsArray()[1].IsNumber() || !point.AsArray()[2].IsNumber()) {
+                outError = "ConstructionShape mesh vertices are [x, y, z] numbers.";
+                return false;
+            }
+            read.vertices.push_back(Vec3(static_cast<float>(point.AsArray()[0].AsNumber()),
+                                         static_cast<float>(point.AsArray()[1].AsNumber()),
+                                         static_cast<float>(point.AsArray()[2].AsNumber())));
+        }
+        for (const JsonValue& loop : faces->AsArray()) {
+            std::vector<int> face;
+            for (const JsonValue& index : loop.IsArray() ? loop.AsArray() : std::vector<JsonValue>{}) {
+                const int i = index.IsNumber() ? static_cast<int>(index.AsNumber()) : -1;
+                if (i < 0 || i >= static_cast<int>(read.vertices.size())) {
+                    outError = "ConstructionShape mesh faces index vertices that do not exist.";
+                    return false;
+                }
+                face.push_back(i);
+            }
+            if (face.size() < 3) {
+                outError = "ConstructionShape mesh faces need at least three vertices.";
+                return false;
+            }
+            read.faces.push_back(std::move(face));
+        }
+        shape.mesh = std::move(read);
     }
     if (const JsonValue* version = data.Find("version"); version && version->IsNumber()) {
         shape.evaluatorVersion = static_cast<int>(version->AsNumber());
@@ -608,6 +686,9 @@ void Sanitize(ConstructionShapeComponent& shape)
 
 const char* DisplayName(const ConstructionShapeComponent& shape)
 {
+    if (shape.source == SourceKind::EditableMesh) {
+        return "Editable Mesh";
+    }
     switch (shape.recipe) {
     case Recipe::Opening: return "Opening";
     case Recipe::Stairs: return "Stairs";
@@ -643,7 +724,37 @@ int WallSegmentCount(const ConstructionShapeComponent& shape)
 
 bool HasOwnGeometry(const ConstructionShapeComponent& shape)
 {
-    return shape.source == SourceKind::Recipe && shape.recipe != Recipe::Opening;
+    return shape.source == SourceKind::EditableMesh || (shape.source == SourceKind::Recipe && shape.recipe != Recipe::Opening);
+}
+
+bool CanMakeEditable(const ConstructionShapeComponent& shape)
+{
+    return shape.source == SourceKind::Recipe && shape.operation == Operation::Add &&
+           ((shape.recipe == Recipe::Box && !shape.box.hollow) || shape.recipe == Recipe::Ramp);
+}
+
+bool MakeEditable(ConstructionShapeComponent& shape)
+{
+    if (!CanMakeEditable(shape)) {
+        return false;
+    }
+    const float hw = shape.box.width * 0.5f;
+    const float hd = shape.box.depth * 0.5f;
+    const float h = shape.box.height;
+    EditableMesh mesh;
+    if (shape.recipe == Recipe::Box) {
+        mesh.vertices = {Vec3(-hw, 0.0f, -hd), Vec3(hw, 0.0f, -hd), Vec3(hw, 0.0f, hd), Vec3(-hw, 0.0f, hd),
+                         Vec3(-hw, h, -hd),    Vec3(hw, h, -hd),    Vec3(hw, h, hd),    Vec3(-hw, h, hd)};
+        mesh.faces = {{4, 7, 6, 5}, {0, 1, 2, 3}, {0, 4, 5, 1}, {3, 2, 6, 7}, {1, 5, 6, 2}, {0, 3, 7, 4}};
+    } else {
+        mesh.vertices = {Vec3(-hw, 0.0f, -hd), Vec3(hw, 0.0f, -hd), Vec3(hw, 0.0f, hd), Vec3(-hw, 0.0f, hd),
+                         Vec3(-hw, h, hd),     Vec3(hw, h, hd)};
+        mesh.faces = {{0, 1, 2, 3}, {3, 2, 5, 4}, {0, 4, 5, 1}, {1, 5, 2}, {0, 3, 4}};
+    }
+    shape.mesh = std::move(mesh);
+    shape.source = SourceKind::EditableMesh;
+    shape.faceMaterials.clear();
+    return true;
 }
 
 int StairCount(const ConstructionShapeComponent& shape)
