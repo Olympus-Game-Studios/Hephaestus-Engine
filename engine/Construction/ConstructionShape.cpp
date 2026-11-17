@@ -82,6 +82,7 @@ const char* RecipeName(Recipe recipe)
     case Recipe::Sphere: return "sphere";
     case Recipe::Wall: return "wall";
     case Recipe::Ramp: return "ramp";
+    case Recipe::Balcony: return "balcony";
     case Recipe::Box: break;
     }
     return "box";
@@ -118,7 +119,8 @@ bool ParseRecipe(const std::string& name, Recipe& out)
         out = Recipe::Opening;
         return true;
     }
-    for (Recipe recipe : {Recipe::Stairs, Recipe::Plane, Recipe::Cylinder, Recipe::Sphere, Recipe::Wall, Recipe::Ramp}) {
+    for (Recipe recipe : {Recipe::Stairs, Recipe::Plane, Recipe::Cylinder, Recipe::Sphere, Recipe::Wall, Recipe::Ramp,
+                          Recipe::Balcony}) {
         if (name == RecipeName(recipe)) {
             out = recipe;
             return true;
@@ -244,6 +246,12 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
         oss << in2 << "\"wallThickness\": " << Number(b.wallThickness) << ",\n";
         oss << in2 << "\"floor\": " << (b.floor ? "true" : "false") << ",\n";
         oss << in2 << "\"ceiling\": " << (b.ceiling ? "true" : "false") << "\n";
+    } else if (shape.recipe == Recipe::Balcony) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"width\": " << Number(b.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"depth\": " << Number(b.depth) << ",\n";
+        oss << in2 << "\"wallThickness\": " << Number(b.wallThickness) << "\n";
     } else if (shape.recipe == Recipe::Ramp) {
         const BoxParams& b = shape.box;
         oss << in2 << "\"width\": " << Number(b.width) << ",\n";
@@ -360,6 +368,11 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
         params.objectValue["wallThickness"] = number(b.wallThickness);
         params.objectValue["floor"] = boolean(b.floor);
         params.objectValue["ceiling"] = boolean(b.ceiling);
+    } else if (shape.recipe == Recipe::Balcony) {
+        params.objectValue["width"] = number(shape.box.width);
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["depth"] = number(shape.box.depth);
+        params.objectValue["wallThickness"] = number(shape.box.wallThickness);
     } else if (shape.recipe == Recipe::Ramp) {
         params.objectValue["width"] = number(shape.box.width);
         params.objectValue["height"] = number(shape.box.height);
@@ -553,6 +566,11 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
             ReadFloat(*params, "wallThickness", b.wallThickness);
             ReadBool(*params, "floor", b.floor);
             ReadBool(*params, "ceiling", b.ceiling);
+        } else if (shape.recipe == Recipe::Balcony) {
+            ReadFloat(*params, "width", shape.box.width);
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "depth", shape.box.depth);
+            ReadFloat(*params, "wallThickness", shape.box.wallThickness);
         } else if (shape.recipe == Recipe::Ramp) {
             ReadFloat(*params, "width", shape.box.width);
             ReadFloat(*params, "height", shape.box.height);
@@ -697,6 +715,7 @@ const char* DisplayName(const ConstructionShapeComponent& shape)
     case Recipe::Sphere: return "Sphere";
     case Recipe::Wall: return shape.wall.closed ? "Room" : "Wall";
     case Recipe::Ramp: return "Ramp";
+    case Recipe::Balcony: return "Balcony";
     case Recipe::Box: break;
     }
     return shape.operation == Operation::Subtract ? "Subtract" : shape.box.hollow ? "Room" : "Block";

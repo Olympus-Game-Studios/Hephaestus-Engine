@@ -1168,6 +1168,35 @@ bool EvaluateRamp(const BoxParams& size, EvaluatedGeometry& out)
     return true;
 }
 
+bool EvaluateBalcony(const BoxParams& size, EvaluatedGeometry& out)
+{
+    out = EvaluatedGeometry{};
+    const float hw = size.width * 0.5f;
+    const float hd = size.depth * 0.5f;
+    const float slab = std::min(size.wallThickness, size.height);
+    if (!(hw > 0.0f) || !(hd > 0.0f) || !(slab > 0.0f)) {
+        return false;
+    }
+    // Railings 6 cm thick, but never more than a third of the slab, so a narrow balcony keeps a floor.
+    const float rail = std::min({0.06f, size.width / 3.0f, size.depth / 3.0f});
+    std::vector<Prism> parts{Prism{{-hw, 0.0f, -hd}, {hw, slab, hd}}};
+    if (size.height > slab + 1e-3f) {
+        parts.push_back(Prism{{-hw, slab, hd - rail}, {hw, size.height, hd}});
+        parts.push_back(Prism{{-hw, slab, -hd}, {-hw + rail, size.height, hd - rail}});
+        parts.push_back(Prism{{hw - rail, slab, -hd}, {hw, size.height, hd - rail}});
+    }
+    const CellGrid grid(parts);
+    EmitFaces(grid, out);
+    EmitSolids(grid, out);
+    out.mesh.bounds = AABB(Vec3(-hw, 0.0f, -hd), Vec3(hw, size.height, hd));
+    MeshData::Submesh all;
+    all.indexCount = static_cast<uint32_t>(out.mesh.indices.size());
+    all.name = "Construction";
+    all.bounds = out.mesh.bounds;
+    out.mesh.submeshes.push_back(all);
+    return !out.mesh.indices.empty();
+}
+
 bool EvaluateEditableMesh(const EditableMesh& mesh, EvaluatedGeometry& out)
 {
     out = EvaluatedGeometry{};
@@ -1230,6 +1259,9 @@ bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningP
     }
     if (shape.recipe == Recipe::Stairs) {
         return EvaluateStairs(shape.box, StairCount(shape), out, shape.stairs);
+    }
+    if (shape.recipe == Recipe::Balcony) {
+        return EvaluateBalcony(shape.box, out);
     }
     if (shape.recipe == Recipe::Ramp) {
         return EvaluateRamp(shape.box, out);

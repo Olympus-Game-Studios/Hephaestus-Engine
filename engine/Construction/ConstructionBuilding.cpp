@@ -308,7 +308,6 @@ namespace {
 
 constexpr float kRoofPitch = 0.5236f;  // 30 degrees
 constexpr float kRailHeight = 1.0f;
-constexpr float kRailThickness = 0.06f;
 
 Entity AddChildShape(Scene& scene, entt::entity parent, const std::string& name, const ConstructionShapeComponent& shape,
                      const Vec3& position, float yaw)
@@ -441,18 +440,16 @@ entt::entity AddBalcony(Scene& scene, entt::entity opening, float depth, std::st
     const float width = door->opening.width + 2.0f;
     const float slab = std::max(hostShape->box.wallThickness, 0.1f);
     const Vec3 centre = vadd(middle, vscale(outward, t * 0.5f + depth * 0.5f));
-    const float yaw = std::atan2(-frame.u.z, frame.u.x);
-    Entity balcony = AddChildShape(scene, host, "Balcony", Block("balcony", width, slab, depth),
-                                   Vec3(centre.x, floorTop - slab, centre.z), yaw);
-    // The slab's own +Z, to tell which of its long edges is the outer one.
-    const Vec3 localZ(-frame.u.z, 0.0f, frame.u.x);
-    const float out = vdot(localZ, outward) > 0.0f ? 1.0f : -1.0f;
-    AddChildShape(scene, balcony, "Railing", Block("railing", width, kRailHeight, kRailThickness),
-                  Vec3(0.0f, slab, out * (depth - kRailThickness) * 0.5f), 0.0f);
-    for (const float side : {-1.0f, 1.0f}) {
-        AddChildShape(scene, balcony, "Railing", Block("railing", kRailThickness, kRailHeight, depth),
-                      Vec3(side * (width - kRailThickness) * 0.5f, slab, 0.0f), 0.0f);
-    }
+    // One shape: local +Z (the railed edge) points away from the wall, local X along it.
+    const float yaw = std::atan2(outward.x, outward.z);
+    ConstructionShapeComponent shape;
+    shape.recipe = Recipe::Balcony;
+    shape.role = "balcony";
+    shape.box.width = width;
+    shape.box.depth = depth;
+    shape.box.height = slab + kRailHeight;
+    shape.box.wallThickness = slab;
+    Entity balcony = AddChildShape(scene, host, "Balcony", shape, Vec3(centre.x, floorTop - slab, centre.z), yaw);
     return balcony;
 }
 

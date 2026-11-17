@@ -13,7 +13,9 @@ enum class SourceKind : std::uint8_t { Recipe, Asset, EditableMesh };
 // Plane, Cylinder and Sphere use BoxParams width, height and depth as their size and stand on their origin.
 // Wall uses WallParams for its path and BoxParams height, wallThickness and floor. Ramp is a solid slope over BoxParams
 // width and depth, rising to height towards +Z like stairs.
-enum class Recipe : std::uint8_t { Box, Opening, Stairs, Plane, Cylinder, Sphere, Wall, Ramp };
+// Balcony: a slab wallThickness thick with railings on its +Z and both X edges, box.height tall in all, open on -Z
+// (the wall it stands against).
+enum class Recipe : std::uint8_t { Box, Opening, Stairs, Plane, Cylinder, Sphere, Wall, Ramp, Balcony };
 // The four walls of a box an opening can cut, named by the wall's outward normal.
 enum class WallSide : std::uint8_t { PosX, NegX, PosZ, NegZ };
 enum class CollisionMode : std::uint8_t { Solid, None };

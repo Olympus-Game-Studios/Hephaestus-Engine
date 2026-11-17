@@ -1644,8 +1644,27 @@ void TestRoofsAndBalconies()
     Check(AddBalcony(scene, upperWindow, 1.5f, error) == entt::null && error.find("window") != std::string::npos,
           "a window takes no balcony");
     const entt::entity balcony = AddBalcony(scene, upperDoor, 1.5f, error);
-    Check(balcony != entt::null && scene.GetRegistry().get<TransformComponent>(balcony).children.size() == 3,
-          "a balcony goes outside a door, with three railings (" + error + ")");
+    Check(balcony != entt::null &&
+              scene.GetRegistry().get<ConstructionShapeComponent>(balcony).recipe == Recipe::Balcony &&
+              scene.GetRegistry().get<TransformComponent>(balcony).children.empty(),
+          "a balcony goes outside a door as one shape, slab and railings together");
+    {
+        ConstructionShapeComponent single;
+        single.recipe = Recipe::Balcony;
+        single.box.width = 3.0f;
+        single.box.depth = 1.5f;
+        single.box.height = 1.2f;
+        single.box.wallThickness = 0.2f;
+        EvaluatedGeometry narrow;
+        EvaluateShape(single, {}, narrow);
+        single.box.width = 5.0f;
+        EvaluatedGeometry wide;
+        EvaluateShape(single, {}, wide);
+        Check(WindingMatchesNormals(wide) && InsideSolid(wide, Vec3(2.47f, 0.8f, 0.0f)) &&
+                  !InsideSolid(narrow, Vec3(2.47f, 0.8f, 0.0f)) && InsideSolid(wide, Vec3(0.0f, 0.8f, 0.72f)) &&
+                  !InsideSolid(wide, Vec3(0.0f, 0.8f, -0.72f)),
+              "widening a balcony moves its side railings out with it; its wall side stays open");
+    }
     const Vec3 balconyTop =
         Mat4::TransformPoint(scene.GetWorldTransform(Entity(balcony, &scene)), Vec3(0.0f, 0.2f, 0.0f));
     Check(std::fabs(balconyTop.y - 3.2f) < 1e-4f && balconyTop.z > 3.0f + 0.5f && std::fabs(balconyTop.x - 1.0f) < 1e-4f,
@@ -1658,6 +1677,9 @@ void TestRoofsAndBalconies()
     Check(navMesh && Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{},
                                                        Vec3(-1.0f, 3.2f, 0.0f), Vec3(1.0f, 3.2f, 3.9f)).complete,
           "the balcony can be walked onto through the door");
+    Check(!Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{},
+                                             Vec3(1.0f, 3.2f, 3.9f), Vec3(1.0f, 0.0f, 7.0f)).complete,
+          "and its railing keeps walkers from stepping off it");
 }
 
 void TestEditableMesh()

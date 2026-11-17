@@ -554,7 +554,10 @@ void ConstructionShapeInspector::Refresh()
     for (QWidget* roomOnly : std::initializer_list<QWidget*>{m_hollow, m_wallThickness, m_floor, m_ceiling}) {
         m_boxForm->setRowVisible(roomOnly, recipe == Recipe::Box && !subtract);
     }
-    m_boxForm->setRowVisible(m_wallThickness, (recipe == Recipe::Box && !subtract) || wall);
+    m_boxForm->setRowVisible(m_wallThickness, (recipe == Recipe::Box && !subtract) || wall || recipe == Recipe::Balcony);
+    if (QWidget* label = m_boxForm->labelForField(m_wallThickness)) {
+        static_cast<QLabel*>(label)->setText(recipe == Recipe::Balcony ? tr("Floor Thickness") : tr("Wall Thickness"));
+    }
     m_boxForm->setRowVisible(m_floor, (recipe == Recipe::Box && !subtract) || wall);
     m_boxForm->setRowVisible(m_solid, !(recipe == Recipe::Box && subtract));
     SetSpinFromMixed(m_steps, steps);
