@@ -810,6 +810,80 @@ void TestWalls()
           "nothing walkable lies within the sloped wall or an agent's radius of it");
 }
 
+void TestWallsLineUp()
+{
+    Scene scene("Wall Snapping");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    ConstructionTool tool;
+    int undoSteps = 0;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+    tool.SetMode(ToolMode::DrawWall);
+    auto click = [&](const Vec3& p) {
+        tool.OnMove(scene, system, camera.At(p));
+        tool.OnPress(scene, system, camera.At(p));
+        tool.OnRelease(scene, system, camera.At(p));
+    };
+    auto finish = [&]() { tool.OnKey(scene, system, 0x01000004); };  // Enter
+
+    // A side clicked a grid square off straight (0.5 m over 6 m) comes out straight.
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    click(Vec3(3.0f, 0.0f, -1.5f));
+    finish();
+    Entity first(selected, &scene);
+    const auto& firstShape = first.GetComponent<ConstructionShapeComponent>();
+    Check(firstShape.wall.points.size() == 2 && std::fabs(firstShape.wall.points[1].z) < 1e-4f,
+          "a side within 6 degrees of straight is drawn straight");
+
+    // Starting on its end carries on the same wall, so the corner is mitred instead of two ends meeting.
+    click(Vec3(3.1f, 0.0f, -1.9f));
+    click(Vec3(3.0f, 0.0f, 3.0f));
+    finish();
+    int walls = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionShapeComponent>()) {
+        walls += scene.GetRegistry().get<ConstructionShapeComponent>(handle).recipe == Recipe::Wall ? 1 : 0;
+    }
+    Check(walls == 1 && selected == static_cast<entt::entity>(first) && firstShape.wall.points.size() == 3 &&
+              std::fabs(firstShape.wall.points[2].x - 6.0f) < 1e-4f && std::fabs(firstShape.wall.points[2].z - 5.0f) < 1e-4f,
+          "drawing on from a wall's end extends that wall with a mitred corner");
+
+    // Drawing on from its first point puts new corners before it, and openings move to the same segments.
+    OpeningParams door = Door();
+    door.segment = 0;
+    AddOpening(scene, first, door);
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    click(Vec3(-3.0f, 0.0f, 3.0f));
+    finish();
+    int doorSegment = -1;
+    for (entt::entity child : first.GetComponent<TransformComponent>().children) {
+        doorSegment = scene.GetRegistry().get<ConstructionShapeComponent>(child).opening.segment;
+    }
+    Check(firstShape.wall.points.size() == 4 && std::fabs(firstShape.wall.points[0].z - 5.0f) < 1e-4f && doorSegment == 1,
+          "drawing on from the first point adds corners before it and keeps the door on its side");
+
+    // A separate wall started near a room's corner starts exactly on it.
+    BoxParams room = Room();
+    AddBox(scene, "Room", room, Vec3(20.0f, 0.0f, 0.0f));
+    click(Vec3(22.75f, 0.0f, 2.0f));  // the room's centre-line corner is at (22.9, 1.9)
+    click(Vec3(26.0f, 0.0f, 2.0f));
+    finish();
+    const auto& tail = scene.GetRegistry().get<ConstructionShapeComponent>(selected);
+    const Vec3 start = scene.GetRegistry().get<TransformComponent>(selected).position;
+    Check(std::fabs(start.x - 22.9f) < 1e-4f && std::fabs(start.z - 1.9f) < 1e-4f && tail.wall.points.size() == 2,
+          "a wall started near a room's corner starts on the corner (" + std::to_string(start.x) + ", " +
+              std::to_string(start.z) + ")");
+    (void)undoSteps;
+}
+
 void TestWallTool()
 {
     Scene scene("Wall Tool");
@@ -1990,6 +2064,7 @@ int main()
     TestSetOperation();
     TestWalls();
     TestWallTool();
+    TestWallsLineUp();
     TestRampsAndTurns();
     TestFaceMaterials();
     TestKits();

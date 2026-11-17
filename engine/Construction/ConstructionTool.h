@@ -88,7 +88,11 @@ private:
     void UpdateBase(const ToolInput& input);
     void UpdateHeight(const ToolInput& input);
     void CommitBox(Scene& scene);
-    void UpdatePath(const ToolInput& input);
+    void UpdatePath(Scene& scene, const ToolInput& input);
+    // Moves a point onto the nearest corner of another wall or room (centre lines) within reach, at the same height.
+    // Returns that corner's wall when it is an end of an open wall, so drawing on from it extends that wall.
+    bool SnapToWallCorner(Scene& scene, Vec3& point, float reach, entt::entity* openEnd = nullptr,
+                          bool* atStart = nullptr) const;
     bool PathCanClose(const ToolInput& input) const;
     void CommitWall(Scene& scene, bool closed);
     float DefaultHeight() const;
@@ -123,6 +127,11 @@ private:
 
     // Wall drawing: the corners placed so far, in world space; m_corner follows the cursor.
     std::vector<Vec3> m_path;
+    // Draw Wall started on the end of an open wall: that wall is extended instead of a new one made. m_path begins
+    // with its existing points (the end drawn from last); the first m_extendKeep of them are not removed by Backspace.
+    entt::entity m_extendWall = entt::null;
+    size_t m_extendKeep = 0;
+    bool m_extendAtStart = false;  // drawn on from the wall's first point, so new points go before its own
 
     // Handle drag.
     entt::entity m_target = entt::null;

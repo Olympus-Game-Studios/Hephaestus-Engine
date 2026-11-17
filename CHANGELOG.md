@@ -241,6 +241,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
 
 ### Fixed
+- 2026-11-17: Walls drawn with Draw Wall line up. A side within 6 degrees of running along X or Z is made exactly straight (Ctrl turns this off), corners snap to the corners of other walls and rooms within 30 cm, and starting a wall on the end of an open wall carries that wall on (a mitred corner, openings kept on their segments) instead of making a second wall whose square end leaves a notch or a sliver at the join.
 - 2026-11-17: Clicking a doorway or window in the viewport selects the opening. Openings have no mesh, so the click used to go through the hole to whatever was behind it; now an opening the click passes through wins over its own wall and anything behind that wall.
 - 2026-11-17: The navmesh is built in tiles of 256 cells (38 m at the default cell size). A level with a floor larger than about 600 m across (more than Recast's 2^24 spans in one heightfield) used to build an empty navmesh, so bots, Check Level and Measure Walk found no walkable floor.
 - 2026-11-16: The editor kept drawing a model's old mesh after its file changed until the scene was reopened; reimporting a pack now reloads its models (`QtEditorEngine::ReloadMeshFiles`).

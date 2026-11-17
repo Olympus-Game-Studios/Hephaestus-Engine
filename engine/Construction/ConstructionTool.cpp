@@ -132,7 +132,8 @@ const char* PhaseHint(int phase)
     case 4: return "Drag the opening's outline on the wall. Click for a default door or window.";
     case 5: return "Drag to move the opening along the wall. Esc cancels.";
     case 6: return "Click to add corners. Click the first corner to close a room, or the last one again (or Enter) to "
-                   "finish. Type a length then Enter. Shift keeps it straight. Backspace removes a corner.";
+                   "finish. Type a length then Enter. Nearly straight sides snap straight; Shift forces it, Ctrl turns snapping "
+                   "off. Corners snap to other walls' corners. Backspace removes a corner.";
     default: return "";
     }
 }
@@ -272,7 +273,7 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
         return true;
     }
     if (m_phase == Phase::Path) {
-        UpdatePath(input);
+        UpdatePath(scene, input);
         if (PathCanClose(input)) {
             CommitWall(scene, true);
         } else if (vlen(vsub(m_corner, m_path.back())) < kMinDimension) {
@@ -306,7 +307,27 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
         if (!PlacementPoint(scene, system, input, point)) {
             return false;
         }
-        m_path = {point};
+        m_extendWall = entt::null;
+        m_extendKeep = 0;
+        entt::entity openWall = entt::null;
+        bool atStart = false;
+        if (!input.ctrl && SnapToWallCorner(scene, point, std::max(0.3f, input.gridStep * 0.5f), &openWall, &atStart) &&
+            openWall != entt::null) {
+            // Draw on from the end of an open wall: carry on its path, so the new corner is mitred like any other.
+            const auto& existing = scene.GetRegistry().get<ConstructionShapeComponent>(openWall);
+            const Mat4 world = scene.GetWorldTransform(Entity(openWall, &scene));
+            m_path.clear();
+            for (const WallPoint& p : existing.wall.points) {
+                m_path.push_back(Mat4::TransformPoint(world, Vec3(p.x, 0.0f, p.z)));
+            }
+            if (atStart) std::reverse(m_path.begin(), m_path.end());
+            m_extendWall = openWall;
+            m_extendKeep = m_path.size();
+            m_extendAtStart = atStart;
+            point = m_path.back();
+        } else {
+            m_path = {point};
+        }
         m_anchor = point;
         m_corner = point;
         m_typed.clear();
@@ -386,7 +407,7 @@ void ConstructionTool::OnMove(Scene& scene, ConstructionSystem& system, const To
     case Phase::Handle: UpdateHandleDrag(scene, input); return;
     case Phase::OpeningDraw: UpdateOpeningDraw(scene, input); return;
     case Phase::OpeningMove: UpdateOpeningMove(scene, input); return;
-    case Phase::Path: UpdatePath(input); return;
+    case Phase::Path: UpdatePath(scene, input); return;
     case Phase::Idle: break;
     }
     m_hoverValid = false;
@@ -454,20 +475,67 @@ bool ConstructionTool::OnRelease(Scene& scene, ConstructionSystem&, const ToolIn
     return false;
 }
 
-void ConstructionTool::UpdatePath(const ToolInput& input)
+bool ConstructionTool::SnapToWallCorner(Scene& scene, Vec3& point, float reach, entt::entity* openEnd,
+                                        bool* atStart) const
+{
+    entt::registry& registry = scene.GetRegistry();
+    float best = reach;
+    bool found = false;
+    for (entt::entity entity : registry.view<ConstructionShapeComponent>()) {
+        const auto& shape = registry.get<ConstructionShapeComponent>(entity);
+        if (shape.source != SourceKind::Recipe || shape.operation != Operation::Add) continue;
+        std::vector<WallPoint> corners;
+        if (shape.recipe == Recipe::Wall) {
+            corners = shape.wall.points;
+        } else if (shape.recipe == Recipe::Box && shape.box.hollow) {
+            const float hx = (shape.box.width - shape.box.wallThickness) * 0.5f;
+            const float hz = (shape.box.depth - shape.box.wallThickness) * 0.5f;
+            corners = {{-hx, -hz}, {hx, -hz}, {hx, hz}, {-hx, hz}};
+        } else {
+            continue;
+        }
+        const Mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
+        for (size_t n = 0; n < corners.size(); ++n) {
+            const Vec3 corner = Mat4::TransformPoint(world, Vec3(corners[n].x, 0.0f, corners[n].z));
+            const float distance = std::hypot(corner.x - point.x, corner.z - point.z);
+            if (distance >= best || std::fabs(corner.y - point.y) > 0.5f) continue;
+            best = distance;
+            point = corner;
+            found = true;
+            const bool end = shape.recipe == Recipe::Wall && !shape.wall.closed &&
+                             (n == 0 || n + 1 == corners.size());
+            if (openEnd) *openEnd = end ? entity : entt::null;
+            if (atStart) *atStart = n == 0;
+        }
+    }
+    return found;
+}
+
+void ConstructionTool::UpdatePath(Scene& scene, const ToolInput& input)
 {
     Vec3 point;
     if (!IntersectPlane(input.ray, m_anchor, Vec3(0, 1, 0), point)) {
         return;
     }
     point = Vec3(Snap(point.x, input), m_anchor.y, Snap(point.z, input));
-    if (input.shift && !m_path.empty()) {
+    if (!m_path.empty()) {
         const Vec3& last = m_path.back();
-        if (std::fabs(point.x - last.x) > std::fabs(point.z - last.z)) {
-            point.z = last.z;
-        } else {
-            point.x = last.x;
+        const float dx = point.x - last.x;
+        const float dz = point.z - last.z;
+        // Within 6 degrees of running along X or Z (or always with Shift) the side is made exactly straight, so
+        // corners clicked a grid square off do not tilt it.
+        const float off = std::min(std::fabs(dx), std::fabs(dz));
+        const bool nearlyStraight = off <= std::tan(0.1047f) * std::max(std::fabs(dx), std::fabs(dz));
+        if (input.shift || (!input.ctrl && nearlyStraight)) {
+            if (std::fabs(dx) > std::fabs(dz)) {
+                point.z = last.z;
+            } else {
+                point.x = last.x;
+            }
         }
+    }
+    if (!input.ctrl && !input.shift) {
+        SnapToWallCorner(scene, point, std::max(0.3f, input.gridStep * 0.5f));
     }
     m_corner = point;
 }
@@ -497,6 +565,46 @@ void ConstructionTool::CommitWall(Scene& scene, bool closed)
     if (points.size() < 2 || (closed && points.size() < 3)) {
         return;
     }
+    entt::registry& registry = scene.GetRegistry();
+    if (m_extendWall != entt::null) {
+        const bool extendable = registry.valid(m_extendWall) && registry.all_of<ConstructionShapeComponent>(m_extendWall);
+        if (!extendable || points.size() <= m_extendKeep) {
+            m_extendWall = entt::null;
+            m_extendKeep = 0;
+            return;
+        }
+        // The wall drawn on from keeps its own place; its path is rewritten in its frame.
+        if (m_host.pushUndo) m_host.pushUndo(closed ? "Close wall into a room" : "Extend wall");
+        const Mat4 inverse = Mat4::Invert(scene.GetWorldTransform(Entity(m_extendWall, &scene)));
+        auto& shape = registry.get<ConstructionShapeComponent>(m_extendWall);
+        shape.wall.points.clear();
+        for (const WallPoint& p : points) {
+            const Vec3 local = Mat4::TransformPoint(inverse, Vec3(p.x + origin.x, origin.y, p.z + origin.z));
+            shape.wall.points.push_back(WallPoint{local.x, local.z});
+        }
+        if (m_extendAtStart) {
+            // Keep the wall's own order, with the new corners before its first, so its openings keep their sides;
+            // their segments move along by the segments added in front.
+            std::reverse(shape.wall.points.begin(), shape.wall.points.end());
+            const int added = static_cast<int>(points.size() - m_extendKeep);
+            for (entt::entity child : registry.get<TransformComponent>(m_extendWall).children) {
+                if (auto* opening = registry.try_get<ConstructionShapeComponent>(child);
+                    opening && opening->recipe == Recipe::Opening) {
+                    opening->opening.segment += added;
+                }
+            }
+        }
+        shape.wall.closed = closed;
+        if (closed) shape.role = "room";
+        const entt::entity extended = m_extendWall;
+        m_extendWall = entt::null;
+        m_extendKeep = 0;
+        if (m_host.select) m_host.select(extended);
+        if (m_host.changed) m_host.changed();
+        return;
+    }
+    m_extendWall = entt::null;
+    m_extendKeep = 0;
     if (m_host.pushUndo) m_host.pushUndo(closed ? "Draw room" : "Draw wall");
     Entity entity = scene.CreateEntity(closed ? "Room" : "Wall");
     entity.GetComponent<TransformComponent>().position = origin;
@@ -848,8 +956,13 @@ bool ConstructionTool::OnKey(Scene& scene, ConstructionSystem& system, int qtKey
         if (!m_typed.empty()) {
             m_typed.pop_back();
         } else if (m_phase == Phase::Path) {
-            m_path.pop_back();
-            if (m_path.empty()) m_phase = Phase::Idle;
+            if (m_path.size() > m_extendKeep) {
+                m_path.pop_back();
+            }
+            if (m_path.empty() || m_path.size() == m_extendKeep) {
+                m_phase = Phase::Idle;
+                m_path.clear();
+            }
         }
         return true;
     }
@@ -881,6 +994,8 @@ void ConstructionTool::Cancel(Scene& scene)
     m_phase = Phase::Idle;
     m_typed.clear();
     m_path.clear();
+    m_extendWall = entt::null;
+    m_extendKeep = 0;
 }
 
 std::string ConstructionTool::MeasureSummary() const
