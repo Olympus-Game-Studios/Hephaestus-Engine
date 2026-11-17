@@ -1682,6 +1682,43 @@ void TestRoofsAndBalconies()
           "and its railing keeps walkers from stepping off it");
 }
 
+void TestBalconiesJoin()
+{
+    Scene scene("Balconies");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    auto balcony = [&](const std::string& name, const Vec3& at, float yaw, float width) {
+        Entity entity = scene.CreateEntity(name);
+        entity.GetComponent<TransformComponent>().position = at;
+        entity.GetComponent<TransformComponent>().rotation = Vec3(0.0f, yaw, 0.0f);
+        auto& shape = entity.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Recipe::Balcony;
+        shape.box.width = width;
+        shape.box.depth = 1.5f;
+        shape.box.height = 1.2f;
+        shape.box.wallThickness = 0.2f;
+        return entity;
+    };
+    // Along a +Z wall from x -2 to 2, and round the corner along a +X wall from z -0.75 to 3.25.
+    Entity front = balcony("Front", Vec3(0.0f, 0.0f, 0.0f), 0.0f, 4.0f);
+    Entity side = balcony("Side", Vec3(2.75f, 0.0f, 1.25f), 1.57079633f, 4.0f);
+    system.Update(scene);
+    const EvaluatedGeometry* a = system.Geometry(front);
+    Check(a && !InsideSolid(*a, Vec3(1.97f, 0.8f, 0.0f)) && InsideSolid(*a, Vec3(-1.97f, 0.8f, 0.0f)) &&
+              InsideSolid(*a, Vec3(0.0f, 0.8f, 0.72f)),
+          "where the corner balcony's floor continues, the front balcony's railing is left out; its other edges keep theirs");
+    std::string error;
+    const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, error);
+    Check(navMesh && Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{},
+                                                       Vec3(-1.0f, 0.2f, 0.0f), Vec3(2.75f, 0.2f, 2.5f)).complete,
+          "the two balconies make one walkway round the corner");
+    side.GetComponent<TransformComponent>().position.y = 1.0f;
+    system.Update(scene);
+    Check(InsideSolid(*system.Geometry(front), Vec3(1.97f, 0.8f, 0.0f)),
+          "a balcony at another height does not join: the railing comes back");
+}
+
 void TestEditableMesh()
 {
     ConstructionShapeComponent room;
@@ -1961,6 +1998,7 @@ int main()
     TestStoreys();
     TestStoreysAnyShape();
     TestRoofsAndBalconies();
+    TestBalconiesJoin();
     TestEditableMesh();
     TestPlaytestHeatmap();
     TestLargeLevel();

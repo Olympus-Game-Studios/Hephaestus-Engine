@@ -1168,7 +1168,7 @@ bool EvaluateRamp(const BoxParams& size, EvaluatedGeometry& out)
     return true;
 }
 
-bool EvaluateBalcony(const BoxParams& size, EvaluatedGeometry& out)
+bool EvaluateBalcony(const BoxParams& size, EvaluatedGeometry& out, const std::vector<LocalBox>& neighbours)
 {
     out = EvaluatedGeometry{};
     const float hw = size.width * 0.5f;
@@ -1180,10 +1180,35 @@ bool EvaluateBalcony(const BoxParams& size, EvaluatedGeometry& out)
     // Railings 6 cm thick, but never more than a third of the slab, so a narrow balcony keeps a floor.
     const float rail = std::min({0.06f, size.width / 3.0f, size.depth / 3.0f});
     std::vector<Prism> parts{Prism{{-hw, 0.0f, -hd}, {hw, slab, hd}}};
+    // A railing runs from a to b along one axis; it is left out where a neighbouring balcony's floor, level with this
+    // one, continues just past it.
+    auto railing = [&](bool alongX, float a, float b, float fixed0, float fixed1, float probe) {
+        std::vector<std::pair<float, float>> gaps;
+        for (const LocalBox& n : neighbours) {
+            if (std::fabs(n.max.y - slab) > 0.05f) continue;
+            const float across0 = alongX ? n.min.z : n.min.x;
+            const float across1 = alongX ? n.max.z : n.max.x;
+            if (probe < across0 || probe > across1) continue;
+            gaps.push_back({alongX ? n.min.x : n.min.z, alongX ? n.max.x : n.max.z});
+        }
+        std::sort(gaps.begin(), gaps.end());
+        float from = a;
+        auto emit = [&](float s0, float s1) {
+            if (s1 - s0 < 1e-3f) return;
+            parts.push_back(alongX ? Prism{{s0, slab, fixed0}, {s1, size.height, fixed1}}
+                                   : Prism{{fixed0, slab, s0}, {fixed1, size.height, s1}});
+        };
+        for (const auto& [g0, g1] : gaps) {
+            emit(from, std::min(b, g0));
+            from = std::max(from, g1);
+        }
+        emit(from, b);
+    };
     if (size.height > slab + 1e-3f) {
-        parts.push_back(Prism{{-hw, slab, hd - rail}, {hw, size.height, hd}});
-        parts.push_back(Prism{{-hw, slab, -hd}, {-hw + rail, size.height, hd - rail}});
-        parts.push_back(Prism{{hw - rail, slab, -hd}, {hw, size.height, hd - rail}});
+        constexpr float kProbe = 0.05f;
+        railing(true, -hw, hw, hd - rail, hd, hd + kProbe);
+        railing(false, -hd, hd - rail, -hw, -hw + rail, -hw - kProbe);
+        railing(false, -hd, hd - rail, hw - rail, hw, hw + kProbe);
     }
     const CellGrid grid(parts);
     EmitFaces(grid, out);
@@ -1261,7 +1286,7 @@ bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningP
         return EvaluateStairs(shape.box, StairCount(shape), out, shape.stairs);
     }
     if (shape.recipe == Recipe::Balcony) {
-        return EvaluateBalcony(shape.box, out);
+        return EvaluateBalcony(shape.box, out, cuts);
     }
     if (shape.recipe == Recipe::Ramp) {
         return EvaluateRamp(shape.box, out);

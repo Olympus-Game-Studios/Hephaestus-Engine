@@ -113,6 +113,33 @@ LocalBox HostLocalBounds(const ConstructionShapeComponent& shape)
     return bounds;
 }
 
+// The floors of other balconies a balcony touches, as boxes in its frame, so it leaves out the railing where their
+// floor continues. A turned neighbour counts as its bounding box in this frame.
+std::vector<LocalBox> BalconyNeighbours(Scene& scene, entt::entity self, const ConstructionShapeComponent& shape,
+                                        const std::vector<entt::entity>& balconies)
+{
+    std::vector<LocalBox> neighbours;
+    const Mat4 world = scene.GetWorldTransform(Entity(self, &scene));
+    const Vec3 reach(0.15f, 0.15f, 0.15f);
+    const AABB near = BoundsOf(world, vsub(BoxMin(shape.box), reach),
+                               vadd(Vec3(shape.box.width * 0.5f, shape.box.wallThickness, shape.box.depth * 0.5f), reach));
+    const Mat4 inverse = Mat4::Invert(world);
+    for (entt::entity other : balconies) {
+        if (other == self) continue;
+        const auto& box = scene.GetRegistry().get<ConstructionShapeComponent>(other).box;
+        const Vec3 floorMax(box.width * 0.5f, box.wallThickness, box.depth * 0.5f);
+        const Mat4 otherWorld = scene.GetWorldTransform(Entity(other, &scene));
+        if (!Overlaps(near, BoundsOf(otherWorld, BoxMin(box), floorMax))) continue;
+        const AABB local = BoundsOf(Mat4::Multiply(inverse, otherWorld), BoxMin(box), floorMax);
+        neighbours.push_back(LocalBox{local.min, local.max});
+    }
+    std::sort(neighbours.begin(), neighbours.end(), [](const LocalBox& a, const LocalBox& b) {
+        return std::make_tuple(a.min.x, a.min.y, a.min.z, a.max.x, a.max.y, a.max.z) <
+               std::make_tuple(b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z);
+    });
+    return neighbours;
+}
+
 // Cutters overlapping a host, as boxes in the host's frame. A cutter turned relative to the host cuts its bounding
 // box in that frame.
 std::vector<LocalBox> CutsFor(Scene& scene, entt::entity host, const ConstructionShapeComponent& shape,
@@ -260,6 +287,11 @@ int ConstructionSystem::Update(Scene& scene)
         it = m_shapes.erase(it);
     }
 
+    std::vector<entt::entity> balconies;
+    for (entt::entity entity : boxes) {
+        const auto& shape = registry.get<ConstructionShapeComponent>(entity);
+        if (shape.source == SourceKind::Recipe && shape.recipe == Recipe::Balcony) balconies.push_back(entity);
+    }
     std::vector<Cutter> cutters;
     for (entt::entity entity : boxes) {
         const auto& shape = registry.get<ConstructionShapeComponent>(entity);
@@ -280,8 +312,9 @@ int ConstructionSystem::Update(Scene& scene)
             renderer.hideInGame = true;
             renderer.castShadows = false;
         }
-        const std::vector<LocalBox> cuts = CanHostOpenings(shape)
-            ? CutsFor(scene, entity, shape, cutters) : std::vector<LocalBox>{};
+        const std::vector<LocalBox> cuts = CanHostOpenings(shape) ? CutsFor(scene, entity, shape, cutters)
+            : shape.recipe == Recipe::Balcony ? BalconyNeighbours(scene, entity, shape, balconies)
+                                              : std::vector<LocalBox>{};
         std::uint64_t hash = HashInputs(shape, CollectOpenings(scene, entity), cuts);
         if (!shape.kit.empty()) {
             // A kit file saved since the last fill dresses the shape again.
