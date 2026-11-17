@@ -30,6 +30,7 @@
 #include "../../Scene/Entity.h"
 #include "../../Scene/PrefabOverrideSystem.h"
 #include "../../Assets/AssetManager.h"
+#include "../../Construction/ConstructionGeometry.h"
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Assets/SkeletalModelImporter.h"
@@ -1087,6 +1088,20 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                     m_viewportPickShiftHeld = shiftHeld;
                     m_viewportPickAltHeld = altHeld;
                     m_viewportPickWaitingReadback = true;
+                    // Openings have no mesh, so the GPU pick sees through them; find one the click passes through.
+                    m_viewportPickOpening = entt::null;
+                    Mat4 viewMatrix;
+                    Mat4 projMatrix;
+                    Vec3 camPos;
+                    if (Scene* pickScene = m_editorContext.GetActiveScene();
+                        pickScene && buildViewProj(viewMatrix, projMatrix, camPos)) {
+                        Vec3 openingLocal;
+                        entt::entity opening = entt::null;
+                        if (m_constructionTool.PickOpening(*pickScene, buildRayFromScreen(px, py, viewMatrix, projMatrix),
+                                                           opening, openingLocal)) {
+                            m_viewportPickOpening = opening;
+                        }
+                    }
                     m_frameRenderer->PickEntityAt(pixX, pixY);
                 }
             }
@@ -2509,6 +2524,43 @@ void QtEditorEngine::tryApplyCompletedViewportPick()
         picked = static_cast<entt::entity>(raw);
     }
     Scene* scene = m_editorContext.GetActiveScene();
+    // A click through a doorway or window selects the opening, unless it landed on something of another shape in
+    // front of the wall (the pick only knows the entity, so anything outside the opening's host counts as behind).
+    // Whether the picked entity's middle is on the camera's side of the opening's wall.
+    auto inFrontOfWall = [&](entt::entity entity, entt::entity opening) {
+        auto& registry = scene->GetRegistry();
+        const entt::entity host = registry.get<TransformComponent>(opening).parent;
+        const auto* hostShape = registry.try_get<ConstructionShapeComponent>(host);
+        const auto& params = registry.get<ConstructionShapeComponent>(opening).opening;
+        Hephaestus::Construction::WallFrame frame;
+        if (!hostShape || !registry.valid(entity) ||
+            !Hephaestus::Construction::GetHostWallFrame(*hostShape, params.side, params.segment, frame)) {
+            return false;
+        }
+        const Mat4 hostWorld = scene->GetWorldTransform(Entity(host, scene));
+        const Vec3 wallPoint = Mat4::TransformPoint(hostWorld, frame.center);
+        const Vec3 wallNormal = Mat4::TransformDirection(hostWorld, frame.normal);
+        Vec3 middle = Mat4::TransformPoint(scene->GetWorldTransform(Entity(entity, scene)), Vec3(0.0f, 0.0f, 0.0f));
+        if (const auto* renderer = registry.try_get<MeshRendererComponent>(entity)) {
+            middle = Mat4::TransformPoint(scene->GetWorldTransform(Entity(entity, scene)),
+                                          vscale(vadd(renderer->localBounds.min, renderer->localBounds.max), 0.5f));
+        }
+        const Vec3 camera(m_camera.positionX, m_camera.positionY, m_camera.positionZ);
+        return (vdot(vsub(camera, wallPoint), wallNormal) > 0.0f) == (vdot(vsub(middle, wallPoint), wallNormal) > 0.0f);
+    };
+    if (scene && !m_viewportPickAltHeld && m_viewportPickOpening != entt::null &&
+        scene->GetRegistry().valid(m_viewportPickOpening)) {
+        const entt::entity host = scene->GetRegistry().get<TransformComponent>(m_viewportPickOpening).parent;
+        const auto* generated = picked != entt::null && scene->GetRegistry().valid(picked)
+            ? scene->GetRegistry().try_get<ConstructionGeneratedComponent>(picked) : nullptr;
+        const bool hostOrBehind = picked == entt::null || picked == host ||
+                                  (generated && static_cast<entt::entity>(generated->ownerEntity) == host) ||
+                                  !inFrontOfWall(picked, m_viewportPickOpening);
+        if (hostOrBehind) {
+            picked = m_viewportPickOpening;
+        }
+    }
+    m_viewportPickOpening = entt::null;
     bool kitPiece = false;
     if (scene && picked != entt::null && scene->GetRegistry().valid(picked)) {
         const auto* generated = scene->GetRegistry().try_get<ConstructionGeneratedComponent>(picked);

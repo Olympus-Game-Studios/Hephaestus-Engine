@@ -64,6 +64,8 @@ public:
     void AppendOverlay(Scene& scene, const ConstructionSystem& system, std::vector<EditorDebugLine>& lines,
                        std::vector<EditorDebugPoint>& points) const;
 
+    // The opening whose outline on its wall's outer face is under the ray (the ray passes through the hole itself).
+    bool PickOpening(Scene& scene, const Ray& ray, entt::entity& outOpening, Vec3& outLocal) const;
     // What the tool is doing right now, for the viewport hint strip.
     std::string StatusText() const;
     // Measure Walk's result in a few words, for a readout beside the tools; empty in other modes.
@@ -92,8 +94,6 @@ private:
     float DefaultHeight() const;
     void UpdateHandleDrag(Scene& scene, const ToolInput& input);
     bool WallPointFromRay(Scene& scene, const ToolInput& input, Vec3& outLocal) const;
-    // The opening whose outline on its wall's outer face is under the ray (the ray passes through the hole itself).
-    bool PickOpening(Scene& scene, const Ray& ray, entt::entity& outOpening, Vec3& outLocal) const;
     void UpdateOpeningDraw(Scene& scene, const ToolInput& input);
     void UpdateOpeningMove(Scene& scene, const ToolInput& input);
     void CommitOpening(Scene& scene);

@@ -549,6 +549,7 @@ private:
     bool viewportRay(float x, float y, Ray& outRay) const;
     Hephaestus::Construction::ConstructionSystem m_construction;
     std::vector<EditorDebugLine> m_heatmapLines;
+    entt::entity m_viewportPickOpening = entt::null;  // the opening the last pick click passed through
     Hephaestus::Construction::ConstructionTool m_constructionTool;
     std::uint64_t m_constructionSceneIdentity = 0;
     std::string m_lastConstructionStatus;
