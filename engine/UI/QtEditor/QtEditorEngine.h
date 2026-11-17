@@ -224,6 +224,8 @@ public:
     Hephaestus::Construction::ToolMode GetConstructionToolMode() const { return m_constructionTool.Mode(); }
     std::string ConstructionStatusText() const { return m_constructionTool.StatusText(); }
     std::string MeasureSummary() const { return m_constructionTool.MeasureSummary(); }
+    // Lines drawn over the level in the editor (not in Play), such as a playtest heatmap; empty clears them.
+    void SetHeatmapLines(std::vector<EditorDebugLine> lines) { m_heatmapLines = std::move(lines); }
     /// Evaluate construction shapes now, so automation sees up-to-date geometry and collision.
     void UpdateConstruction();
 
@@ -546,6 +548,7 @@ private:
     entt::entity m_placementPreview = entt::null;
     bool viewportRay(float x, float y, Ray& outRay) const;
     Hephaestus::Construction::ConstructionSystem m_construction;
+    std::vector<EditorDebugLine> m_heatmapLines;
     Hephaestus::Construction::ConstructionTool m_constructionTool;
     std::uint64_t m_constructionSceneIdentity = 0;
     std::string m_lastConstructionStatus;

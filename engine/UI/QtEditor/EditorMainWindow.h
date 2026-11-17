@@ -85,6 +85,7 @@ class EditorSystemUsage;
 class QtViewportWindow;
 class QtEditorEngine;
 class LevelCheckDialog;
+class PlaytestDialog;
 class AssetBrowserWidget;
 class AddActorsPanel;
 class CodeEditorPanel;
@@ -240,6 +241,7 @@ private:
     void removeInspectorComponent(const std::string& type);
     void bakeAllProbeVolumes();
     void checkLevel();
+    void runBotPlaytest();
     void bakeSelectedProbeVolumes();
     void bakeProbeVolumes(const std::vector<entt::entity>& volumes);
     ComponentInspector* focusedComponentInspector() const;
@@ -250,6 +252,7 @@ private:
     void handleViewportMaterialDrop(const QString& portablePath, const QPoint& dropPos, bool wholeShape);
     void handleViewportKitDrop(const QString& portablePath, const QPoint& dropPos);
     LevelCheckDialog* m_levelCheck = nullptr;
+    PlaytestDialog* m_playtest = nullptr;
     void syncPrefabOverridesForSelection();
     void updatePrefabInspectorUi();
     void decoratePrefabComponentInspector(QWidget* widget, const std::string& componentName);

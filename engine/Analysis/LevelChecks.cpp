@@ -271,6 +271,7 @@ std::shared_ptr<Navigation::NavMesh> LevelNavMesh(Scene& scene, const std::files
                                                   Navigation::NavGeometry* geometryOut, int* skippedShapes)
 {
     static std::shared_ptr<Navigation::NavMesh> shared = std::make_shared<Navigation::NavMesh>();
+    shared->SetTileCache(projectRoot);
     const Navigation::NavBuildSettings settings = Navigation::SettingsForScene(scene);
     Navigation::NavGeometry geometry = Navigation::CollectSceneGeometry(scene, skippedShapes, projectRoot);
     Navigation::AddVaultLinks(scene, settings, geometry);

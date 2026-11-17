@@ -2359,6 +2359,7 @@ void QtEditorEngine::renderFrame()
     AppendCameraFrustumDebugDraw(*scene, m_renderConfig.debugLines);
     if (m_playModeManager.IsEditor()) {
         m_constructionTool.AppendOverlay(*scene, m_construction, m_renderConfig.debugLines, m_renderConfig.debugPoints);
+        m_renderConfig.debugLines.insert(m_renderConfig.debugLines.end(), m_heatmapLines.begin(), m_heatmapLines.end());
     }
     if (m_constructionTool.StatusText() != m_lastConstructionStatus) {
         m_lastConstructionStatus = m_constructionTool.StatusText();

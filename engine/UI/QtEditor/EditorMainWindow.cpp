@@ -53,6 +53,7 @@
 #include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
 #include "LevelCheckDialog.h"
+#include "PlaytestDialog.h"
 #include "HierarchyEye.h"
 #include "EditorPluginHost.h"
 #include "PluginManagerDialog.h"
@@ -873,6 +874,13 @@ public:
         return m_owner->m_engine ? &m_owner->m_engine->GetConstruction() : nullptr;
     }
 
+    bool SetLevelOverlay(std::vector<EditorDebugLine> lines) override
+    {
+        if (!m_owner->m_engine) return false;
+        m_owner->m_engine->SetHeatmapLines(std::move(lines));
+        return true;
+    }
+
     bool StopPlayMode(std::string& outError) override
     {
         if (!m_owner->m_engine) {
@@ -1614,6 +1622,7 @@ void EditorMainWindow::setupMenuBar()
     QMenu* buildMenu = menuBar->addMenu(tr("&Build"));
     buildMenu->addAction(Theme::Icon(QStringLiteral("light")), tr("Bake Lighting"), this, &EditorMainWindow::bakeAllProbeVolumes);
     buildMenu->addAction(tr("Check Level"), this, &EditorMainWindow::checkLevel);
+    buildMenu->addAction(tr("Run Bot Playtest..."), this, &EditorMainWindow::runBotPlaytest);
     buildMenu->addSeparator();
     buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
     QAction* packageProjectAction =
@@ -8589,6 +8598,20 @@ void EditorMainWindow::checkLevel()
     m_levelCheck->raise();
     m_levelCheck->activateWindow();
     m_levelCheck->RunCheck();
+}
+
+void EditorMainWindow::runBotPlaytest()
+{
+    if (!m_engine) return;
+    if (!m_playtest) {
+        m_playtest = new PlaytestDialog(m_engine.get(), [this]() {
+            rebuildOutliner();
+            refreshDetailsPanel();
+        }, this);
+    }
+    m_playtest->show();
+    m_playtest->raise();
+    m_playtest->activateWindow();
 }
 
 void EditorMainWindow::handleViewportKitDrop(const QString& portablePath, const QPoint& dropPos)

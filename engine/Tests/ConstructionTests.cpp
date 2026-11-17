@@ -1,4 +1,5 @@
 #include "Analysis/LevelChecks.h"
+#include "Analysis/Playtest.h"
 #include "Construction/ConstructionGeometry.h"
 #include "Construction/ConstructionKit.h"
 #include "Construction/ConstructionSystem.h"
@@ -1447,6 +1448,34 @@ void TestJumpChecks()
     Check(!stillRuns && LevelCheckIds().empty(), "removing the owner's checks stops them running");
 }
 
+void TestPlaytestHeatmap()
+{
+    using namespace Hephaestus::Analysis;
+    RecordPlaytestEvent({"kill", Vec3(1.0f, 0.0f, 1.0f), 1});
+    Check(EndPlaytest().empty() && !IsPlaytestRunning(), "nothing is recorded outside a playtest");
+    BeginPlaytest();
+    Check(IsPlaytestRunning(), "a playtest records once begun");
+    AdvancePlaytestClock(2.5f);
+    RecordPlaytestEvent({"kill", Vec3(1.0f, 0.5f, 1.0f), 1});
+    RecordPlaytestEvent({"kill", Vec3(1.5f, 1.5f, 1.9f), 2});
+    RecordPlaytestEvent({"kill", Vec3(-3.0f, 0.0f, 1.0f), 2});
+    RecordPlaytestEvent({"traffic", Vec3(0.0f, 0.0f, 0.0f), 1});
+    const float clock = PlaytestClock();
+    const std::vector<PlaytestEvent> events = EndPlaytest();
+    Check(events.size() == 4 && events[0].time == 2.5f && clock == 2.5f && !IsPlaytestRunning(),
+          "events keep the simulated time they happened at, and ending stops recording");
+    const Heatmap kills = BuildHeatmap(events, "kill", 2.0f);
+    Check(kills.total == 3 && kills.cells.size() == 2 && kills.maxCount == 2 && kills.cells[0].count == 2 &&
+              kills.cells[0].x == 0 && kills.cells[0].z == 0 && std::fabs(kills.cells[0].height - 1.0f) < 1e-5f &&
+              kills.cells[1].x == -2,
+          "kills bin into 2 m cells, busiest first, at the mean height of their events");
+    std::vector<EditorDebugLine> lines;
+    AppendHeatmapLines(kills, lines);
+    Check(!lines.empty() && lines.front().color.x > 0.9f && lines.front().color.y < 0.2f &&
+              lines.back().color.y > lines.front().color.y + 0.2f,
+          "the busiest cell is drawn red and a quieter one further towards yellow and blue");
+}
+
 void TestLargeLevel()
 {
     // Recast addresses a heightfield's spans with 24 bits, so one 840 m floor in a single tile built nothing.
@@ -1513,6 +1542,39 @@ void TestLargeLevel()
     Hephaestus::Navigation::NavUpdateStats resized;
     timed(resized, editMs);
     Check(resized.tilesKept == 0 && resized.tilesBuilt > 0, "a different character size rebuilds every tile");
+
+    // A later editor session: a new navmesh with the same project cache loads tiles instead of building them.
+    namespace fs = std::filesystem;
+    const fs::path project = fs::temp_directory_path() / "hephaestus_navmesh_cache_test";
+    fs::remove_all(project);
+    fs::create_directories(project / ".hephaestus");
+    const auto geometry = Hephaestus::Navigation::CollectSceneGeometry(scene);
+    const auto settings = Hephaestus::Navigation::SettingsForScene(scene);
+    Hephaestus::Navigation::NavMesh firstSession;
+    firstSession.SetTileCache(project);
+    Hephaestus::Navigation::NavUpdateStats firstStats;
+    firstSession.Update(geometry, settings, error, &firstStats);
+    Hephaestus::Navigation::NavMesh secondSession;
+    secondSession.SetTileCache(project);
+    Hephaestus::Navigation::NavUpdateStats secondStats;
+    const auto loadStart = std::chrono::steady_clock::now();
+    const bool loadedOk = secondSession.Update(geometry, settings, error, &secondStats);
+    const double loadMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - loadStart).count();
+    std::cout << "[INFO] 840 m floor: next session loaded " << secondStats.tilesLoaded << " tiles in " << loadMs << " ms\n";
+    const Hephaestus::Analysis::WalkRoute cachedRoute = Hephaestus::Analysis::MeasureWalk(
+        secondSession, Hephaestus::Analysis::TraversalMetrics{}, Vec3(-300.0f, 0.0f, -10.0f), Vec3(300.0f, 0.0f, 10.0f));
+    Check(loadedOk && firstStats.tilesBuilt > 0 && secondStats.tilesBuilt == 0 &&
+              secondStats.tilesLoaded == firstStats.tilesBuilt && cachedRoute.complete &&
+              secondSession.PolygonCount() == firstSession.PolygonCount(),
+          "a later session loads every tile from the project cache and walks the same");
+    Hephaestus::Navigation::NavMesh packaged;
+    packaged.SetTileCache(project / "no-project-here");
+    Hephaestus::Navigation::NavUpdateStats packagedStats;
+    packaged.Update(geometry, settings, error, &packagedStats);
+    Check(packagedStats.tilesLoaded == 0 && !fs::exists(project / "no-project-here" / ".hephaestus"),
+          "without a .hephaestus folder (a packaged game) nothing is cached");
+    fs::remove_all(project);
 }
 
 void TestScale()
@@ -1575,6 +1637,7 @@ int main()
     TestKits();
     TestLevelChecks();
     TestJumpChecks();
+    TestPlaytestHeatmap();
     TestLargeLevel();
     TestScale();
     if (!g_pass) {

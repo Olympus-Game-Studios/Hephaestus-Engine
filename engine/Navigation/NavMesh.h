@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Assets/DerivedDataCache.h"
 #include "../Assets/MeshAsset.h"
 #include "../Core/Math.h"
 
@@ -98,6 +99,7 @@ struct NavIsland {
 // What an Update did: tiles rebuilt because their geometry changed, kept as they were, and dropped.
 struct NavUpdateStats {
     int tilesBuilt = 0;
+    int tilesLoaded = 0;  // read back from the tile cache instead of being built
     int tilesKept = 0;
     int tilesRemoved = 0;
 };
@@ -115,6 +117,9 @@ public:
     bool Update(const NavGeometry& geometry, const NavBuildSettings& settings, std::string& error,
                 NavUpdateStats* stats = nullptr);
     void Clear();
+    // Keeps built tiles in the project's derived data cache (.hephaestus/ddc/navmesh), so a later session loads
+    // unchanged tiles instead of building them. Only projects with a .hephaestus folder (not packaged games) cache.
+    void SetTileCache(const std::filesystem::path& projectRoot);
     bool IsReady() const { return m_query != nullptr; }
     int PolygonCount() const;
 
@@ -136,6 +141,7 @@ private:
     std::unordered_map<std::int64_t, std::uint64_t> m_tileHashes;
     std::uint64_t m_settingsHash = 0;
     unsigned int m_tileBits = 0;
+    DerivedDataCache m_tileCache;
 };
 
 } // namespace Hephaestus::Navigation

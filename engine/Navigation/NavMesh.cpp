@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 
@@ -418,6 +420,13 @@ NavMesh::~NavMesh()
     Clear();
 }
 
+void NavMesh::SetTileCache(const std::filesystem::path& projectRoot)
+{
+    std::error_code ec;
+    m_tileCache.SetRoot(!projectRoot.empty() && std::filesystem::is_directory(projectRoot / ".hephaestus", ec)
+                            ? projectRoot : std::filesystem::path());
+}
+
 void NavMesh::Clear()
 {
     dtFreeNavMeshQuery(m_query);
@@ -782,6 +791,8 @@ bool NavMesh::Update(const NavGeometry& geometry, const NavBuildSettings& s, std
     for (auto& [key, work] : wanted) {
         Hasher h;
         h.Add(settingsHash);
+        h.Add(work.x);
+        h.Add(work.y);
         for (size_t n : work.pieces) h.Add(pieceHashes[n]);
         const float lo[2] = {work.x * extent, work.y * extent};
         for (const NavLink& link : geometry.links) {
@@ -853,9 +864,37 @@ bool NavMesh::Update(const NavGeometry& geometry, const NavBuildSettings& s, std
         tile.bmax[1] += s.agentHeight;
         unsigned char* data = nullptr;
         int dataSize = 0;
-        if (!BuildTile(geometry, overlapping, areas, s, tile, work.x, work.y, data, dataSize, error)) {
-            Clear();
-            return false;
+        char cacheKey[64] = {};
+        bool loaded = false;
+        if (m_tileCache.HasRoot()) {
+            std::snprintf(cacheKey, sizeof(cacheKey), "navmesh/v1/%016llx.tile",
+                          static_cast<unsigned long long>(work.hash));
+            std::vector<std::uint8_t> bytes;
+            if (m_tileCache.Load(cacheKey, bytes)) {
+                const auto* header = reinterpret_cast<const dtMeshHeader*>(bytes.data());
+                if (bytes.empty()) {
+                    loaded = true;
+                } else if (bytes.size() >= sizeof(dtMeshHeader) && header->magic == DT_NAVMESH_MAGIC &&
+                           header->version == DT_NAVMESH_VERSION && header->x == work.x && header->y == work.y) {
+                    data = static_cast<unsigned char*>(dtAlloc(static_cast<int>(bytes.size()), DT_ALLOC_PERM));
+                    std::memcpy(data, bytes.data(), bytes.size());
+                    dataSize = static_cast<int>(bytes.size());
+                    loaded = true;
+                }
+            }
+        }
+        if (loaded) {
+            ++counts.tilesLoaded;
+        } else {
+            if (!BuildTile(geometry, overlapping, areas, s, tile, work.x, work.y, data, dataSize, error)) {
+                Clear();
+                return false;
+            }
+            if (cacheKey[0]) {
+                m_tileCache.Store(cacheKey, data ? std::vector<std::uint8_t>(data, data + dataSize)
+                                                 : std::vector<std::uint8_t>());
+            }
+            ++counts.tilesBuilt;
         }
         if (const dtTileRef old = m_navMesh->getTileRefAt(work.x, work.y, 0)) {
             m_navMesh->removeTile(old, nullptr, nullptr);
@@ -867,7 +906,6 @@ bool NavMesh::Update(const NavGeometry& geometry, const NavBuildSettings& s, std
             return false;
         }
         m_tileHashes[key] = work.hash;
-        ++counts.tilesBuilt;
     }
     if (stats) *stats = counts;
     if (PolygonCount() == 0) {

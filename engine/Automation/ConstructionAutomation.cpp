@@ -3,6 +3,7 @@
 #include "AutomationToolSupport.h"
 
 #include "Analysis/LevelChecks.h"
+#include "Analysis/Playtest.h"
 #include "Assets/AssetManager.h"
 #include "Construction/ConstructionSystem.h"
 #include "Scene/Entity.h"
@@ -316,6 +317,60 @@ void RegisterConstructionAutomation(AutomationService& service)
                 {"navPolygons", report.navPolygons},
                 {"islands", report.islands},
                 {"problems", std::move(problems)}});
+        }));
+
+    RegisterOrThrow(service, Definition(
+        "level.playtest_begin",
+        "Start recording a bot playtest. Then start Play, turn realtime off and step frames: game scripts that check "
+        "Playtest.isRunning() (the FPS team deathmatch) play it as an all-bot match and record kills, deaths and "
+        "positions. Finish with level.playtest_end.",
+        ObjectSchema({}, Json::array()),
+        [](ToolContext&, const Json&) -> ToolOutcome {
+            Analysis::BeginPlaytest();
+            return ToolResult::Success(Json{{"recording", true}});
+        }));
+
+    RegisterOrThrow(service, Definition(
+        "level.playtest_end",
+        "Stop recording the bot playtest and summarise it: event counts by kind and team, and the busiest heatmap "
+        "cells (x, z centres, cellSize metres) for traffic, kills and deaths.",
+        ObjectSchema({{"top", {{"type", "integer"}, {"minimum", 1}}},
+                      {"show", {{"type", "string"},
+                                {"enum", Json::array({"traffic", "kill", "death", "none"})},
+                                {"description", "draw that heatmap over the level in the editor"}}}},
+                     Json::array()),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            const size_t top = arguments.contains("top") && arguments["top"].is_number_integer()
+                ? static_cast<size_t>(arguments["top"].get<std::int64_t>()) : 5;
+            const float seconds = Analysis::PlaytestClock();
+            const std::vector<Analysis::PlaytestEvent> events = Analysis::EndPlaytest();
+            Json kinds = Json::object();
+            for (const char* kind : {"traffic", "kill", "death"}) {
+                const Analysis::Heatmap heatmap = Analysis::BuildHeatmap(events, kind, std::string(kind) == "traffic" ? 2.0f : 4.0f);
+                Json byTeam = Json::object();
+                for (const Analysis::PlaytestEvent& event : events) {
+                    if (event.kind != kind) continue;
+                    const std::string team = std::to_string(event.team);
+                    byTeam[team] = byTeam.value(team, 0) + 1;
+                }
+                Json cells = Json::array();
+                for (size_t n = 0; n < heatmap.cells.size() && n < top; ++n) {
+                    const Analysis::HeatmapCell& cell = heatmap.cells[n];
+                    cells.push_back({{"x", (cell.x + 0.5f) * heatmap.cellSize}, {"z", (cell.z + 0.5f) * heatmap.cellSize},
+                                     {"count", cell.count}});
+                }
+                kinds[kind] = {{"total", heatmap.total}, {"byTeam", std::move(byTeam)}, {"cellSize", heatmap.cellSize},
+                               {"cells", heatmap.cells.size()}, {"busiest", std::move(cells)}};
+            }
+            if (arguments.contains("show") && arguments["show"].is_string()) {
+                const std::string show = arguments["show"].get<std::string>();
+                std::vector<EditorDebugLine> lines;
+                if (show != "none") {
+                    Analysis::AppendHeatmapLines(Analysis::BuildHeatmap(events, show, show == "traffic" ? 2.0f : 4.0f), lines);
+                }
+                context.Backend().SetLevelOverlay(std::move(lines));
+            }
+            return ToolResult::Success(Json{{"seconds", seconds}, {"events", kinds}});
         }));
 
     RegisterOrThrow(service, Definition(

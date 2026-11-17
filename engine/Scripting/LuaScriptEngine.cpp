@@ -6,6 +6,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Scene/ParticleSimulation.h"
 #include "../Analysis/LevelChecks.h"
+#include "../Analysis/Playtest.h"
 #include "../Navigation/NavMesh.h"
 #include "../UI/HephaestusUI/UIContext.h"
 #include "../UI/HephaestusUI/Rendering/HUIGeometryBuilder.h"
@@ -591,6 +592,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
     m_SceneReloadRequested = false;
     m_ActiveUpdateOrder.clear();
     m_UpdatingScripts = true;
+    Hephaestus::Analysis::AdvancePlaytestClock(deltaTime);
 
     auto& registry = scene.GetRegistry();
     std::unordered_set<LuaScriptInstanceKey, LuaScriptInstanceKeyHash> activeKeys;
@@ -9289,6 +9291,27 @@ void LuaScriptEngine::RegisterNavBindings() {
     lua_pushcfunction(m_State, Lua_Nav_randomPoint);
     lua_setfield(m_State, -2, "randomPoint");
     lua_setglobal(m_State, "Nav");
+
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, [](lua_State* L) -> int {
+        lua_pushboolean(L, Hephaestus::Analysis::IsPlaytestRunning());
+        return 1;
+    });
+    lua_setfield(m_State, -2, "isRunning");
+    // Playtest.record(kind, position, team): kind is "kill", "death" or "traffic".
+    lua_pushcfunction(m_State, [](lua_State* L) -> int {
+        LuaScriptEngine* engine = GetInstance();
+        Hephaestus::Analysis::PlaytestEvent event;
+        if (!engine || !lua_isstring(L, 1) || !engine->ReadNavPoint(L, 2, event.position)) {
+            return luaL_error(L, "Playtest.record expects (kind, {x, y, z}, team)");
+        }
+        event.kind = lua_tostring(L, 1);
+        event.team = static_cast<int>(luaL_optinteger(L, 3, 0));
+        Hephaestus::Analysis::RecordPlaytestEvent(std::move(event));
+        return 0;
+    });
+    lua_setfield(m_State, -2, "record");
+    lua_setglobal(m_State, "Playtest");
 #endif
 }
 

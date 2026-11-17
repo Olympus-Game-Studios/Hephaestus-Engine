@@ -2,6 +2,7 @@
 
 #include "AssetImportService.h"
 #include "AutomationTypes.h"
+#include "Core/EditorDebugDraw.h"
 #include "Core/PlayModeManager.h"
 
 #include <cstdint>
@@ -173,6 +174,8 @@ public:
     virtual AudioEngine* Audio() noexcept { return nullptr; }
     /** Construction shapes of the active scene; evaluated on demand by construction tools. */
     virtual Hephaestus::Construction::ConstructionSystem* Construction() noexcept { return nullptr; }
+    /** Lines drawn over the level in the editor, such as a playtest heatmap; empty clears them. */
+    virtual bool SetLevelOverlay(std::vector<EditorDebugLine>) { return false; }
 
     /** Refresh editor views after an asset file operation. */
     virtual void NotifyAssetChanged() {}
