@@ -821,6 +821,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     ++m_frameSerial;
     RetireIdleEntries(m_characterBonePalettes, m_frameSerial, MAX_FRAMES_IN_FLIGHT,
                       [this](CharacterBoneGpu& gpu) { releaseCharacterBonePalette(gpu); });
+    RetireIdleEntries(m_retiredMeshes, m_frameSerial, MAX_FRAMES_IN_FLIGHT, [this](RetiredMesh& retired) {
+        m_probeGI.ForgetMesh(retired.mesh.vertexBuffer.buffer);
+        retired.mesh.Destroy(m_device->allocator);
+    });
     
     // Deferred readback fallback: if the immediate readback below didn't run
     // (e.g. submit failed), drain any pending pick on the next frame where the
@@ -1214,6 +1218,75 @@ size_t EngineFrameRenderer::AddStaticMesh(const std::string& name, const MeshDat
     return AddMesh(std::move(mesh));
 }
 
+void EngineFrameRenderer::retireMesh(MeshGPU&& mesh)
+{
+    if (!mesh.vertexBuffer.buffer && !mesh.indexBuffer.buffer) {
+        return;
+    }
+    RetiredMesh retired;
+    retired.mesh = std::move(mesh);
+    retired.lastUsedFrame = m_frameSerial;
+    m_retiredMeshes.emplace(m_nextRetiredMesh++, std::move(retired));
+    mesh = MeshGPU{};
+}
+
+size_t EngineFrameRenderer::UploadDynamicMesh(size_t handle, const std::string& name, const MeshData& data)
+{
+    if (!m_device || data.vertices.empty() || data.indices.empty()) {
+        ReleaseDynamicMesh(handle);
+        return MeshRendererComponent::InvalidMesh;
+    }
+    VmaAllocator allocator = m_device->allocator;
+    MeshGPU mesh{};
+    mesh.name = name;
+    mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
+    mesh.indexCount = static_cast<uint32_t>(data.indices.size());
+    mesh.submeshes = data.submeshes;
+    mesh.bounds = data.bounds;
+    if (m_editorOverlays) {
+        mesh.cpuPositions.reserve(data.vertices.size());
+        for (const Vertex& v : data.vertices) {
+            mesh.cpuPositions.emplace_back(v.pos[0], v.pos[1], v.pos[2]);
+        }
+        mesh.cpuIndices = data.indices;
+    }
+    const VkBufferUsageFlags rayTracingUsage = m_device->SupportsRayQuery()
+        ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+              VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+        : 0;
+    // Host-visible, written directly: no staging copy and no queue wait.
+    mesh.vertexBuffer.Create(allocator, data.vertices.size() * sizeof(Vertex),
+                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | rayTracingUsage, VMA_MEMORY_USAGE_CPU_TO_GPU,
+                             const_cast<Vertex*>(data.vertices.data()));
+    mesh.indexBuffer.Create(allocator, data.indices.size() * sizeof(uint32_t),
+                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | rayTracingUsage, VMA_MEMORY_USAGE_CPU_TO_GPU,
+                            const_cast<uint32_t*>(data.indices.data()));
+
+    if (handle < m_meshLibrary.size()) {
+        retireMesh(std::move(m_meshLibrary[handle]));
+        m_meshLibrary[handle] = std::move(mesh);
+        return handle;
+    }
+    if (!m_freeDynamicMeshSlots.empty()) {
+        const size_t slot = m_freeDynamicMeshSlots.back();
+        m_freeDynamicMeshSlots.pop_back();
+        m_meshLibrary[slot] = std::move(mesh);
+        return slot;
+    }
+    m_meshLibrary.push_back(std::move(mesh));
+    return m_meshLibrary.size() - 1;
+}
+
+void EngineFrameRenderer::ReleaseDynamicMesh(size_t handle)
+{
+    if (handle >= m_meshLibrary.size()) {
+        return;
+    }
+    retireMesh(std::move(m_meshLibrary[handle]));
+    m_meshLibrary[handle] = MeshGPU{};
+    m_freeDynamicMeshSlots.push_back(handle);
+}
+
 size_t EngineFrameRenderer::AddSkinnedMesh(const std::string& name,
                                            const std::vector<SkinnedVertex>& vertices,
                                            const std::vector<uint32_t>& indices,
@@ -1323,6 +1396,7 @@ void EngineFrameRenderer::InvalidateMesh(const std::string& sourceKey)
     }
     if (handle < m_meshLibrary.size() && m_device) {
         MeshGPU& mesh = m_meshLibrary[handle];
+        m_probeGI.ForgetMesh(mesh.vertexBuffer.buffer);
         if (mesh.boneDescriptorSet != VK_NULL_HANDLE && m_skinned.bonePool != VK_NULL_HANDLE) {
             vkFreeDescriptorSets(m_device->device, m_skinned.bonePool, 1, &mesh.boneDescriptorSet);
             mesh.boneDescriptorSet = VK_NULL_HANDLE;
@@ -3482,6 +3556,7 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, uint32_t imageI
             for (size_t handle : handles) {
                 if (handle >= m_meshLibrary.size()) continue;
                 const MeshGPU& mesh = m_meshLibrary[handle];
+                if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE) continue;
                 VkDescriptorSet boneSet = resolveSkinnedBoneSet(entity, character, mesh);
                 const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
                                      m_skinned.shadowPipeline != VK_NULL_HANDLE;
@@ -4203,6 +4278,15 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& ent
                                                                     const MeshRendererComponent& renderer,
                                                                     int slot)
 {
+    if (renderer.previewGhost) {
+        static const MaterialComponent ghost = [] {
+            MaterialComponent material(Vec3(0.45f, 0.7f, 1.0f));
+            material.blendMode = MaterialBlendMode::AlphaBlend;
+            material.opacity = 0.35f;
+            return material;
+        }();
+        return &ghost;
+    }
     if (slot < 0) slot = 0;
     // 1) Check per-slot material path assignment (from ImGUI editor)
     if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
@@ -5471,10 +5555,12 @@ void EngineFrameRenderer::cleanupSwapchainResources()
         vkDestroyPipelineLayout(m_device->device, m_debugOverlay.pipelineLayout, nullptr);
         m_debugOverlay.pipelineLayout = VK_NULL_HANDLE;
     }
-    m_debugOverlay.vertexBuffer.Destroy(m_device->allocator);
+    for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame) {
+        m_debugOverlay.vertexBuffers[frame].Destroy(m_device->allocator);
+        m_debugOverlay.vertexCapacity[frame] = 0;
+    }
     m_debugOverlay.initialized = false;
     m_debugOverlay.vertexCount = 0;
-    m_debugOverlay.vertexCapacity = 0;
 
     // Destroy swapchain-dependent HUI overlay resources (pipeline + per-image
     // buffers); textures and font atlases survive.
@@ -5641,6 +5727,11 @@ void EngineFrameRenderer::destroyAllResources()
     }
     m_meshLibrary.clear();
     m_meshLibraryLookup.clear();
+    for (auto& retired : m_retiredMeshes) {
+        retired.second.mesh.Destroy(m_device->allocator);
+    }
+    m_retiredMeshes.clear();
+    m_freeDynamicMeshSlots.clear();
     
     cleanupBillboardResources();
 
@@ -7083,25 +7174,24 @@ void EngineFrameRenderer::recordDebugOverlay(VkCommandBuffer cmd, uint32_t image
     }
 
     const uint32_t needed = static_cast<uint32_t>(vertices.size());
-    if (needed > m_debugOverlay.vertexCapacity) {
-        m_debugOverlay.vertexBuffer.Destroy(m_device->allocator);
+    // This frame's fence has been waited on, so its buffer is free to rewrite or replace.
+    VulkanBuffer& vertexBuffer = m_debugOverlay.vertexBuffers[m_currentFrame];
+    uint32_t& capacity = m_debugOverlay.vertexCapacity[m_currentFrame];
+    if (needed > capacity) {
+        vertexBuffer.Destroy(m_device->allocator);
         const uint32_t cap = std::max(needed, 256u);
-        m_debugOverlay.vertexBuffer.Create(m_device->allocator,
-                                           sizeof(GizmoVertex) * cap,
-                                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                           VMA_MEMORY_USAGE_CPU_TO_GPU);
-        m_debugOverlay.vertexCapacity = cap;
+        vertexBuffer.Create(m_device->allocator, sizeof(GizmoVertex) * cap, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                            VMA_MEMORY_USAGE_CPU_TO_GPU);
+        capacity = cap;
     }
 
     void* mapped = nullptr;
-    if (vmaMapMemory(m_device->allocator, m_debugOverlay.vertexBuffer.allocation, &mapped) !=
-        VK_SUCCESS) {
+    if (vmaMapMemory(m_device->allocator, vertexBuffer.allocation, &mapped) != VK_SUCCESS) {
         return;
     }
     std::memcpy(mapped, vertices.data(), sizeof(GizmoVertex) * vertices.size());
-    vmaFlushAllocation(m_device->allocator, m_debugOverlay.vertexBuffer.allocation, 0,
-                       VK_WHOLE_SIZE);
-    vmaUnmapMemory(m_device->allocator, m_debugOverlay.vertexBuffer.allocation);
+    vmaFlushAllocation(m_device->allocator, vertexBuffer.allocation, 0, VK_WHOLE_SIZE);
+    vmaUnmapMemory(m_device->allocator, vertexBuffer.allocation);
     m_debugOverlay.vertexCount = needed;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_debugOverlay.pipeline);
@@ -7114,7 +7204,7 @@ void EngineFrameRenderer::recordDebugOverlay(VkCommandBuffer cmd, uint32_t image
     vkCmdPushConstants(cmd, m_debugOverlay.pipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
     VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &m_debugOverlay.vertexBuffer.buffer, &offset);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.buffer, &offset);
     vkCmdDraw(cmd, m_debugOverlay.vertexCount, 1, 0, 0);
 }
 

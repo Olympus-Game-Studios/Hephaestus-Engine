@@ -38,6 +38,8 @@ namespace Hephaestus {
 namespace {
 
 constexpr const char* kCreditFile = "credits.json";
+constexpr const char* kImportFile = "import.json";
+constexpr const char* kImportSchema = "HephaestusAssetImport";
 constexpr const char* kCreditSchema = "HephaestusAssetCredit";
 
 std::string Lower(std::string value) {
@@ -1152,6 +1154,14 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         return false;
     }
 
+    {
+        // Where the pack came from, so Reimport can bring in a newer version of it.
+        const json record = {{"schema", kImportSchema},
+                             {"source", fs::absolute(request.source).lexically_normal().generic_string()}};
+        std::ofstream out(folder / kImportFile, std::ios::trunc);
+        out << record.dump(2) << '\n';
+    }
+
     const AssetCredit& credit = request.credit;
     if (!credit.title.empty() || !credit.author.empty() || !credit.license.empty()) {
         const json record = {
@@ -1168,6 +1178,197 @@ bool AssetIntake::Import(const AssetIntakeRequest& request, AssetIntakeResult& o
         }
     }
     return true;
+}
+
+fs::path AssetIntake::RecordedSource(const fs::path& projectRoot, const std::string& folder) {
+    try {
+        std::ifstream in(projectRoot / fs::path(folder) / kImportFile);
+        if (!in) {
+            return {};
+        }
+        const json record = json::parse(in);
+        if (record.value("schema", "") != kImportSchema) {
+            return {};
+        }
+        return fs::path(record.value("source", ""));
+    } catch (const std::exception&) {
+        return {};
+    }
+}
+
+namespace {
+
+// The new prefab, keeping the old one's guid and the ids of nodes with the same names (in order, for repeated
+// names), so overrides and links keyed by node id still apply.
+PrefabAsset KeepNodeIds(const PrefabAsset& updated, const PrefabAsset& existing) {
+    PrefabAsset out = updated;
+    out.guid = existing.guid.empty() ? updated.guid : existing.guid;
+    std::map<std::string, std::vector<std::string>> idsByName;
+    std::set<std::string> oldIds;
+    for (const PrefabNode& node : existing.nodes) {
+        idsByName[node.name].push_back(node.id);
+        oldIds.insert(node.id);
+    }
+    std::map<std::string, size_t> nextOfName;
+    std::map<std::string, std::string> remap;
+    std::set<std::string> used;
+    for (const PrefabNode& node : updated.nodes) {
+        auto ids = idsByName.find(node.name);
+        size_t& next = nextOfName[node.name];
+        if (ids != idsByName.end() && next < ids->second.size()) {
+            remap[node.id] = ids->second[next++];
+            used.insert(remap[node.id]);
+        }
+    }
+    for (const PrefabNode& node : updated.nodes) {
+        if (remap.count(node.id)) {
+            continue;
+        }
+        // A new node must not take an old node's id, or that node's overrides would land on it.
+        std::string id = node.id;
+        while (oldIds.count(id) || used.count(id)) {
+            id = PrefabOverrideSystem::GenerateId();
+        }
+        remap[node.id] = id;
+        used.insert(id);
+    }
+    for (PrefabNode& node : out.nodes) {
+        node.id = remap[node.id];
+        if (!node.parentId.empty() && remap.count(node.parentId)) {
+            node.parentId = remap[node.parentId];
+        }
+    }
+    if (remap.count(out.rootNodeId)) {
+        out.rootNodeId = remap[out.rootNodeId];
+    }
+    return out;
+}
+
+void ReplaceAll(std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) {
+        return;
+    }
+    for (size_t at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size())) {
+        text.replace(at, from.size(), to);
+    }
+}
+
+} // namespace
+
+bool AssetIntake::Reimport(const fs::path& projectRoot, const std::string& folder, const fs::path& source,
+                           AssetIntakeResult& outResult, std::string& outError) {
+    outResult = AssetIntakeResult{};
+    std::error_code ec;
+    const fs::path target = projectRoot / fs::path(folder);
+    if (folder.empty() || !fs::is_directory(target, ec) || !IsUnderFolder(projectRoot / "assets", target)) {
+        outError = "Reimport needs an imported pack folder inside the project's assets folder.";
+        return false;
+    }
+    const fs::path from = source.empty() ? RecordedSource(projectRoot, folder) : source;
+    if (from.empty() || !fs::exists(from, ec)) {
+        outError = from.empty() ? "This folder does not record where it was imported from; choose the file to reimport."
+                                : "The pack's source is gone: " + from.string() + ". Choose the file to reimport.";
+        return false;
+    }
+
+    // Import the new version beside the pack, then move it over the pack.
+    AssetIntakeRequest request;
+    request.source = from;
+    request.projectRoot = projectRoot;
+    request.targetFolder = (fs::path(folder).parent_path() / (fs::path(folder).filename().string() + "_reimport"))
+                               .generic_string();
+    try {
+        std::ifstream in(target / kCreditFile);
+        if (in) {
+            const json credit = json::parse(in);
+            request.credit = {credit.value("title", ""),     credit.value("source", ""), credit.value("sourceUrl", ""),
+                              credit.value("author", ""),    credit.value("authorUrl", ""),
+                              credit.value("license", ""),   credit.value("licenseUrl", "")};
+        }
+    } catch (const std::exception&) {
+    }
+    AssetIntakeResult fresh;
+    if (!Import(request, fresh, outError)) {
+        return false;
+    }
+    const fs::path staged = projectRoot / fs::path(fresh.folder);
+    const std::string stagedKey = fresh.folder;
+    const std::string targetKey = AssetPathPolicy::ToPortableKey(projectRoot, target.generic_string());
+    const std::string stagedAbsolute = staged.generic_string();
+    const std::string targetAbsolute = target.generic_string();
+    auto retarget = [&](std::string text) {
+        ReplaceAll(text, stagedAbsolute, targetAbsolute);
+        ReplaceAll(text, stagedKey, targetKey);
+        return text;
+    };
+    auto isText = [](const fs::path& file) {
+        const std::string ext = Ext(file);
+        return ext == ".hpprefab" || ext == ".hematerial" || ext == ".hpmesh" || ext == ".json" || ext == ".lua";
+    };
+    bool ok = true;
+    for (auto it = fs::recursive_directory_iterator(staged, ec); !ec && it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        if (!it->is_regular_file(ec)) {
+            continue;
+        }
+        const fs::path relative = it->path().lexically_relative(staged);
+        const fs::path destination = target / relative;
+        fs::create_directories(destination.parent_path(), ec);
+        if (Ext(it->path()) == ".hpprefab" && fs::exists(destination, ec)) {
+            PrefabAsset updated;
+            PrefabAsset existing;
+            std::string error;
+            if (!PrefabSerializer::DeserializeFromString(updated, retarget([&] {
+                    std::ifstream in(it->path(), std::ios::binary);
+                    return std::string(std::istreambuf_iterator<char>(in), {});
+                }()), error) ||
+                !PrefabSerializer::Deserialize(existing, destination, error) ||
+                !PrefabSerializer::Serialize(KeepNodeIds(updated, existing), destination, error)) {
+                outResult.warnings.push_back(relative.generic_string() + ": " + error);
+                ok = false;
+            }
+            continue;
+        }
+        if (isText(it->path())) {
+            std::ifstream in(it->path(), std::ios::binary);
+            const std::string text = retarget(std::string(std::istreambuf_iterator<char>(in), {}));
+            std::ofstream out(destination, std::ios::binary | std::ios::trunc);
+            out << text;
+            if (!out) {
+                outResult.warnings.push_back("Could not write " + destination.string());
+                ok = false;
+            }
+            continue;
+        }
+        fs::copy_file(it->path(), destination, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            outResult.warnings.push_back("Could not replace " + destination.string() + ": " + ec.message());
+            ok = false;
+            ec.clear();
+        }
+    }
+    fs::remove_all(staged, ec);
+
+    auto moved = [&](std::vector<std::string> keys) {
+        for (std::string& key : keys) {
+            ReplaceAll(key, stagedKey, targetKey);
+        }
+        return keys;
+    };
+    outResult.folder = targetKey;
+    outResult.prefabs = moved(fresh.prefabs);
+    outResult.models = moved(fresh.models);
+    outResult.materials = moved(fresh.materials);
+    outResult.otherFiles = moved(fresh.otherFiles);
+    outResult.warnings.insert(outResult.warnings.begin(), fresh.warnings.begin(), fresh.warnings.end());
+    std::string creditError;
+    if (!RegenerateCredits(projectRoot, creditError) && !creditError.empty()) {
+        outResult.warnings.push_back(creditError);
+    }
+    if (!ok) {
+        outError = "Some files could not be updated: " + outResult.warnings.back();
+    }
+    return ok;
 }
 
 bool AssetIntake::RegenerateCredits(const fs::path& projectRoot, std::string& outError) {

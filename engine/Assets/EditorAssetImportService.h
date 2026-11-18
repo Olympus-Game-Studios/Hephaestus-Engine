@@ -30,6 +30,12 @@ public:
     {
         return Hephaestus::AssetIntake::Import(request, outResult, outError);
     }
+    bool ReimportPack(const std::filesystem::path& projectRoot, const std::string& folder,
+                      const std::filesystem::path& source, Hephaestus::AssetIntakeResult& outResult,
+                      std::string& outError) override
+    {
+        return Hephaestus::AssetIntake::Reimport(projectRoot, folder, source, outResult, outError);
+    }
 
 private:
     static std::string NormalizeKey(const std::string& path);

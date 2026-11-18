@@ -303,6 +303,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/PluginToolBridge.cpp
     engine/Automation/UIAutomation.cpp
     engine/Automation/PhysicsAutomation.cpp
+    engine/Automation/ConstructionAutomation.cpp
     engine/Automation/ViewportAutomation.cpp
     engine/Automation/BuildAutomation.cpp
     engine/Automation/TestAutomation.cpp
@@ -356,6 +357,7 @@ add_library(HephaestusRuntime STATIC
     engine/Audio/MiniaudioImplementation.c
     engine/Assets/GltfDocument.cpp
     engine/Assets/ModelImporter.cpp
+    engine/Assets/MeshGeometryCache.cpp
     engine/Assets/FbxDocument.cpp
     engine/Assets/FbxStaticImporter.cpp
     engine/Assets/FbxSkeletalImporter.cpp
@@ -409,6 +411,14 @@ add_library(HephaestusRuntime STATIC
     engine/Scene/PrefabComponentIO.cpp
     engine/Scene/ParticleSimulation.cpp
     engine/Navigation/NavMesh.cpp
+    engine/Assets/DerivedDataCache.cpp
+    engine/Analysis/LevelChecks.cpp
+    engine/Analysis/Playtest.cpp
+    engine/Construction/ConstructionShape.cpp
+    engine/Construction/ConstructionGeometry.cpp
+    engine/Construction/ConstructionKit.cpp
+    engine/Construction/ConstructionBuilding.cpp
+    engine/Construction/ConstructionSystem.cpp
     engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scripting/ScriptBase.cpp
@@ -477,12 +487,12 @@ endif()
 # Qt-free editor services and documents. Editor-only, but never Qt: Qt code
 # lives in engine/UI/QtEditor and is compiled into HephaestusEngine.
 add_library(HephaestusEditorCore STATIC
+    engine/Construction/ConstructionTool.cpp
     engine/Core/EditorContext.cpp
     engine/Core/EditorCameraController.cpp
     engine/Core/PlayModeManager.cpp
     engine/Assets/OpenDocumentRegistry.cpp
     engine/Assets/AssetOperationService.cpp
-    engine/Assets/DerivedDataCache.cpp
     engine/Assets/AssetThumbnailRenderer.cpp
     engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/EditorAssetImportService.cpp
@@ -696,6 +706,12 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/EditorAssetActions.h
             engine/UI/QtEditor/TextureViewerDialog.cpp
             engine/UI/QtEditor/TextureViewerDialog.h
+            engine/UI/QtEditor/KitEditorDialog.cpp
+            engine/UI/QtEditor/KitEditorDialog.h
+            engine/UI/QtEditor/LevelCheckDialog.cpp
+            engine/UI/QtEditor/LevelCheckDialog.h
+            engine/UI/QtEditor/PlaytestDialog.cpp
+            engine/UI/QtEditor/PlaytestDialog.h
             engine/UI/QtEditor/HUIVisualEditorDialog.cpp
             engine/UI/QtEditor/HUIVisualEditorDialog.h
             engine/UI/QtEditor/MaterialGraphQtEditorDialog.cpp
@@ -733,6 +749,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/CharacterControllerInspector.h
             engine/UI/QtEditor/ProbeVolumeInspector.cpp
             engine/UI/QtEditor/ProbeVolumeInspector.h
+            engine/UI/QtEditor/ConstructionShapeInspector.cpp
+            engine/UI/QtEditor/ConstructionShapeInspector.h
             engine/UI/QtEditor/CharacterImportDialog.cpp
             engine/UI/QtEditor/CharacterImportDialog.h
             engine/UI/QtEditor/PhysicsInspectors.cpp
@@ -816,6 +834,7 @@ if(HEPHAESTUS_USE_QT)
 
         add_library(HephaestusFPS SHARED
             Plugins/HephaestusFPS/Source/HephaestusFPSEditor.cpp
+            Plugins/HephaestusFPS/Source/FPSLevelChecks.h
         )
         target_include_directories(HephaestusFPS PRIVATE engine extern)
         target_link_libraries(HephaestusFPS PRIVATE Qt6::Widgets)
@@ -1728,6 +1747,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND NavMeshTests
     )
 
+    add_executable(ConstructionTests
+        engine/Tests/ConstructionTests.cpp
+    )
+    target_link_libraries(ConstructionTests PRIVATE HephaestusEditorCore)
+    target_include_directories(ConstructionTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME Construction
+        COMMAND ConstructionTests
+    )
+
     add_executable(ParticleSimulationTests
         engine/Tests/ParticleSimulationTests.cpp
     )
@@ -2602,6 +2635,14 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     )
     add_test(NAME FPSInputMerge COMMAND FPSInputMergeTests)
 
+    add_executable(FPSLevelChecksTests engine/Tests/FPSLevelChecksTests.cpp)
+    target_include_directories(FPSLevelChecksTests PRIVATE
+        engine
+        extern
+        Plugins/HephaestusFPS/Source
+    )
+    add_test(NAME FPSLevelChecks COMMAND FPSLevelChecksTests)
+
     add_executable(FPSPluginLayoutTests engine/Tests/FPSPluginLayoutTests.cpp)
     target_link_libraries(FPSPluginLayoutTests PRIVATE HephaestusPluginCore)
     target_include_directories(FPSPluginLayoutTests PRIVATE engine extern)
@@ -2651,6 +2692,8 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
     if(Qt6Test_FOUND)
         add_executable(EditorQtSmokeTests
             engine/Tests/EditorQtSmokeTests.cpp
+            engine/UI/QtEditor/KitEditorDialog.cpp
+            engine/UI/QtEditor/KitEditorDialog.h
             engine/UI/QtEditor/PropertyEditors.cpp
             engine/UI/QtEditor/PropertyEditors.h
             engine/UI/QtEditor/EditorCommandSearch.cpp

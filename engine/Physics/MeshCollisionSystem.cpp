@@ -1,7 +1,7 @@
 #include "MeshCollisionSystem.h"
 
 #include "../Assets/MeshAsset.h"
-#include "../Assets/ModelImporter.h"
+#include "../Assets/MeshGeometryCache.h"
 #include "../Scene/Components.h"
 
 #include <algorithm>
@@ -9,187 +9,15 @@
 #include <filesystem>
 #include <iostream>
 #include <unordered_map>
+#include <memory>
 #include <vector>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#undef min
-#undef max
-#endif
-
 namespace {
-
-struct MeshCacheEntry {
-    MeshData mesh;
-    std::filesystem::file_time_type lastWrite{};
-};
-
-std::unordered_map<std::string, MeshCacheEntry> g_MeshCache;
-
-std::filesystem::path ResolveMeshAssetPath(const std::string& assetPath)
-{
-    namespace fs = std::filesystem;
-
-    if (assetPath.empty()) {
-        return {};
-    }
-
-    if (assetPath.rfind("builtin://", 0) == 0) {
-        return {};
-    }
-
-    fs::path path(assetPath);
-    std::error_code ec;
-
-    if (path.is_absolute() && fs::exists(path, ec)) {
-        return path.lexically_normal();
-    }
-
-    auto tryRoots = [&](const fs::path& root) -> fs::path {
-        if (root.empty()) {
-            return {};
-        }
-        fs::path candidate = (root / path).lexically_normal();
-        if (fs::exists(candidate, ec)) {
-            return candidate;
-        }
-        candidate = (root / "assets" / path).lexically_normal();
-        if (fs::exists(candidate, ec)) {
-            return candidate;
-        }
-        return {};
-    };
-
-    auto tryWalkUp = [&](fs::path start) -> fs::path {
-        fs::path cur = start;
-        for (int depth = 0; depth < 10 && !cur.empty(); ++depth) {
-            fs::path resolved = tryRoots(cur);
-            if (!resolved.empty()) {
-                return resolved;
-            }
-            if (!cur.has_parent_path()) {
-                break;
-            }
-            cur = cur.parent_path();
-        }
-        return {};
-    };
-
-    {
-        fs::path resolved = tryWalkUp(fs::current_path());
-        if (!resolved.empty()) {
-            return resolved;
-        }
-    }
-
-    fs::path exeDir;
-#ifdef _WIN32
-    std::wstring buffer(512, L'\0');
-    while (true) {
-        DWORD result = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (result == 0) {
-            break;
-        }
-        if (result < buffer.size() - 1) {
-            buffer.resize(result);
-            exeDir = fs::path(buffer).parent_path();
-            break;
-        }
-        buffer.resize(buffer.size() * 2);
-    }
-#endif
-
-    if (!exeDir.empty()) {
-        fs::path resolved = tryWalkUp(exeDir);
-        if (!resolved.empty()) {
-            return resolved;
-        }
-    }
-
-    auto findProjectsRoot = [&](fs::path start) -> fs::path {
-        fs::path cur = start;
-        for (int depth = 0; depth < 10 && !cur.empty(); ++depth) {
-            fs::path projects = (cur / "projects").lexically_normal();
-            if (fs::exists(projects, ec) && fs::is_directory(projects, ec)) {
-                return projects;
-            }
-            if (!cur.has_parent_path()) {
-                break;
-            }
-            cur = cur.parent_path();
-        }
-        return {};
-    };
-
-    fs::path projectsRoot = findProjectsRoot(fs::current_path());
-    if (projectsRoot.empty() && !exeDir.empty()) {
-        projectsRoot = findProjectsRoot(exeDir);
-    }
-
-    if (!projectsRoot.empty()) {
-        for (const auto& entry : fs::directory_iterator(projectsRoot, ec)) {
-            if (ec) {
-                break;
-            }
-            if (!entry.is_directory(ec)) {
-                continue;
-            }
-            fs::path resolved = tryRoots(entry.path());
-            if (!resolved.empty()) {
-                return resolved;
-            }
-        }
-    }
-
-    return {};
-}
 
 bool AabbOverlap(const AABB& a, const AABB& b) {
     return (a.min.x <= b.max.x && a.max.x >= b.min.x) &&
            (a.min.y <= b.max.y && a.max.y >= b.min.y) &&
            (a.min.z <= b.max.z && a.max.z >= b.min.z);
-}
-
-const MeshData* GetMeshDataForRenderer(const MeshRendererComponent& renderer) {
-    if (renderer.meshAssetPath.empty()) {
-        return nullptr;
-    }
-
-    std::filesystem::path meshPath = ResolveMeshAssetPath(renderer.meshAssetPath);
-    if (meshPath.empty()) {
-        return nullptr;
-    }
-    std::error_code ec;
-    if (!std::filesystem::exists(meshPath, ec)) {
-        return nullptr;
-    }
-
-    const std::string key = meshPath.lexically_normal().generic_string();
-    auto lastWrite = std::filesystem::last_write_time(meshPath, ec);
-    if (ec) {
-        lastWrite = std::filesystem::file_time_type::min();
-    }
-
-    auto it = g_MeshCache.find(key);
-    if (it != g_MeshCache.end() && it->second.lastWrite == lastWrite) {
-        return &it->second.mesh;
-    }
-
-    MeshData mesh;
-    std::string error;
-    if (!ModelImporter::LoadModel(meshPath, mesh, error)) {
-        std::cerr << "Failed to load mesh for complex collision: " << error << "\n";
-        return nullptr;
-    }
-
-    MeshCacheEntry entry;
-    entry.mesh = std::move(mesh);
-    entry.lastWrite = lastWrite;
-    auto result = g_MeshCache.emplace(key, std::move(entry));
-    return &result.first->second.mesh;
 }
 
 void BuildTriangleBounds(const MeshData& mesh, const Mat4& worldMatrix, std::vector<AABB>& outBounds) {
@@ -290,7 +118,7 @@ void MeshCollisionSystem::Update(Scene& scene, float /*deltaTime*/)
         Vec3 center;
         Vec3 halfExtent;
         bool useComplex = false;
-        const MeshData* meshData = nullptr;
+        std::shared_ptr<const MeshData> meshData;
         std::vector<AABB> triBounds;
     };
 
@@ -321,7 +149,8 @@ void MeshCollisionSystem::Update(Scene& scene, float /*deltaTime*/)
         entry.halfExtent = worldBounds.HalfSize();
         entry.useComplex = collider.useComplexCollision;
         if (entry.useComplex) {
-            entry.meshData = GetMeshDataForRenderer(renderer);
+            entry.meshData = renderer.meshAssetPath.empty() ? nullptr
+                : Hephaestus::MeshGeometryCache::Get(renderer.meshAssetPath);
             if (!entry.meshData) {
                 entry.useComplex = false;
             }

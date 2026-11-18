@@ -1,0 +1,955 @@
+#include "ConstructionShape.h"
+
+#include "../Scene/Json.h"
+
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+
+namespace Hephaestus::Construction {
+
+namespace {
+
+constexpr float kMinSize = 0.01f;
+
+std::string Escape(const std::string& value)
+{
+    std::string out;
+    out.reserve(value.size());
+    for (char c : value) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                std::ostringstream hex;
+                hex << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
+                out += hex.str();
+            } else {
+                out += c;
+            }
+        }
+    }
+    return out;
+}
+
+std::string Number(float value)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << std::setprecision(9) << value;
+    return oss.str();
+}
+
+void ReadFloat(const JsonValue& object, const char* key, float& out)
+{
+    if (const JsonValue* value = object.Find(key); value && value->IsNumber() && std::isfinite(value->AsNumber())) {
+        out = static_cast<float>(value->AsNumber());
+    }
+}
+
+void ReadBool(const JsonValue& object, const char* key, bool& out)
+{
+    if (const JsonValue* value = object.Find(key); value && value->IsBool()) {
+        out = value->AsBool();
+    }
+}
+
+} // namespace
+
+const char* SourceKindName(SourceKind kind)
+{
+    switch (kind) {
+    case SourceKind::Recipe: return "recipe";
+    case SourceKind::Asset: return "asset";
+    case SourceKind::EditableMesh: return "editableMesh";
+    }
+    return "recipe";
+}
+
+const char* RecipeName(Recipe recipe)
+{
+    switch (recipe) {
+    case Recipe::Opening: return "opening";
+    case Recipe::Stairs: return "stairs";
+    case Recipe::Plane: return "plane";
+    case Recipe::Cylinder: return "cylinder";
+    case Recipe::Sphere: return "sphere";
+    case Recipe::Wall: return "wall";
+    case Recipe::Ramp: return "ramp";
+    case Recipe::Balcony: return "balcony";
+    case Recipe::Box: break;
+    }
+    return "box";
+}
+
+const char* WallSideName(WallSide side)
+{
+    switch (side) {
+    case WallSide::PosX: return "+x";
+    case WallSide::NegX: return "-x";
+    case WallSide::PosZ: return "+z";
+    case WallSide::NegZ: return "-z";
+    }
+    return "+z";
+}
+
+const char* OperationName(Operation operation)
+{
+    return operation == Operation::Subtract ? "subtract" : "add";
+}
+
+const char* CollisionModeName(CollisionMode mode)
+{
+    return mode == CollisionMode::None ? "none" : "solid";
+}
+
+bool ParseRecipe(const std::string& name, Recipe& out)
+{
+    if (name == "box") {
+        out = Recipe::Box;
+        return true;
+    }
+    if (name == "opening") {
+        out = Recipe::Opening;
+        return true;
+    }
+    for (Recipe recipe : {Recipe::Stairs, Recipe::Plane, Recipe::Cylinder, Recipe::Sphere, Recipe::Wall, Recipe::Ramp,
+                          Recipe::Balcony}) {
+        if (name == RecipeName(recipe)) {
+            out = recipe;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SameFace(const FaceTag& a, const FaceTag& b)
+{
+    return a.group == b.group && a.wall == b.wall && a.segment == b.segment;
+}
+
+bool HasTextureAlignment(const FaceMaterial& face)
+{
+    return face.offsetU != 0.0f || face.offsetV != 0.0f || face.scaleU != 1.0f || face.scaleV != 1.0f ||
+           face.rotation != 0.0f || face.fit;
+}
+
+const char* FaceGroupName(FaceGroup group)
+{
+    switch (group) {
+    case FaceGroup::Top: return "top";
+    case FaceGroup::Bottom: return "bottom";
+    case FaceGroup::PosX: return "+x";
+    case FaceGroup::NegX: return "-x";
+    case FaceGroup::PosZ: return "+z";
+    case FaceGroup::NegZ: return "-z";
+    case FaceGroup::Inner: return "inner";
+    case FaceGroup::Reveal: return "reveal";
+    case FaceGroup::Floor: return "floor";
+    case FaceGroup::Ceiling: return "ceiling";
+    }
+    return "reveal";
+}
+
+bool ParseFaceGroup(const std::string& name, FaceGroup& out)
+{
+    for (FaceGroup group : {FaceGroup::Top, FaceGroup::Bottom, FaceGroup::PosX, FaceGroup::NegX, FaceGroup::PosZ,
+                            FaceGroup::NegZ, FaceGroup::Inner, FaceGroup::Reveal, FaceGroup::Floor,
+                            FaceGroup::Ceiling}) {
+        if (name == FaceGroupName(group)) {
+            out = group;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string DescribeFace(const FaceTag& face)
+{
+    std::string text;
+    switch (face.group) {
+    case FaceGroup::Top: text = "Top"; break;
+    case FaceGroup::Bottom: text = "Bottom"; break;
+    case FaceGroup::PosX: text = "+X side"; break;
+    case FaceGroup::NegX: text = "-X side"; break;
+    case FaceGroup::PosZ: text = "+Z side"; break;
+    case FaceGroup::NegZ: text = "-Z side"; break;
+    case FaceGroup::Inner: text = "Inside wall"; break;
+    case FaceGroup::Reveal: text = "Edges and openings"; break;
+    case FaceGroup::Floor: text = "Floor"; break;
+    case FaceGroup::Ceiling: text = "Ceiling"; break;
+    }
+    if (face.group == FaceGroup::Inner && face.wall >= 0) {
+        text += std::string(" (") + WallSideName(static_cast<WallSide>(face.wall)) + ")";
+    }
+    if (face.segment >= 0) {
+        text += " of wall " + std::to_string(face.segment + 1);
+    }
+    return text;
+}
+
+const char* StairTurnName(StairTurn turn)
+{
+    switch (turn) {
+    case StairTurn::Left: return "left";
+    case StairTurn::Right: return "right";
+    case StairTurn::UTurnLeft: return "uturn-left";
+    case StairTurn::UTurnRight: return "uturn-right";
+    case StairTurn::Straight: break;
+    }
+    return "straight";
+}
+
+bool ParseStairTurn(const std::string& name, StairTurn& out)
+{
+    for (StairTurn turn : {StairTurn::Straight, StairTurn::Left, StairTurn::Right, StairTurn::UTurnLeft,
+                           StairTurn::UTurnRight}) {
+        if (name == StairTurnName(turn)) {
+            out = turn;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ParseWallSide(const std::string& name, WallSide& out)
+{
+    for (WallSide side : {WallSide::PosX, WallSide::NegX, WallSide::PosZ, WallSide::NegZ}) {
+        if (name == WallSideName(side)) {
+            out = side;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::string& indent)
+{
+    const std::string in = indent + "  ";
+    const std::string in2 = in + "  ";
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << indent << "\"ConstructionShape\": {\n";
+    oss << in << "\"source\": \"" << SourceKindName(shape.source) << "\",\n";
+    oss << in << "\"recipe\": \"" << RecipeName(shape.recipe) << "\",\n";
+    oss << in << "\"role\": \"" << Escape(shape.role) << "\",\n";
+    oss << in << "\"collision\": \"" << CollisionModeName(shape.collision) << "\",\n";
+    oss << in << "\"operation\": \"" << OperationName(shape.operation) << "\",\n";
+    oss << in << "\"version\": " << shape.evaluatorVersion << ",\n";
+    oss << in << "\"params\": {\n";
+    if (shape.recipe == Recipe::Box) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"width\": " << Number(b.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"depth\": " << Number(b.depth) << ",\n";
+        oss << in2 << "\"hollow\": " << (b.hollow ? "true" : "false") << ",\n";
+        oss << in2 << "\"wallThickness\": " << Number(b.wallThickness) << ",\n";
+        oss << in2 << "\"floor\": " << (b.floor ? "true" : "false") << ",\n";
+        oss << in2 << "\"ceiling\": " << (b.ceiling ? "true" : "false") << "\n";
+    } else if (shape.recipe == Recipe::Balcony) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"width\": " << Number(b.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"depth\": " << Number(b.depth) << ",\n";
+        oss << in2 << "\"wallThickness\": " << Number(b.wallThickness) << "\n";
+    } else if (shape.recipe == Recipe::Ramp) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"width\": " << Number(b.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"depth\": " << Number(b.depth) << "\n";
+    } else if (shape.recipe == Recipe::Plane || shape.recipe == Recipe::Cylinder || shape.recipe == Recipe::Sphere) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"width\": " << Number(b.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"depth\": " << Number(b.depth) << ",\n";
+        oss << in2 << "\"segments\": " << shape.segments << "\n";
+    } else if (shape.recipe == Recipe::Wall) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"thickness\": " << Number(b.wallThickness) << ",\n";
+        oss << in2 << "\"floor\": " << (b.floor ? "true" : "false") << ",\n";
+        oss << in2 << "\"closed\": " << (shape.wall.closed ? "true" : "false") << ",\n";
+        oss << in2 << "\"points\": [";
+        for (size_t n = 0; n < shape.wall.points.size(); ++n) {
+            oss << (n ? ", " : "") << "[" << Number(shape.wall.points[n].x) << ", " << Number(shape.wall.points[n].z) << "]";
+        }
+        oss << "]\n";
+    } else if (shape.recipe == Recipe::Stairs) {
+        const BoxParams& b = shape.box;
+        oss << in2 << "\"width\": " << Number(b.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(b.height) << ",\n";
+        oss << in2 << "\"depth\": " << Number(b.depth) << ",\n";
+        oss << in2 << "\"steps\": " << shape.stairs.steps << ",\n";
+        oss << in2 << "\"maxRise\": " << Number(shape.stairs.maxRise) << ",\n";
+        oss << in2 << "\"turn\": \"" << StairTurnName(shape.stairs.turn) << "\",\n";
+        oss << in2 << "\"flightWidth\": " << Number(shape.stairs.flightWidth) << "\n";
+    } else {
+        const OpeningParams& o = shape.opening;
+        oss << in2 << "\"side\": \"" << WallSideName(o.side) << "\",\n";
+        oss << in2 << "\"offset\": " << Number(o.offset) << ",\n";
+        oss << in2 << "\"sill\": " << Number(o.sill) << ",\n";
+        oss << in2 << "\"width\": " << Number(o.width) << ",\n";
+        oss << in2 << "\"height\": " << Number(o.height) << ",\n";
+        oss << in2 << "\"segment\": " << o.segment << "\n";
+    }
+    oss << in << "}";
+    if (!shape.kit.empty()) {
+        oss << ",\n" << in << "\"kit\": \"" << Escape(shape.kit) << "\"";
+    }
+    if (shape.source == SourceKind::EditableMesh) {
+        oss << ",\n" << in << "\"mesh\": {\"vertices\": [";
+        for (size_t n = 0; n < shape.mesh.vertices.size(); ++n) {
+            const Vec3& p = shape.mesh.vertices[n];
+            oss << (n ? ", " : "") << "[" << Number(p.x) << ", " << Number(p.y) << ", " << Number(p.z) << "]";
+        }
+        oss << "], \"faces\": [";
+        for (size_t n = 0; n < shape.mesh.faces.size(); ++n) {
+            oss << (n ? ", " : "") << "[";
+            for (size_t k = 0; k < shape.mesh.faces[n].size(); ++k) oss << (k ? ", " : "") << shape.mesh.faces[n][k];
+            oss << "]";
+        }
+        oss << "]}";
+    }
+    if (!shape.kitSwaps.empty()) {
+        oss << ",\n" << in << "\"kitSwaps\": [";
+        for (size_t n = 0; n < shape.kitSwaps.size(); ++n) {
+            oss << (n ? ", " : "") << "{\"slot\": \"" << Escape(shape.kitSwaps[n].slot) << "\", \"prefab\": \""
+                << Escape(shape.kitSwaps[n].prefab) << "\"}";
+        }
+        oss << "]";
+    }
+    if (!shape.faceMaterials.empty()) {
+        oss << ",\n" << in << "\"faces\": [";
+        for (size_t n = 0; n < shape.faceMaterials.size(); ++n) {
+            const FaceMaterial& face = shape.faceMaterials[n];
+            oss << (n ? ", " : "") << "{\"group\": \"" << FaceGroupName(face.face.group) << "\"";
+            if (face.face.wall >= 0) {
+                oss << ", \"wall\": \"" << WallSideName(static_cast<WallSide>(face.face.wall)) << "\"";
+            }
+            if (face.face.segment >= 0) {
+                oss << ", \"segment\": " << face.face.segment;
+            }
+            oss << ", \"material\": \"" << Escape(face.material) << "\"";
+            if (HasTextureAlignment(face)) {
+                oss << ", \"offset\": [" << Number(face.offsetU) << ", " << Number(face.offsetV) << "], \"scale\": ["
+                    << Number(face.scaleU) << ", " << Number(face.scaleV) << "], \"rotation\": " << Number(face.rotation)
+                    << ", \"fit\": " << (face.fit ? "true" : "false");
+            }
+            oss << "}";
+        }
+        oss << "]";
+    }
+    oss << "\n" << indent << "}";
+    return oss.str();
+}
+
+JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
+{
+    auto text = [](const std::string& value) {
+        JsonValue v;
+        v.type = JsonValue::Type::String;
+        v.stringValue = value;
+        return v;
+    };
+    auto number = [](double value) {
+        JsonValue v;
+        v.type = JsonValue::Type::Number;
+        v.numberValue = value;
+        return v;
+    };
+    auto boolean = [](bool value) {
+        JsonValue v;
+        v.type = JsonValue::Type::Bool;
+        v.boolValue = value;
+        return v;
+    };
+    JsonValue params;
+    params.type = JsonValue::Type::Object;
+    if (shape.recipe == Recipe::Box) {
+        const BoxParams& b = shape.box;
+        params.objectValue["width"] = number(b.width);
+        params.objectValue["height"] = number(b.height);
+        params.objectValue["depth"] = number(b.depth);
+        params.objectValue["hollow"] = boolean(b.hollow);
+        params.objectValue["wallThickness"] = number(b.wallThickness);
+        params.objectValue["floor"] = boolean(b.floor);
+        params.objectValue["ceiling"] = boolean(b.ceiling);
+    } else if (shape.recipe == Recipe::Balcony) {
+        params.objectValue["width"] = number(shape.box.width);
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["depth"] = number(shape.box.depth);
+        params.objectValue["wallThickness"] = number(shape.box.wallThickness);
+    } else if (shape.recipe == Recipe::Ramp) {
+        params.objectValue["width"] = number(shape.box.width);
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["depth"] = number(shape.box.depth);
+    } else if (shape.recipe == Recipe::Plane || shape.recipe == Recipe::Cylinder || shape.recipe == Recipe::Sphere) {
+        params.objectValue["width"] = number(shape.box.width);
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["depth"] = number(shape.box.depth);
+        params.objectValue["segments"] = number(shape.segments);
+    } else if (shape.recipe == Recipe::Wall) {
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["thickness"] = number(shape.box.wallThickness);
+        params.objectValue["floor"] = boolean(shape.box.floor);
+        params.objectValue["closed"] = boolean(shape.wall.closed);
+        JsonValue points;
+        points.type = JsonValue::Type::Array;
+        for (const WallPoint& point : shape.wall.points) {
+            JsonValue pair;
+            pair.type = JsonValue::Type::Array;
+            pair.arrayValue = {number(point.x), number(point.z)};
+            points.arrayValue.push_back(std::move(pair));
+        }
+        params.objectValue["points"] = std::move(points);
+    } else if (shape.recipe == Recipe::Stairs) {
+        params.objectValue["width"] = number(shape.box.width);
+        params.objectValue["height"] = number(shape.box.height);
+        params.objectValue["depth"] = number(shape.box.depth);
+        params.objectValue["steps"] = number(shape.stairs.steps);
+        params.objectValue["maxRise"] = number(shape.stairs.maxRise);
+        params.objectValue["turn"] = text(StairTurnName(shape.stairs.turn));
+        params.objectValue["flightWidth"] = number(shape.stairs.flightWidth);
+    } else {
+        const OpeningParams& o = shape.opening;
+        params.objectValue["side"] = text(WallSideName(o.side));
+        params.objectValue["offset"] = number(o.offset);
+        params.objectValue["sill"] = number(o.sill);
+        params.objectValue["width"] = number(o.width);
+        params.objectValue["height"] = number(o.height);
+        params.objectValue["segment"] = number(o.segment);
+    }
+    JsonValue out;
+    out.type = JsonValue::Type::Object;
+    out.objectValue["source"] = text(SourceKindName(shape.source));
+    out.objectValue["recipe"] = text(RecipeName(shape.recipe));
+    out.objectValue["role"] = text(shape.role);
+    out.objectValue["collision"] = text(CollisionModeName(shape.collision));
+    out.objectValue["operation"] = text(OperationName(shape.operation));
+    out.objectValue["version"] = number(shape.evaluatorVersion);
+    out.objectValue["params"] = std::move(params);
+    if (!shape.kit.empty()) {
+        out.objectValue["kit"] = text(shape.kit);
+    }
+    if (shape.source == SourceKind::EditableMesh) {
+        JsonValue mesh;
+        mesh.type = JsonValue::Type::Object;
+        JsonValue vertices;
+        vertices.type = JsonValue::Type::Array;
+        for (const Vec3& p : shape.mesh.vertices) {
+            JsonValue point;
+            point.type = JsonValue::Type::Array;
+            point.arrayValue = {number(p.x), number(p.y), number(p.z)};
+            vertices.arrayValue.push_back(std::move(point));
+        }
+        JsonValue faces;
+        faces.type = JsonValue::Type::Array;
+        for (const std::vector<int>& face : shape.mesh.faces) {
+            JsonValue loop;
+            loop.type = JsonValue::Type::Array;
+            for (int index : face) loop.arrayValue.push_back(number(index));
+            faces.arrayValue.push_back(std::move(loop));
+        }
+        mesh.objectValue["vertices"] = std::move(vertices);
+        mesh.objectValue["faces"] = std::move(faces);
+        out.objectValue["mesh"] = std::move(mesh);
+    }
+    if (!shape.kitSwaps.empty()) {
+        JsonValue swaps;
+        swaps.type = JsonValue::Type::Array;
+        for (const KitSwap& swap : shape.kitSwaps) {
+            JsonValue entry;
+            entry.type = JsonValue::Type::Object;
+            entry.objectValue["slot"] = text(swap.slot);
+            entry.objectValue["prefab"] = text(swap.prefab);
+            swaps.arrayValue.push_back(std::move(entry));
+        }
+        out.objectValue["kitSwaps"] = std::move(swaps);
+    }
+    if (!shape.faceMaterials.empty()) {
+        JsonValue faces;
+        faces.type = JsonValue::Type::Array;
+        for (const FaceMaterial& face : shape.faceMaterials) {
+            JsonValue entry;
+            entry.type = JsonValue::Type::Object;
+            entry.objectValue["group"] = text(FaceGroupName(face.face.group));
+            if (face.face.wall >= 0) {
+                entry.objectValue["wall"] = text(WallSideName(static_cast<WallSide>(face.face.wall)));
+            }
+            if (face.face.segment >= 0) {
+                entry.objectValue["segment"] = number(face.face.segment);
+            }
+            entry.objectValue["material"] = text(face.material);
+            if (HasTextureAlignment(face)) {
+                JsonValue offset;
+                offset.type = JsonValue::Type::Array;
+                offset.arrayValue = {number(face.offsetU), number(face.offsetV)};
+                JsonValue scale;
+                scale.type = JsonValue::Type::Array;
+                scale.arrayValue = {number(face.scaleU), number(face.scaleV)};
+                JsonValue fit;
+                fit.type = JsonValue::Type::Bool;
+                fit.boolValue = face.fit;
+                entry.objectValue["offset"] = std::move(offset);
+                entry.objectValue["scale"] = std::move(scale);
+                entry.objectValue["rotation"] = number(face.rotation);
+                entry.objectValue["fit"] = std::move(fit);
+            }
+            faces.arrayValue.push_back(std::move(entry));
+        }
+        out.objectValue["faces"] = std::move(faces);
+    }
+    return out;
+}
+
+bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, std::string& outError)
+{
+    if (!data.IsObject()) {
+        outError = "ConstructionShape component is not an object.";
+        return false;
+    }
+    if (const JsonValue* source = data.Find("source"); source && source->IsString()) {
+        if (source->AsString() == SourceKindName(SourceKind::EditableMesh)) {
+            shape.source = SourceKind::EditableMesh;
+        } else if (source->AsString() == SourceKindName(SourceKind::Recipe)) {
+            shape.source = SourceKind::Recipe;
+        } else {
+            outError = "ConstructionShape source '" + source->AsString() + "' is not supported by this editor.";
+            return false;
+        }
+    }
+    if (const JsonValue* mesh = data.Find("mesh"); mesh && mesh->IsObject()) {
+        EditableMesh read;
+        const JsonValue* vertices = mesh->Find("vertices");
+        const JsonValue* faces = mesh->Find("faces");
+        if (!vertices || !vertices->IsArray() || !faces || !faces->IsArray()) {
+            outError = "ConstructionShape mesh needs vertices and faces.";
+            return false;
+        }
+        for (const JsonValue& point : vertices->AsArray()) {
+            if (!point.IsArray() || point.AsArray().size() != 3 || !point.AsArray()[0].IsNumber() ||
+                !point.AsArray()[1].IsNumber() || !point.AsArray()[2].IsNumber()) {
+                outError = "ConstructionShape mesh vertices are [x, y, z] numbers.";
+                return false;
+            }
+            read.vertices.push_back(Vec3(static_cast<float>(point.AsArray()[0].AsNumber()),
+                                         static_cast<float>(point.AsArray()[1].AsNumber()),
+                                         static_cast<float>(point.AsArray()[2].AsNumber())));
+        }
+        for (const JsonValue& loop : faces->AsArray()) {
+            std::vector<int> face;
+            for (const JsonValue& index : loop.IsArray() ? loop.AsArray() : std::vector<JsonValue>{}) {
+                const int i = index.IsNumber() ? static_cast<int>(index.AsNumber()) : -1;
+                if (i < 0 || i >= static_cast<int>(read.vertices.size())) {
+                    outError = "ConstructionShape mesh faces index vertices that do not exist.";
+                    return false;
+                }
+                face.push_back(i);
+            }
+            if (face.size() < 3) {
+                outError = "ConstructionShape mesh faces need at least three vertices.";
+                return false;
+            }
+            read.faces.push_back(std::move(face));
+        }
+        shape.mesh = std::move(read);
+    }
+    if (const JsonValue* version = data.Find("version"); version && version->IsNumber()) {
+        shape.evaluatorVersion = static_cast<int>(version->AsNumber());
+        if (shape.evaluatorVersion > kEvaluatorVersion) {
+            outError = "ConstructionShape was saved by a newer editor (version " +
+                       std::to_string(shape.evaluatorVersion) + ").";
+            return false;
+        }
+    }
+    if (const JsonValue* recipe = data.Find("recipe"); recipe && recipe->IsString()) {
+        if (!ParseRecipe(recipe->AsString(), shape.recipe)) {
+            outError = "Unknown ConstructionShape recipe '" + recipe->AsString() + "'.";
+            return false;
+        }
+    }
+    if (const JsonValue* role = data.Find("role"); role && role->IsString()) {
+        shape.role = role->AsString();
+    }
+    if (const JsonValue* collision = data.Find("collision"); collision && collision->IsString()) {
+        shape.collision = collision->AsString() == "none" ? CollisionMode::None : CollisionMode::Solid;
+    }
+    if (const JsonValue* operation = data.Find("operation"); operation && operation->IsString()) {
+        shape.operation = operation->AsString() == "subtract" ? Operation::Subtract : Operation::Add;
+    }
+    if (const JsonValue* params = data.Find("params"); params && params->IsObject()) {
+        if (shape.recipe == Recipe::Box) {
+            BoxParams& b = shape.box;
+            ReadFloat(*params, "width", b.width);
+            ReadFloat(*params, "height", b.height);
+            ReadFloat(*params, "depth", b.depth);
+            ReadBool(*params, "hollow", b.hollow);
+            ReadFloat(*params, "wallThickness", b.wallThickness);
+            ReadBool(*params, "floor", b.floor);
+            ReadBool(*params, "ceiling", b.ceiling);
+        } else if (shape.recipe == Recipe::Balcony) {
+            ReadFloat(*params, "width", shape.box.width);
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "depth", shape.box.depth);
+            ReadFloat(*params, "wallThickness", shape.box.wallThickness);
+        } else if (shape.recipe == Recipe::Ramp) {
+            ReadFloat(*params, "width", shape.box.width);
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "depth", shape.box.depth);
+        } else if (shape.recipe == Recipe::Plane || shape.recipe == Recipe::Cylinder || shape.recipe == Recipe::Sphere) {
+            ReadFloat(*params, "width", shape.box.width);
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "depth", shape.box.depth);
+            float segments = static_cast<float>(shape.segments);
+            ReadFloat(*params, "segments", segments);
+            shape.segments = static_cast<int>(std::lround(segments));
+        } else if (shape.recipe == Recipe::Wall) {
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "thickness", shape.box.wallThickness);
+            ReadBool(*params, "floor", shape.box.floor);
+            ReadBool(*params, "closed", shape.wall.closed);
+            if (const JsonValue* points = params->Find("points"); points && points->IsArray()) {
+                std::vector<WallPoint> read;
+                for (const JsonValue& pair : points->AsArray()) {
+                    if (!pair.IsArray() || pair.AsArray().size() != 2 || !pair.AsArray()[0].IsNumber() ||
+                        !pair.AsArray()[1].IsNumber()) {
+                        outError = "Wall points must be [x, z] number pairs.";
+                        return false;
+                    }
+                    read.push_back(WallPoint{static_cast<float>(pair.AsArray()[0].AsNumber()),
+                                             static_cast<float>(pair.AsArray()[1].AsNumber())});
+                }
+                shape.wall.points = std::move(read);
+            }
+        } else if (shape.recipe == Recipe::Stairs) {
+            ReadFloat(*params, "width", shape.box.width);
+            ReadFloat(*params, "height", shape.box.height);
+            ReadFloat(*params, "depth", shape.box.depth);
+            float steps = static_cast<float>(shape.stairs.steps);
+            ReadFloat(*params, "steps", steps);
+            shape.stairs.steps = static_cast<int>(std::lround(steps));
+            ReadFloat(*params, "maxRise", shape.stairs.maxRise);
+            ReadFloat(*params, "flightWidth", shape.stairs.flightWidth);
+            if (const JsonValue* turn = params->Find("turn"); turn && turn->IsString() &&
+                !ParseStairTurn(turn->AsString(), shape.stairs.turn)) {
+                outError = "Unknown stairs turn '" + turn->AsString() + "'.";
+                return false;
+            }
+        } else {
+            OpeningParams& o = shape.opening;
+            if (const JsonValue* side = params->Find("side"); side && side->IsString()) {
+                if (!ParseWallSide(side->AsString(), o.side)) {
+                    outError = "Unknown opening side '" + side->AsString() + "'.";
+                    return false;
+                }
+            }
+            ReadFloat(*params, "offset", o.offset);
+            ReadFloat(*params, "sill", o.sill);
+            ReadFloat(*params, "width", o.width);
+            ReadFloat(*params, "height", o.height);
+            float segment = static_cast<float>(o.segment);
+            ReadFloat(*params, "segment", segment);
+            o.segment = static_cast<int>(std::lround(segment));
+        }
+    }
+    if (const JsonValue* kit = data.Find("kit"); kit && kit->IsString()) {
+        shape.kit = kit->AsString();
+    }
+    if (const JsonValue* swaps = data.Find("kitSwaps"); swaps && swaps->IsArray()) {
+        std::vector<KitSwap> read;
+        for (const JsonValue& entry : swaps->AsArray()) {
+            const JsonValue* slot = entry.IsObject() ? entry.Find("slot") : nullptr;
+            const JsonValue* prefab = entry.IsObject() ? entry.Find("prefab") : nullptr;
+            if (!slot || !slot->IsString() || slot->AsString().empty() || !prefab || !prefab->IsString() ||
+                prefab->AsString().empty()) {
+                outError = "ConstructionShape kitSwaps need a slot and a prefab.";
+                return false;
+            }
+            read.push_back({slot->AsString(), prefab->AsString()});
+        }
+        shape.kitSwaps = std::move(read);
+    }
+    if (const JsonValue* faces = data.Find("faces"); faces && faces->IsArray()) {
+        std::vector<FaceMaterial> read;
+        for (const JsonValue& entry : faces->AsArray()) {
+            const JsonValue* group = entry.IsObject() ? entry.Find("group") : nullptr;
+            const JsonValue* material = entry.IsObject() ? entry.Find("material") : nullptr;
+            FaceMaterial face;
+            if (!group || !group->IsString() || !ParseFaceGroup(group->AsString(), face.face.group) || !material ||
+                !material->IsString()) {
+                outError = "ConstructionShape faces need a known group and a material.";
+                return false;
+            }
+            if (const JsonValue* wall = entry.Find("wall"); wall && wall->IsString()) {
+                WallSide side = WallSide::PosZ;
+                if (!ParseWallSide(wall->AsString(), side)) {
+                    outError = "Unknown face wall '" + wall->AsString() + "'.";
+                    return false;
+                }
+                face.face.wall = static_cast<std::int8_t>(side);
+            }
+            if (const JsonValue* segment = entry.Find("segment"); segment && segment->IsNumber()) {
+                face.face.segment = static_cast<std::int16_t>(segment->AsNumber());
+            }
+            face.material = material->AsString();
+            auto pair = [&](const char* key, float& a, float& b) {
+                const JsonValue* value = entry.Find(key);
+                if (!value) return true;
+                if (!value->IsArray() || value->AsArray().size() != 2 || !value->AsArray()[0].IsNumber() ||
+                    !value->AsArray()[1].IsNumber()) {
+                    outError = std::string("ConstructionShape face ") + key + " is [u, v] numbers.";
+                    return false;
+                }
+                a = static_cast<float>(value->AsArray()[0].AsNumber());
+                b = static_cast<float>(value->AsArray()[1].AsNumber());
+                return true;
+            };
+            if (!pair("offset", face.offsetU, face.offsetV) || !pair("scale", face.scaleU, face.scaleV)) {
+                return false;
+            }
+            if (std::fabs(face.scaleU) < 1e-4f || std::fabs(face.scaleV) < 1e-4f) {
+                outError = "ConstructionShape face scale cannot be 0.";
+                return false;
+            }
+            if (const JsonValue* rotation = entry.Find("rotation"); rotation && rotation->IsNumber()) {
+                face.rotation = static_cast<float>(rotation->AsNumber());
+            }
+            if (const JsonValue* fit = entry.Find("fit"); fit && fit->IsBool()) {
+                face.fit = fit->AsBool();
+            }
+            read.push_back(std::move(face));
+        }
+        shape.faceMaterials = std::move(read);
+    }
+    shape.evaluatorVersion = kEvaluatorVersion;
+    Sanitize(shape);
+    return true;
+}
+
+void Sanitize(ConstructionShapeComponent& shape)
+{
+    BoxParams& b = shape.box;
+    b.width = std::max(b.width, kMinSize);
+    b.height = std::max(b.height, kMinSize);
+    b.depth = std::max(b.depth, kMinSize);
+    const float thinnest = shape.recipe == Recipe::Wall ? 20.0f : std::min({b.width, b.height, b.depth});
+    b.wallThickness = std::clamp(b.wallThickness, kMinSize, std::max(kMinSize, thinnest * 0.5f - kMinSize));
+    OpeningParams& o = shape.opening;
+    o.width = std::max(o.width, kMinSize);
+    o.height = std::max(o.height, kMinSize);
+    o.sill = std::max(o.sill, 0.0f);
+    o.segment = std::max(o.segment, 0);
+    shape.wall.closed = shape.wall.closed && shape.wall.points.size() >= 3;
+    shape.stairs.steps = std::clamp(shape.stairs.steps, 0, 500);
+    shape.stairs.maxRise = std::max(shape.stairs.maxRise, 0.05f);
+    const bool uTurn = shape.stairs.turn == StairTurn::UTurnLeft || shape.stairs.turn == StairTurn::UTurnRight;
+    shape.stairs.flightWidth = std::clamp(shape.stairs.flightWidth, kMinSize,
+                                          std::max(kMinSize, std::min(uTurn ? b.width * 0.5f : b.width, b.depth * 0.9f)));
+    shape.segments = std::clamp(shape.segments, 3, 128);
+}
+
+const char* DisplayName(const ConstructionShapeComponent& shape)
+{
+    if (shape.source == SourceKind::EditableMesh) {
+        return "Editable Mesh";
+    }
+    switch (shape.recipe) {
+    case Recipe::Opening: return "Opening";
+    case Recipe::Stairs: return "Stairs";
+    case Recipe::Plane: return "Plane";
+    case Recipe::Cylinder: return "Cylinder";
+    case Recipe::Sphere: return "Sphere";
+    case Recipe::Wall: return shape.wall.closed ? "Room" : "Wall";
+    case Recipe::Ramp: return "Ramp";
+    case Recipe::Balcony: return "Balcony";
+    case Recipe::Box: break;
+    }
+    return shape.operation == Operation::Subtract ? "Subtract" : shape.box.hollow ? "Room" : "Block";
+}
+
+bool IsCutter(const ConstructionShapeComponent& shape)
+{
+    return shape.source == SourceKind::Recipe && shape.recipe == Recipe::Box && shape.operation == Operation::Subtract;
+}
+
+bool CanHostOpenings(const ConstructionShapeComponent& shape)
+{
+    if (shape.source == SourceKind::EditableMesh) {
+        return shape.operation == Operation::Add;
+    }
+    return shape.source == SourceKind::Recipe &&
+           ((shape.recipe == Recipe::Box && !IsCutter(shape)) || shape.recipe == Recipe::Wall);
+}
+
+int WallSegmentCount(const ConstructionShapeComponent& shape)
+{
+    const int points = static_cast<int>(shape.wall.points.size());
+    if (shape.recipe != Recipe::Wall || points < 2) {
+        return 0;
+    }
+    return shape.wall.closed ? points : points - 1;
+}
+
+bool HasOwnGeometry(const ConstructionShapeComponent& shape)
+{
+    return shape.source == SourceKind::EditableMesh || (shape.source == SourceKind::Recipe && shape.recipe != Recipe::Opening);
+}
+
+bool CanMakeEditable(const ConstructionShapeComponent& shape)
+{
+    return shape.source == SourceKind::Recipe && shape.operation == Operation::Add &&
+           ((shape.recipe == Recipe::Box && !shape.box.hollow) || shape.recipe == Recipe::Ramp);
+}
+
+bool MakeEditable(ConstructionShapeComponent& shape)
+{
+    if (!CanMakeEditable(shape)) {
+        return false;
+    }
+    const float hw = shape.box.width * 0.5f;
+    const float hd = shape.box.depth * 0.5f;
+    const float h = shape.box.height;
+    EditableMesh mesh;
+    if (shape.recipe == Recipe::Box) {
+        mesh.vertices = {Vec3(-hw, 0.0f, -hd), Vec3(hw, 0.0f, -hd), Vec3(hw, 0.0f, hd), Vec3(-hw, 0.0f, hd),
+                         Vec3(-hw, h, -hd),    Vec3(hw, h, -hd),    Vec3(hw, h, hd),    Vec3(-hw, h, hd)};
+        mesh.faces = {{4, 7, 6, 5}, {0, 1, 2, 3}, {0, 4, 5, 1}, {3, 2, 6, 7}, {1, 5, 6, 2}, {0, 3, 7, 4}};
+    } else {
+        mesh.vertices = {Vec3(-hw, 0.0f, -hd), Vec3(hw, 0.0f, -hd), Vec3(hw, 0.0f, hd), Vec3(-hw, 0.0f, hd),
+                         Vec3(-hw, h, hd),     Vec3(hw, h, hd)};
+        mesh.faces = {{0, 1, 2, 3}, {3, 2, 5, 4}, {0, 4, 5, 1}, {1, 5, 2}, {0, 3, 4}};
+    }
+    shape.mesh = std::move(mesh);
+    shape.source = SourceKind::EditableMesh;
+    shape.faceMaterials.clear();
+    return true;
+}
+
+bool RevertToRecipe(ConstructionShapeComponent& shape, Vec3& outShift)
+{
+    if (shape.source != SourceKind::EditableMesh || shape.mesh.vertices.empty()) {
+        return false;
+    }
+    Vec3 lo = shape.mesh.vertices.front();
+    Vec3 hi = lo;
+    for (const Vec3& p : shape.mesh.vertices) {
+        lo = Vec3(std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z));
+        hi = Vec3(std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z));
+    }
+    shape.box.width = hi.x - lo.x;
+    shape.box.height = hi.y - lo.y;
+    shape.box.depth = hi.z - lo.z;
+    outShift = Vec3((lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f);
+    shape.source = SourceKind::Recipe;
+    shape.mesh = EditableMesh{};
+    shape.faceMaterials.clear();
+    Sanitize(shape);
+    return true;
+}
+
+Vec3 FaceNormal(const EditableMesh& mesh, int face)
+{
+    const std::vector<int>& loop = mesh.faces[static_cast<size_t>(face)];
+    Vec3 normal(0.0f, 0.0f, 0.0f);
+    for (size_t k = 0; k < loop.size(); ++k) {
+        const Vec3& a = mesh.vertices[static_cast<size_t>(loop[k])];
+        const Vec3& b = mesh.vertices[static_cast<size_t>(loop[(k + 1) % loop.size()])];
+        normal = vadd(normal, Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)));
+    }
+    return vlen(normal) > 1e-12f ? vnorm(normal) : Vec3(0.0f, 1.0f, 0.0f);
+}
+
+Vec3 FaceCentre(const EditableMesh& mesh, int face)
+{
+    const std::vector<int>& loop = mesh.faces[static_cast<size_t>(face)];
+    Vec3 centre(0.0f, 0.0f, 0.0f);
+    for (int index : loop) centre = vadd(centre, mesh.vertices[static_cast<size_t>(index)]);
+    return vscale(centre, 1.0f / static_cast<float>(loop.size()));
+}
+
+bool ExtrudeFace(EditableMesh& mesh, int face)
+{
+    if (face < 0 || face >= static_cast<int>(mesh.faces.size())) {
+        return false;
+    }
+    const std::vector<int> base = mesh.faces[static_cast<size_t>(face)];
+    std::vector<int> top;
+    for (int index : base) {
+        top.push_back(static_cast<int>(mesh.vertices.size()));
+        mesh.vertices.push_back(mesh.vertices[static_cast<size_t>(index)]);
+    }
+    mesh.faces[static_cast<size_t>(face)] = top;
+    const size_t n = base.size();
+    for (size_t k = 0; k < n; ++k) {
+        // Anticlockwise from outside: the base edge runs the other way round the side face.
+        mesh.faces.push_back({base[(k + 1) % n], top[(k + 1) % n], top[k], base[k]});
+    }
+    return true;
+}
+
+bool SplitFace(EditableMesh& mesh, int face)
+{
+    if (face < 0 || face >= static_cast<int>(mesh.faces.size()) || mesh.faces[static_cast<size_t>(face)].size() < 3) {
+        return false;
+    }
+    const std::vector<int> loop = mesh.faces[static_cast<size_t>(face)];
+    const size_t n = loop.size();
+    auto edgeLength = [&](size_t k) {
+        return vlen(vsub(mesh.vertices[static_cast<size_t>(loop[(k + 1) % n])],
+                         mesh.vertices[static_cast<size_t>(loop[k])]));
+    };
+    size_t i = 0;
+    for (size_t k = 1; k < n; ++k) {
+        if (edgeLength(k) > edgeLength(i) + 1e-6f) i = k;
+    }
+    const size_t j = (i + n / 2) % n;
+    auto pointOnEdge = [&](int a, int b) {
+        const int middle = static_cast<int>(mesh.vertices.size());
+        mesh.vertices.push_back(
+            vscale(vadd(mesh.vertices[static_cast<size_t>(a)], mesh.vertices[static_cast<size_t>(b)]), 0.5f));
+        for (size_t g = 0; g < mesh.faces.size(); ++g) {
+            std::vector<int>& other = mesh.faces[g];
+            if (static_cast<int>(g) == face) continue;
+            for (size_t k = 0; k < other.size(); ++k) {
+                if (other[k] == b && other[(k + 1) % other.size()] == a) {
+                    other.insert(other.begin() + static_cast<std::ptrdiff_t>(k + 1), middle);
+                    break;
+                }
+            }
+        }
+        return middle;
+    };
+    const int m1 = pointOnEdge(loop[i], loop[(i + 1) % n]);
+    const int m2 = pointOnEdge(loop[j], loop[(j + 1) % n]);
+    std::vector<int> first{m1};
+    for (size_t k = (i + 1) % n;; k = (k + 1) % n) {
+        first.push_back(loop[k]);
+        if (k == j) break;
+    }
+    first.push_back(m2);
+    std::vector<int> second{m2};
+    for (size_t k = (j + 1) % n;; k = (k + 1) % n) {
+        second.push_back(loop[k]);
+        if (k == i) break;
+    }
+    second.push_back(m1);
+    mesh.faces[static_cast<size_t>(face)] = std::move(first);
+    mesh.faces.push_back(std::move(second));
+    return true;
+}
+
+int StairCount(const ConstructionShapeComponent& shape)
+{
+    if (shape.stairs.steps > 0) {
+        return shape.stairs.steps;
+    }
+    return std::max(1, static_cast<int>(std::ceil(shape.box.height / std::max(shape.stairs.maxRise, 0.05f) - 1e-4f)));
+}
+
+} // namespace Hephaestus::Construction

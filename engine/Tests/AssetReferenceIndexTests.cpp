@@ -141,8 +141,24 @@ bool TestSceneAndPrefabIndex(const fs::path& project) {
     WriteText(project / "assets" / "scripts" / "Demo.lua",
               "local p = \"assets/textures/should_not_index.png\"\n");
 
+    WriteText(project / "assets" / "kits" / "Stone.hpkit", R"({
+  "schema": "HephaestusKit",
+  "name": "Stone",
+  "pieces": [{"prefab": "assets/prefabs/Lamp.hpprefab", "role": "wall", "width": 2, "stretch": 0.05}]
+})");
+    WriteText(project / "assets" / "scenes" / "Kitted.hpscene", R"({
+  "entities": [{"components": {"ConstructionShape": {"recipe": "wall", "kit": "assets/kits/Stone.hpkit"}}}]
+})");
+
     AssetReferenceIndex index;
     index.ScanProject(project);
+
+    ok &= Check(ContainsRef(index.GetDependencies("assets/kits/Stone.hpkit"), AssetReferenceFieldKind::PrefabPath,
+                            "assets/prefabs/Lamp.hpprefab"),
+                "a kit references its piece prefabs");
+    ok &= Check(ContainsRef(index.GetDependencies("assets/scenes/Kitted.hpscene"), AssetReferenceFieldKind::KitPath,
+                            "assets/kits/Stone.hpkit"),
+                "a construction shape references its kit");
 
     const auto sceneDeps = index.GetDependencies("assets/scenes/Demo.hpscene");
     ok &= Check(ContainsRef(sceneDeps, AssetReferenceFieldKind::MeshSource, "assets/meshes/Cube.glb"),

@@ -73,7 +73,7 @@ void PlayModeManager::Log(const std::string& msg) {
 // StartPlayMode
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool PlayModeManager::StartPlayMode() {
+bool PlayModeManager::StartPlayMode(const std::function<void(Scene&)>& afterSnapshot) {
     if (m_state != PlayState::Editor) {
         Log("Warning: StartPlayMode called but state is not Editor – ignoring.");
         return false;
@@ -96,6 +96,9 @@ bool PlayModeManager::StartPlayMode() {
         if (m_sceneSnapshot.empty()) {
             Log("Warning: Scene snapshot is empty – restore may not work.");
         }
+    }
+    if (afterSnapshot) {
+        afterSnapshot(*m_scene);
     }
 
     // ── 2. Transition state ────────────────────────────────────────────────

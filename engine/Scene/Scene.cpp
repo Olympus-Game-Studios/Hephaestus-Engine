@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include "../Construction/ConstructionShape.h"
 #include "PrefabComponentIO.h"
 #include "PrefabInstantiator.h"
 #include "PrefabOverrideSystem.h"
@@ -384,23 +385,123 @@ void Scene::Clear()
     m_PrimarySelected = entt::null;
 }
 
-// ---------------- Clipboard (single-entity copy/paste with component preservation) ----------------
 namespace {
-struct ClipboardEntityData {
+// An entity and its children as Duplicate and Paste recreate them.
+struct EntitySnapshot {
     std::string name;
     std::optional<TransformComponent> transform;
-    std::optional<MeshRendererComponent> meshRenderer;
-    std::optional<MaterialComponent> material;
-    std::optional<LightComponent> light;
-    std::optional<MeshColliderComponent> meshCollider;
-    std::optional<PhysicsShapeComponent> physicsShape;
-    std::optional<RigidBodyComponent> rigidBody;
-    std::optional<CameraComponent> camera;
-    std::optional<CharacterComponent> character;
+    std::vector<PrefabComponentEntry> components;
+    std::optional<AudioSourceComponent> audio;
+    std::optional<FolderComponent> folder;
+    std::optional<PrefabInstanceComponent> prefabInstance;
+    std::vector<EntitySnapshot> children;
 };
+
+std::optional<EntitySnapshot> s_EntityClipboard;
+
+Entity PrefabRootOf(Scene& scene, Entity entity)
+{
+    if (entity.HasComponent<PrefabNodeComponent>()) {
+        Entity prefabRoot = PrefabOverrideSystem::FindInstanceRoot(scene, entity);
+        if (prefabRoot) return prefabRoot;
+    }
+    return entity;
 }
 
-static std::optional<ClipboardEntityData> s_EntityClipboard;
+std::string UniqueEntityName(Scene& scene, const std::string& original)
+{
+    std::string base = original.empty() ? "Entity" : original;
+    const size_t suffixStart = base.rfind(" (");
+    if (suffixStart != std::string::npos && base.back() == ')') {
+        const std::string number = base.substr(suffixStart + 2, base.size() - suffixStart - 3);
+        if (!number.empty() &&
+            std::all_of(number.begin(), number.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+            base.resize(suffixStart);
+        }
+    }
+    std::string candidate = base;
+    int suffix = 1;
+    while (scene.FindEntityByName(candidate)) {
+        candidate = base + " (" + std::to_string(suffix++) + ")";
+    }
+    return candidate;
+}
+
+EntitySnapshot CaptureSnapshot(Scene& scene, Entity source)
+{
+    EntitySnapshot snapshot;
+    snapshot.name = source.HasComponent<TagComponent>() ? source.GetComponent<TagComponent>().tag : "Entity";
+    if (source.HasComponent<PrefabInstanceComponent>()) {
+        snapshot.prefabInstance = source.GetComponent<PrefabInstanceComponent>();
+        return snapshot;
+    }
+    if (source.HasComponent<TransformComponent>()) {
+        snapshot.transform = source.GetComponent<TransformComponent>();
+    }
+    PrefabComponentIO::CaptureFromEntity(source, snapshot.components);
+    if (source.HasComponent<AudioSourceComponent>()) {
+        AudioSourceComponent audio = source.GetComponent<AudioSourceComponent>();
+        audio.runtimeHandle = 0;
+        audio.runtimeStarted = false;
+        audio.runtimeLastClip.clear();
+        snapshot.audio = audio;
+    }
+    if (source.HasComponent<FolderComponent>()) {
+        snapshot.folder = source.GetComponent<FolderComponent>();
+    }
+    for (Entity child : scene.GetChildren(source)) {
+        if (!child.HasComponent<ConstructionGeneratedComponent>()) {
+            snapshot.children.push_back(CaptureSnapshot(scene, child));
+        }
+    }
+    return snapshot;
+}
+
+Entity InstantiateSnapshot(Scene& scene, const EntitySnapshot& snapshot, Entity newParent)
+{
+    if (snapshot.prefabInstance) {
+        PrefabAsset asset;
+        std::string error;
+        if (!PrefabOverrideSystem::LoadAsset(snapshot.prefabInstance->prefabPath, asset, error)) {
+            return {};
+        }
+        PrefabInstanceComponent instanceCopy = *snapshot.prefabInstance;
+        instanceCopy.instanceId.clear();
+        instanceCopy.parent = newParent ? static_cast<entt::entity>(newParent) : entt::null;
+
+        PrefabInstantiateOptions options;
+        options.prefabPath = snapshot.prefabInstance->prefabPath;
+        options.parent = instanceCopy.parent;
+        options.instanceData = &instanceCopy;
+        Entity duplicate = PrefabInstantiator::Instantiate(scene, asset, options);
+        if (duplicate && duplicate.HasComponent<TagComponent>()) {
+            duplicate.GetComponent<TagComponent>().tag = UniqueEntityName(scene, snapshot.name);
+        }
+        return duplicate;
+    }
+
+    Entity duplicate = scene.CreateEntity(UniqueEntityName(scene, snapshot.name));
+    if (snapshot.transform) {
+        PrefabComponentIO::CopyLocalTransform(duplicate.GetComponent<TransformComponent>(), *snapshot.transform);
+    }
+    for (const PrefabComponentEntry& component : snapshot.components) {
+        PrefabComponentIO::ApplyEntry(duplicate, component);
+    }
+    if (snapshot.audio) {
+        duplicate.AddComponent<AudioSourceComponent>(*snapshot.audio);
+    }
+    if (snapshot.folder) {
+        duplicate.AddComponent<FolderComponent>(*snapshot.folder);
+    }
+    if (newParent) {
+        scene.SetParent(duplicate, newParent);
+    }
+    for (const EntitySnapshot& child : snapshot.children) {
+        InstantiateSnapshot(scene, child, duplicate);
+    }
+    return duplicate;
+}
+} // namespace
 
 void Scene::CopyEntityToClipboard(Entity entity)
 {
@@ -408,67 +509,7 @@ void Scene::CopyEntityToClipboard(Entity entity)
         s_EntityClipboard.reset();
         return;
     }
-
-    ClipboardEntityData data;
-    data.name = entity.HasComponent<TagComponent>() ? entity.GetComponent<TagComponent>().tag : "Entity";
-
-    if (entity.HasComponent<TransformComponent>()) {
-        TransformComponent copy = entity.GetComponent<TransformComponent>();
-        copy.parent = entt::null;
-        copy.children.clear();
-        data.transform = copy;
-    }
-
-    if (entity.HasComponent<MeshRendererComponent>()) {
-        const MeshRendererComponent& mesh = entity.GetComponent<MeshRendererComponent>();
-        if (!IsRuntimeGeneratedVisual(mesh)) {
-            data.meshRenderer = mesh;
-        }
-    }
-
-    if (entity.HasComponent<MaterialComponent>()) {
-        data.material = entity.GetComponent<MaterialComponent>();
-    }
-
-    if (entity.HasComponent<LightComponent>()) {
-        data.light = entity.GetComponent<LightComponent>();
-    }
-
-    if (entity.HasComponent<MeshColliderComponent>()) {
-        MeshColliderComponent copy = entity.GetComponent<MeshColliderComponent>();
-        copy.contacts.clear();
-        data.meshCollider = copy;
-    }
-
-    if (entity.HasComponent<PhysicsShapeComponent>()) {
-        data.physicsShape = entity.GetComponent<PhysicsShapeComponent>();
-    }
-
-    if (entity.HasComponent<RigidBodyComponent>()) {
-        RigidBodyComponent copy = entity.GetComponent<RigidBodyComponent>();
-        copy.InvalidateBodyHandle();
-        data.rigidBody = copy;
-    }
-
-    if (entity.HasComponent<CameraComponent>()) {
-        data.camera = entity.GetComponent<CameraComponent>();
-    }
-
-    if (entity.HasComponent<CharacterComponent>()) {
-        CharacterComponent copy = entity.GetComponent<CharacterComponent>();
-        copy.runtimeReady = false;
-        copy.skeleton = {};
-        copy.clips.clear();
-        copy.player = {};
-        copy.localPoses.clear();
-        copy.localMatrices.clear();
-        copy.worldPose.clear();
-        copy.bonePalette.clear();
-        copy.lastError.clear();
-        data.character = std::move(copy);
-    }
-
-    s_EntityClipboard = data;
+    s_EntityClipboard = CaptureSnapshot(*this, PrefabRootOf(*this, entity));
 }
 
 bool Scene::HasClipboardEntity() const
@@ -480,77 +521,8 @@ Entity Scene::PasteClipboard()
 {
     if (!s_EntityClipboard.has_value())
         return {};
-
-    ClipboardEntityData data = *s_EntityClipboard;
-
-    std::string baseName = data.name.empty() ? "Entity" : data.name;
-    
-    // Extract base name by removing any existing " (n)" suffix pattern
-    size_t lastParen = baseName.rfind(" (");
-    if (lastParen != std::string::npos) {
-        size_t endParen = baseName.find(")", lastParen);
-        if (endParen != std::string::npos) {
-            // Check if the content between parens is just a number
-            std::string middle = baseName.substr(lastParen + 2, endParen - lastParen - 2);
-            if (!middle.empty() && std::all_of(middle.begin(), middle.end(), ::isdigit)) {
-                baseName = baseName.substr(0, lastParen);
-            }
-        }
-    }
-    
-    std::string candidate = baseName;
-    int suffix = 1;
-    while (FindEntityByName(candidate)) {
-        candidate = baseName + " (" + std::to_string(suffix++) + ")";
-    }
-
-    Entity e = CreateEntity(candidate);
-    if (!e)
-        return {};
-
-    if (data.transform) {
-        auto& t = e.GetComponent<TransformComponent>();
-        t = *data.transform;
-        t.parent = entt::null;
-        t.children.clear();
-    }
-
-    if (data.meshRenderer) {
-        e.AddComponent<MeshRendererComponent>(*data.meshRenderer);
-    }
-
-    if (data.material) {
-        e.AddComponent<MaterialComponent>(*data.material);
-    }
-
-    if (data.light) {
-        e.AddComponent<LightComponent>(*data.light);
-    }
-
-    if (data.meshCollider) {
-        e.AddComponent<MeshColliderComponent>(*data.meshCollider);
-    }
-
-    if (data.physicsShape) {
-        e.AddComponent<PhysicsShapeComponent>(*data.physicsShape);
-    }
-
-    if (data.rigidBody) {
-        RigidBodyComponent rb = *data.rigidBody;
-        rb.InvalidateBodyHandle();
-        rb.SyncStaticMirror();
-        e.AddComponent<RigidBodyComponent>(rb);
-    }
-
-    if (data.camera) {
-        e.AddComponent<CameraComponent>(*data.camera);
-    }
-
-    if (data.character) {
-        e.AddComponent<CharacterComponent>(*data.character);
-    }
-
-    SetSelectedEntity(e);
+    Entity e = InstantiateSnapshot(*this, *s_EntityClipboard, {});
+    if (e) SetSelectedEntity(e);
     return e;
 }
 
@@ -566,14 +538,8 @@ std::vector<Entity> Scene::DuplicateEntities(const std::vector<entt::entity>& en
         if (!source) {
             continue;
         }
-
-        if (source.HasComponent<PrefabNodeComponent>()) {
-            Entity prefabRoot = PrefabOverrideSystem::FindInstanceRoot(*this, source);
-            if (prefabRoot) {
-                source = prefabRoot;
-                handle = static_cast<entt::entity>(prefabRoot);
-            }
-        }
+        source = PrefabRootOf(*this, source);
+        handle = static_cast<entt::entity>(source);
 
         bool hasSelectedAncestor = false;
         for (Entity parent = GetParent(source); parent; parent = GetParent(parent)) {
@@ -588,100 +554,12 @@ std::vector<Entity> Scene::DuplicateEntities(const std::vector<entt::entity>& en
         }
     }
 
-    auto uniqueName = [this](const std::string& original) {
-        std::string base = original.empty() ? "Entity" : original;
-        const size_t suffixStart = base.rfind(" (");
-        if (suffixStart != std::string::npos && base.back() == ')') {
-            const std::string number =
-                base.substr(suffixStart + 2, base.size() - suffixStart - 3);
-            if (!number.empty() &&
-                std::all_of(number.begin(), number.end(),
-                            [](unsigned char c) { return std::isdigit(c) != 0; })) {
-                base.resize(suffixStart);
-            }
-        }
-        std::string candidate = base;
-        int suffix = 1;
-        while (FindEntityByName(candidate)) {
-            candidate = base + " (" + std::to_string(suffix++) + ")";
-        }
-        return candidate;
-    };
-
-    std::function<Entity(Entity, Entity)> duplicateOne;
-    duplicateOne = [&](Entity source, Entity newParent) -> Entity {
-        if (source.HasComponent<PrefabInstanceComponent>()) {
-            const auto& sourceInstance = source.GetComponent<PrefabInstanceComponent>();
-            PrefabAsset asset;
-            std::string error;
-            if (!PrefabOverrideSystem::LoadAsset(sourceInstance.prefabPath, asset, error)) {
-                return {};
-            }
-
-            PrefabInstanceComponent instanceCopy = sourceInstance;
-            instanceCopy.instanceId.clear();
-            instanceCopy.parent = newParent
-                ? static_cast<entt::entity>(newParent)
-                : entt::null;
-
-            PrefabInstantiateOptions options;
-            options.prefabPath = sourceInstance.prefabPath;
-            options.parent = instanceCopy.parent;
-            options.instanceData = &instanceCopy;
-            Entity duplicate = PrefabInstantiator::Instantiate(*this, asset, options);
-            if (duplicate && duplicate.HasComponent<TagComponent>()) {
-                duplicate.GetComponent<TagComponent>().tag =
-                    uniqueName(source.GetComponent<TagComponent>().tag);
-            }
-            return duplicate;
-        }
-
-        const std::string sourceName = source.HasComponent<TagComponent>()
-            ? source.GetComponent<TagComponent>().tag
-            : std::string("Entity");
-        Entity duplicate = CreateEntity(uniqueName(sourceName));
-
-        if (source.HasComponent<TransformComponent>()) {
-            PrefabComponentIO::CopyLocalTransform(
-                duplicate.GetComponent<TransformComponent>(),
-                source.GetComponent<TransformComponent>());
-        }
-
-        std::vector<PrefabComponentEntry> components;
-        if (PrefabComponentIO::CaptureFromEntity(source, components)) {
-            for (const PrefabComponentEntry& component : components) {
-                PrefabComponentIO::ApplyEntry(duplicate, component);
-            }
-        }
-
-        if (source.HasComponent<AudioSourceComponent>()) {
-            AudioSourceComponent audio = source.GetComponent<AudioSourceComponent>();
-            audio.runtimeHandle = 0;
-            audio.runtimeStarted = false;
-            audio.runtimeLastClip.clear();
-            duplicate.AddComponent<AudioSourceComponent>(audio);
-        }
-        if (source.HasComponent<FolderComponent>()) {
-            duplicate.AddComponent<FolderComponent>(
-                source.GetComponent<FolderComponent>());
-        }
-
-        if (newParent) {
-            SetParent(duplicate, newParent);
-        }
-
-        for (Entity child : GetChildren(source)) {
-            duplicateOne(child, duplicate);
-        }
-        return duplicate;
-    };
-
     std::vector<Entity> duplicates;
     duplicates.reserve(roots.size());
     for (entt::entity handle : roots) {
         Entity source(handle, this);
         Entity parent = preserveParent ? GetParent(source) : Entity{};
-        Entity duplicate = duplicateOne(source, parent);
+        Entity duplicate = InstantiateSnapshot(*this, CaptureSnapshot(*this, source), parent);
         if (duplicate) {
             duplicates.push_back(duplicate);
         }

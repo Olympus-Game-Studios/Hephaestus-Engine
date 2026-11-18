@@ -2,6 +2,7 @@
 
 #include "Scene.h"
 #include "../Assets/AssetPathPolicy.h"
+#include "../Construction/ConstructionShape.h"
 #include "../Scripting/LuaScriptComponent.h"
 #include "../Scripting/ScriptComponent.h"
 
@@ -189,6 +190,14 @@ void CapturePhysicsShape(const PhysicsShapeComponent& shape, JsonValue& data) {
     data.objectValue["radius"] = MakeNumber(shape.radius);
     data.objectValue["height"] = MakeNumber(shape.height);
     data.objectValue["offset"] = MakeVec3(shape.offset);
+    if (!shape.points.empty()) {
+        JsonValue points;
+        points.type = JsonValue::Type::Array;
+        for (const Vec3& point : shape.points) {
+            points.arrayValue.push_back(MakeVec3(point));
+        }
+        data.objectValue["points"] = std::move(points);
+    }
 }
 
 void ApplyPhysicsShape(PhysicsShapeComponent& shape, const JsonValue& data) {
@@ -206,6 +215,14 @@ void ApplyPhysicsShape(PhysicsShapeComponent& shape, const JsonValue& data) {
     if (const JsonValue* radiusValue = data.Find("radius")) {
         if (radiusValue->IsNumber()) {
             shape.radius = static_cast<float>(radiusValue->AsNumber());
+        }
+    }
+    if (const JsonValue* pointsValue = data.Find("points"); pointsValue && pointsValue->IsArray()) {
+        shape.points.clear();
+        for (const JsonValue& pointValue : pointsValue->AsArray()) {
+            Vec3 point(0.0f, 0.0f, 0.0f);
+            ParseVec3(pointValue, point);
+            shape.points.push_back(point);
         }
     }
     if (const JsonValue* heightValue = data.Find("height")) {
@@ -321,6 +338,8 @@ void CaptureMaterial(const MaterialComponent& material, JsonValue& data) {
     data.objectValue["reflectionStrength"] = MakeNumber(material.reflectionStrength);
     data.objectValue["specular"] = MakeNumber(material.specular);
     data.objectValue["opacity"] = MakeNumber(material.opacity);
+    data.objectValue["opacityMask"] = MakeNumber(material.opacityMask);
+    data.objectValue["blendMode"] = MakeString(MaterialBlendModeName(material.blendMode));
     data.objectValue["albedoTexturePath"] = MakeString(material.albedoTexturePath);
     data.objectValue["useAlbedoTexture"] = MakeBool(material.useAlbedoTexture);
     data.objectValue["normalTexturePath"] = MakeString(material.normalTexturePath);
@@ -377,6 +396,12 @@ void ApplyMaterial(MaterialComponent& material, const JsonValue& data) {
         if (specularValue->IsNumber()) {
             material.specular = static_cast<float>(specularValue->AsNumber());
         }
+    }
+    if (const JsonValue* maskValue = data.Find("opacityMask"); maskValue && maskValue->IsNumber()) {
+        material.opacityMask = static_cast<float>(maskValue->AsNumber());
+    }
+    if (const JsonValue* blendValue = data.Find("blendMode"); blendValue && blendValue->IsString()) {
+        material.blendMode = MaterialBlendModeFromName(blendValue->AsString());
     }
     if (const JsonValue* opacityValue = data.Find("opacity")) {
         if (opacityValue->IsNumber()) {
@@ -1302,6 +1327,10 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         CaptureParticleEmitter(entity.GetComponent<ParticleEmitterComponent>(), out.data);
         return true;
     }
+    if (type == "ConstructionShape" && entity.HasComponent<ConstructionShapeComponent>()) {
+        out.data = Hephaestus::Construction::ShapeToJson(entity.GetComponent<ConstructionShapeComponent>());
+        return true;
+    }
     if (type == "AudioSource" && entity.HasComponent<AudioSourceComponent>()) {
         const auto& audio = entity.GetComponent<AudioSourceComponent>();
         out.enabled = audio.enabled;
@@ -1448,6 +1477,13 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
         ApplyParticleEmitter(emitter, data);
         return true;
     }
+    if (type == "ConstructionShape") {
+        auto& shape = entity.HasComponent<ConstructionShapeComponent>()
+            ? entity.GetComponent<ConstructionShapeComponent>()
+            : entity.AddComponent<ConstructionShapeComponent>();
+        std::string error;
+        return Hephaestus::Construction::ApplyShapeJson(shape, data, error);
+    }
     if (type == "AudioSource") {
         auto& audio = entity.HasComponent<AudioSourceComponent>()
             ? entity.GetComponent<AudioSourceComponent>()
@@ -1498,6 +1534,7 @@ bool HasComponent(Entity entity, const std::string& type) {
     if (type == "ScriptComponent") return entity.HasComponent<ScriptComponent>();
     if (type == "AudioSource") return entity.HasComponent<AudioSourceComponent>();
     if (type == "ParticleEmitter") return entity.HasComponent<ParticleEmitterComponent>();
+    if (type == "ConstructionShape") return entity.HasComponent<ConstructionShapeComponent>();
     if (type == "Character") return entity.HasComponent<CharacterComponent>();
     if (type == "CharacterController") return entity.HasComponent<CharacterControllerComponent>();
     return false;
@@ -1529,6 +1566,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
     else if (type == "ScriptComponent") entity.RemoveComponent<ScriptComponent>();
     else if (type == "AudioSource") entity.RemoveComponent<AudioSourceComponent>();
     else if (type == "ParticleEmitter") entity.RemoveComponent<ParticleEmitterComponent>();
+    else if (type == "ConstructionShape") entity.RemoveComponent<ConstructionShapeComponent>();
     else if (type == "Character") entity.RemoveComponent<CharacterComponent>();
     else if (type == "CharacterController") entity.RemoveComponent<CharacterControllerComponent>();
     else return false;
@@ -1539,7 +1577,7 @@ const std::vector<std::string>& SupportedTypes() {
     static const std::vector<std::string> kTypes = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
         "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character",
-        "CharacterController", "ParticleEmitter"
+        "CharacterController", "ParticleEmitter", "ConstructionShape"
     };
     return kTypes;
 }
@@ -1583,6 +1621,7 @@ std::string PhysicsShapeTypeToString(PhysicsShapeType type) {
         case PhysicsShapeType::Capsule: return "Capsule";
         case PhysicsShapeType::Cylinder: return "Cylinder";
         case PhysicsShapeType::Mesh: return "Mesh";
+        case PhysicsShapeType::ConvexHull: return "ConvexHull";
         default: return "Box";
     }
 }
@@ -1592,6 +1631,7 @@ PhysicsShapeType ParsePhysicsShapeType(const std::string& str) {
     if (str == "Capsule") return PhysicsShapeType::Capsule;
     if (str == "Cylinder") return PhysicsShapeType::Cylinder;
     if (str == "Mesh") return PhysicsShapeType::Mesh;
+    if (str == "ConvexHull") return PhysicsShapeType::ConvexHull;
     return PhysicsShapeType::Box;
 }
 
@@ -1601,6 +1641,82 @@ std::string CameraProjectionToString(CameraProjection projection) {
 
 CameraProjection ParseCameraProjection(const std::string& str) {
     return str == "Orthographic" ? CameraProjection::Orthographic : CameraProjection::Perspective;
+}
+
+JsonValue NodeOverridesToJson(const std::unordered_map<std::string, PrefabNodeOverride>& overrides) {
+    JsonValue out = MakeObject();
+    for (const auto& [nodeId, nodeOverride] : overrides) {
+        JsonValue node = MakeObject();
+        if (nodeOverride.hasTransform) {
+            JsonValue transform = MakeObject();
+            transform.objectValue["position"] = MakeVec3(nodeOverride.transform.position);
+            transform.objectValue["rotation"] = MakeVec3(nodeOverride.transform.rotation);
+            transform.objectValue["scale"] = MakeVec3(nodeOverride.transform.scale);
+            node.objectValue["transform"] = std::move(transform);
+        }
+        if (!nodeOverride.componentOverrides.empty()) {
+            JsonValue components = MakeObject();
+            for (const auto& [type, componentOverride] : nodeOverride.componentOverrides) {
+                JsonValue properties = MakeObject();
+                for (const auto& [path, value] : componentOverride.properties) {
+                    properties.objectValue[path] = PropertyToJson(value);
+                }
+                components.objectValue[type] = std::move(properties);
+            }
+            node.objectValue["components"] = std::move(components);
+        }
+        if (!nodeOverride.scriptVars.empty()) {
+            JsonValue vars = MakeObject();
+            for (const auto& [key, value] : nodeOverride.scriptVars) {
+                vars.objectValue[key] = PropertyToJson(value);
+            }
+            node.objectValue["scriptVars"] = std::move(vars);
+        }
+        out.objectValue[nodeId] = std::move(node);
+    }
+    return out;
+}
+
+void NodeOverridesFromJson(const JsonValue& value, std::unordered_map<std::string, PrefabNodeOverride>& out) {
+    out.clear();
+    if (!value.IsObject()) {
+        return;
+    }
+    auto readVec3 = [](const JsonValue* v, Vec3& target) {
+        if (v && v->IsArray() && v->AsArray().size() == 3) {
+            const auto& a = v->AsArray();
+            target = Vec3(static_cast<float>(a[0].AsNumber()), static_cast<float>(a[1].AsNumber()),
+                          static_cast<float>(a[2].AsNumber()));
+        }
+    };
+    for (const auto& [nodeId, nodeValue] : value.AsObject()) {
+        if (!nodeValue.IsObject()) {
+            continue;
+        }
+        PrefabNodeOverride nodeOverride;
+        if (const JsonValue* transform = nodeValue.Find("transform"); transform && transform->IsObject()) {
+            readVec3(transform->Find("position"), nodeOverride.transform.position);
+            readVec3(transform->Find("rotation"), nodeOverride.transform.rotation);
+            readVec3(transform->Find("scale"), nodeOverride.transform.scale);
+            nodeOverride.hasTransform = true;
+        }
+        if (const JsonValue* components = nodeValue.Find("components"); components && components->IsObject()) {
+            for (const auto& [type, properties] : components->AsObject()) {
+                if (!properties.IsObject()) continue;
+                PrefabComponentOverride componentOverride;
+                for (const auto& [path, propertyValue] : properties.AsObject()) {
+                    componentOverride.properties.emplace(path, JsonToProperty(propertyValue));
+                }
+                nodeOverride.componentOverrides.emplace(type, std::move(componentOverride));
+            }
+        }
+        if (const JsonValue* vars = nodeValue.Find("scriptVars"); vars && vars->IsObject()) {
+            for (const auto& [key, varValue] : vars->AsObject()) {
+                nodeOverride.scriptVars.emplace(key, JsonToProperty(varValue));
+            }
+        }
+        out.emplace(nodeId, std::move(nodeOverride));
+    }
 }
 
 bool IsNodeOverrideEmpty(const PrefabNodeOverride& nodeOverride) {

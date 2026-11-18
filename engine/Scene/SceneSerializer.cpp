@@ -8,6 +8,7 @@
 #include "PrefabOverrideSystem.h"
 #include "PrefabComponentIO.h"
 #include "../Assets/AssetPathPolicy.h"
+#include "../Construction/ConstructionShape.h"
 #include "../Scripting/ScriptComponent.h"
 #include "../Scripting/ScriptRegistry.h"
 
@@ -499,6 +500,8 @@ const char* PhysicsShapeTypeToString(PhysicsShapeType type)
         return "Cylinder";
     case PhysicsShapeType::Mesh:
         return "Mesh";
+    case PhysicsShapeType::ConvexHull:
+        return "ConvexHull";
     default:
         return "Box";
     }
@@ -701,6 +704,9 @@ static PhysicsShapeType ParsePhysicsShapeType(const JsonValue& value, std::strin
     if (typeStr == "Mesh") {
         return PhysicsShapeType::Mesh;
     }
+    if (typeStr == "ConvexHull") {
+        return PhysicsShapeType::ConvexHull;
+    }
 
     errorOut = "Unknown physics shape type: " + typeStr;
     return PhysicsShapeType::Box;
@@ -871,6 +877,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
+        const ConstructionShapeComponent* construction = registry.try_get<ConstructionShapeComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -973,6 +980,13 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"extents\": " << FormatVec3(physicsShape->extents) << ",\n";
             oss << "          \"radius\": " << FormatFloat(physicsShape->radius) << ",\n";
             oss << "          \"height\": " << FormatFloat(physicsShape->height) << ",\n";
+            if (!physicsShape->points.empty()) {
+                oss << "          \"points\": [";
+                for (size_t n = 0; n < physicsShape->points.size(); ++n) {
+                    oss << (n ? ", " : "") << FormatVec3(physicsShape->points[n]);
+                }
+                oss << "],\n";
+            }
             oss << "          \"offset\": " << FormatVec3(physicsShape->offset) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
@@ -1011,6 +1025,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
             oss << "          \"reflectionStrength\": " << FormatFloat(material->reflectionStrength) << ",\n";
+            oss << "          \"specular\": " << FormatFloat(material->specular) << ",\n";
+            oss << "          \"opacity\": " << FormatFloat(material->opacity) << ",\n";
+            oss << "          \"opacityMask\": " << FormatFloat(material->opacityMask) << ",\n";
+            oss << "          \"blendMode\": \"" << MaterialBlendModeName(material->blendMode) << "\",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
             oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
@@ -1161,6 +1179,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
 
         if (probeVolume) {
             componentBlocks.push_back(WriteProbeVolumeJson(*probeVolume));
+        }
+
+        if (construction) {
+            componentBlocks.push_back(Hephaestus::Construction::WriteShapeJson(*construction, "        "));
         }
 
         if (selection) {
@@ -1528,6 +1550,17 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* offsetValue = shapeObj->Find("offset")) {
                 ParseVec3(*offsetValue, shape.offset);
             }
+            if (const JsonValue* pointsValue = shapeObj->Find("points"); pointsValue && pointsValue->IsArray()) {
+                shape.points.clear();
+                for (const JsonValue& pointValue : pointsValue->AsArray()) {
+                    Vec3 point(0.0f, 0.0f, 0.0f);
+                    if (!ParseVec3(pointValue, point)) {
+                        outError = "PhysicsShape points must be [x, y, z] arrays.";
+                        return false;
+                    }
+                    shape.points.push_back(point);
+                }
+            }
         }
 
         if (const JsonValue* rigidBodyObj = components->Find("RigidBody")) {
@@ -1649,6 +1682,15 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 if (reflectionStrengthValue->IsNumber()) {
                     material.reflectionStrength = static_cast<float>(reflectionStrengthValue->AsNumber());
                 }
+            }
+            for (auto [key, field] : {std::pair{"specular", &material.specular}, std::pair{"opacity", &material.opacity},
+                                      std::pair{"opacityMask", &material.opacityMask}}) {
+                if (const JsonValue* value = materialObj->Find(key); value && value->IsNumber()) {
+                    *field = static_cast<float>(value->AsNumber());
+                }
+            }
+            if (const JsonValue* blendValue = materialObj->Find("blendMode"); blendValue && blendValue->IsString()) {
+                material.blendMode = MaterialBlendModeFromName(blendValue->AsString());
             }
             if (const JsonValue* useTexValue = materialObj->Find("useAlbedoTexture")) {
                 material.useAlbedoTexture = ParseBoolLike(*useTexValue, material.useAlbedoTexture);
@@ -2049,6 +2091,15 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 ? entity.GetComponent<ProbeVolumeComponent>()
                 : entity.AddComponent<ProbeVolumeComponent>();
             if (!ApplyProbeVolumeJson(volume, *probeVolumeObj, outError)) {
+                return false;
+            }
+        }
+
+        if (const JsonValue* constructionObj = components->Find("ConstructionShape")) {
+            auto& construction = entity.HasComponent<ConstructionShapeComponent>()
+                ? entity.GetComponent<ConstructionShapeComponent>()
+                : entity.AddComponent<ConstructionShapeComponent>();
+            if (!Hephaestus::Construction::ApplyShapeJson(construction, *constructionObj, outError)) {
                 return false;
             }
         }
@@ -2529,6 +2580,7 @@ std::string SceneSerializer::SerializeToString() const
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
+        const ConstructionShapeComponent* construction = registry.try_get<ConstructionShapeComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -2631,6 +2683,13 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"extents\": " << FormatVec3(physicsShape->extents) << ",\n";
             oss << "          \"radius\": " << FormatFloat(physicsShape->radius) << ",\n";
             oss << "          \"height\": " << FormatFloat(physicsShape->height) << ",\n";
+            if (!physicsShape->points.empty()) {
+                oss << "          \"points\": [";
+                for (size_t n = 0; n < physicsShape->points.size(); ++n) {
+                    oss << (n ? ", " : "") << FormatVec3(physicsShape->points[n]);
+                }
+                oss << "],\n";
+            }
             oss << "          \"offset\": " << FormatVec3(physicsShape->offset) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
@@ -2669,6 +2728,10 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
             oss << "          \"reflectionStrength\": " << FormatFloat(material->reflectionStrength) << ",\n";
+            oss << "          \"specular\": " << FormatFloat(material->specular) << ",\n";
+            oss << "          \"opacity\": " << FormatFloat(material->opacity) << ",\n";
+            oss << "          \"opacityMask\": " << FormatFloat(material->opacityMask) << ",\n";
+            oss << "          \"blendMode\": \"" << MaterialBlendModeName(material->blendMode) << "\",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
             oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
@@ -2803,6 +2866,10 @@ std::string SceneSerializer::SerializeToString() const
 
         if (probeVolume) {
             componentBlocks.push_back(WriteProbeVolumeJson(*probeVolume));
+        }
+
+        if (construction) {
+            componentBlocks.push_back(Hephaestus::Construction::WriteShapeJson(*construction, "        "));
         }
 
         if (selection) {

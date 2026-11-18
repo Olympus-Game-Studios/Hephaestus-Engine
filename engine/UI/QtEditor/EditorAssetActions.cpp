@@ -8,6 +8,7 @@
 #include "EditorAssetActions.h"
 #include "EditorMainWindow.h"
 #include "HUIVisualEditorDialog.h"
+#include "KitEditorDialog.h"
 #include "MaterialGraphQtEditorDialog.h"
 #include "TextureViewerDialog.h"
 #include "../../Assets/AssetManager.h"
@@ -98,6 +99,10 @@ bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
 
         case AssetType::UILayout:
             return openHUI(absolutePath);
+
+        case AssetType::Kit:
+            KitEditorDialog::Open(m_mainWindow, absolutePath);
+            return true;
 
         case AssetType::Shader:
             return openScript(absolutePath);

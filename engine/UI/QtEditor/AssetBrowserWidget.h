@@ -161,6 +161,7 @@ private:
     void createNewUIFile(const QString& parentRelativePath);
     void createNewPrefab(const QString& parentRelativePath);
     void createNewCharacter(const QString& parentRelativePath);
+    void createNewKit(const QString& parentRelativePath);
     void importAssets();
     void importCharacter();
     void duplicateAsset(const QString& relativePath, bool isDirectory);
@@ -171,6 +172,8 @@ private:
     void renameAsset(const QString& relativePath, bool isDirectory);
     void findAssetReferences(const QString& relativePath);
     void showInExplorer(const QString& relativePath);
+    // The imported pack (portable folder with an import.json) this item is in, or empty.
+    QString importedPackFolder(const QString& relativePath) const;
     void showInFolder(const QString& relativePath);
     void syncFolderTreeSelection();
     QModelIndex findFolderIndexByPath(const QString& relativePath) const;

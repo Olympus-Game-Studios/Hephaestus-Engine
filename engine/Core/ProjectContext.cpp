@@ -513,6 +513,21 @@ void ProjectContext::SyncEngineAssets()
     } else {
         std::cerr << "[ProjectContext] Default HDRI source not found: " << srcDefaultHdri << "\n";
     }
+
+    const fs::path srcGrid = exeDir / "assets" / "textures" / "construction_grid.png";
+    const fs::path dstTextureDir = dstEngineDir / "textures";
+    if (fs::is_regular_file(srcGrid)) {
+        fs::create_directories(dstTextureDir, ec);
+        const fs::path dstGrid = dstTextureDir / srcGrid.filename();
+        if (!ec && (!fs::exists(dstGrid) || fs::file_size(dstGrid) != fs::file_size(srcGrid))) {
+            fs::copy_file(srcGrid, dstGrid, fs::copy_options::overwrite_existing, ec);
+        }
+        if (ec) {
+            std::cerr << "[ProjectContext] Failed to copy the construction grid texture: " << ec.message() << "\n";
+        }
+    } else {
+        std::cerr << "[ProjectContext] Construction grid texture not found: " << srcGrid << "\n";
+    }
 }
 
 } // namespace Hephaestus

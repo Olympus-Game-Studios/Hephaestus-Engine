@@ -1,6 +1,7 @@
 #pragma once
 #include "../Core/Math.h"
 #include <entt/entt.hpp>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -136,6 +137,7 @@ struct MeshRendererComponent {
     // Editor-only: when not visible, still draw a selection-style outline and allow viewport picking.
     bool showHiddenOutline = false;
     bool backfaceCulling = false;
+    bool previewGhost = false;  // drawn as a plain see-through tint, for editor previews (never saved)
     static constexpr size_t InvalidMesh = std::numeric_limits<size_t>::max();
     size_t meshHandle = InvalidMesh;
     std::string meshAssetPath;
@@ -257,8 +259,11 @@ enum class PhysicsShapeType {
     Sphere,
     Capsule,
     Cylinder,
-    Mesh
+    Mesh,
+    ConvexHull
 };
+
+struct MeshData;
 
 /**
  * Physics shape component - defines the collision shape for an entity
@@ -274,6 +279,12 @@ struct PhysicsShapeComponent {
     
     // Capsule/Cylinder
     float height = 1.0f;
+
+    // ConvexHull: points relative to the entity, before offset
+    std::vector<Vec3> points;
+
+    // Mesh: these triangles instead of the mesh renderer's model (static bodies only, never saved)
+    std::shared_ptr<const MeshData> triangles;
     
     // Offset from entity center
     Vec3 offset;

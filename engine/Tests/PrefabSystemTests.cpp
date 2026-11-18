@@ -595,6 +595,153 @@ bool TestCreateFromSelectionAndUnpack(const fs::path& outDir) {
     return ok;
 }
 
+bool TestNestedPrefabs(const fs::path& outDir) {
+    bool ok = true;
+    std::string error;
+    // A Lamp prefab, placed in a scene with an override on its shade.
+    Scene authoring("Nested");
+    Entity lampRoot, lampShade;
+    if (!BuildLampHierarchy(authoring, lampRoot, lampShade)) {
+        return Check(false, "build lamp");
+    }
+    const fs::path lampPath = outDir / "NestedLamp.hpprefab";
+    Entity lamp;
+    if (!PrefabOverrideSystem::CreateFromSelection(authoring, lampRoot, lampPath, &lamp, error)) {
+        std::cerr << error << "\n";
+        return Check(false, "create lamp prefab");
+    }
+    Entity shade = FindChildByTag(authoring, lamp, "Shade");
+    shade.GetComponent<TransformComponent>().position = Vec3(0.0f, 5.0f, 0.0f);
+    PrefabOverrideSystem::SyncEntityOverrides(authoring, shade);
+
+    // A guard post built from the lamp instance and a plain base becomes a prefab that links the lamp.
+    Entity post = authoring.CreateEntity("Post");
+    post.GetComponent<TransformComponent>().position = Vec3(-4.0f, 0.0f, 0.0f);
+    post.AddComponent<MaterialComponent>().albedo = Vec3(0.2f, 0.2f, 0.2f);
+    authoring.SetParent(lamp, post);
+    lamp.GetComponent<TransformComponent>().position = Vec3(1.0f, 2.0f, 0.0f);
+    const fs::path postPath = outDir / "GuardPost.hpprefab";
+    Entity postInstance;
+    if (!PrefabOverrideSystem::CreateFromSelection(authoring, post, postPath, &postInstance, error)) {
+        std::cerr << error << "\n";
+        return Check(false, "create guard post prefab");
+    }
+    PrefabAsset raw;
+    PrefabSerializer::Deserialize(raw, postPath, error);
+    const PrefabNode* lampNode = nullptr;
+    for (const auto& node : raw.nodes) {
+        if (!node.prefabPath.empty()) lampNode = &node;
+    }
+    ok &= Check(raw.nodes.size() == 2 && lampNode && PrefabOverrideSystem::PathsReferToSamePrefab(lampNode->prefabPath, lampPath.generic_string()),
+                "the guard post file links the lamp instead of copying its entities");
+    ok &= Check(lampNode && lampNode->nestedOverrides.size() == 1 && Near(lampNode->localTransform.position.x, 1.0f),
+                "the link keeps the lamp's placement and its shade override");
+
+    PrefabAsset expanded;
+    ok &= Check(PrefabOverrideSystem::LoadAsset(postPath.generic_string(), expanded, error) && expanded.nodes.size() == 3 &&
+                    expanded.nestedPrefabs.size() == 1,
+                "loading expands the nested lamp");
+    Entity liveShade = postInstance ? FindChildByTag(authoring, postInstance, "Shade") : Entity{};
+    ok &= Check(liveShade && Near(liveShade.GetComponent<TransformComponent>().position.y, 5.0f) &&
+                    liveShade.HasComponent<MeshRendererComponent>(),
+                "the guard post instance has the lamp's shade with its override");
+
+    // Editing the lamp prefab reaches the lamp inside every guard post.
+    PrefabAsset lampRaw;
+    PrefabSerializer::Deserialize(lampRaw, lampPath, error);
+    for (auto& node : lampRaw.nodes) {
+        if (node.name == "Shade") node.localTransform.scale = Vec3(2.0f, 2.0f, 2.0f);
+    }
+    PrefabSerializer::Serialize(lampRaw, lampPath, error);
+    PrefabOverrideSystem::InvalidateAssetCache(lampPath.generic_string());
+    ok &= Check(PrefabOverrideSystem::RefreshInstancesOfPrefab(authoring, lampPath.generic_string()) == 1,
+                "saving the lamp refreshes the guard post that contains it");
+    postInstance = FindByTag(authoring, "Post");
+    liveShade = postInstance ? FindChildByTag(authoring, postInstance, "Shade") : Entity{};
+    ok &= Check(liveShade && Near(liveShade.GetComponent<TransformComponent>().scale.x, 2.0f) &&
+                    Near(liveShade.GetComponent<TransformComponent>().position.y, 5.0f),
+                "the change arrives and the guard post's own override stays");
+
+    // A scene override on the nested shade, saved and loaded.
+    liveShade.GetComponent<TransformComponent>().position = Vec3(3.0f, 5.0f, 0.0f);
+    PrefabOverrideSystem::SyncEntityOverrides(authoring, liveShade);
+    const std::string saved = SceneSerializer(authoring).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    Entity loadedPost = FindByTag(loaded, "Post");
+    Entity loadedShade = loadedPost ? FindChildByTag(loaded, loadedPost, "Shade") : Entity{};
+    ok &= Check(loadedShade && Near(loadedShade.GetComponent<TransformComponent>().position.x, 3.0f) &&
+                    Near(loadedShade.GetComponent<TransformComponent>().scale.x, 2.0f),
+                "a scene override on a nested part survives saving and loading");
+
+    // Applying that override writes it into the guard post's link, not into the lamp.
+    if (!PrefabOverrideSystem::ApplyPropertyToPrefab(authoring, liveShade, "Transform", "position", error)) {
+        std::cerr << error << "\n";
+        ok &= Check(false, "apply nested override");
+    }
+    PrefabAsset postAfter;
+    PrefabSerializer::Deserialize(postAfter, postPath, error);
+    PrefabAsset lampAfter;
+    PrefabSerializer::Deserialize(lampAfter, lampPath, error);
+    const PrefabNode* lampLink = nullptr;
+    for (const auto& node : postAfter.nodes) {
+        if (!node.prefabPath.empty()) lampLink = &node;
+    }
+    bool shadeOverrideApplied = false;
+    if (lampLink) {
+        for (const auto& [nodeId, nodeOverride] : lampLink->nestedOverrides) {
+            auto transform = nodeOverride.componentOverrides.find("Transform");
+            const bool positionOnly = transform != nodeOverride.componentOverrides.end() &&
+                transform->second.properties.size() == 1 && transform->second.properties.count("position") &&
+                Near(transform->second.properties.at("position").AsVec3()->x, 3.0f);
+            shadeOverrideApplied = shadeOverrideApplied || positionOnly;
+        }
+    }
+    bool lampUntouched = true;
+    for (const auto& node : lampAfter.nodes) {
+        if (node.name == "Shade") lampUntouched = Near(node.localTransform.position.y, 1.5f);
+    }
+    ok &= Check(postAfter.nodes.size() == 2 && shadeOverrideApplied && lampUntouched,
+                "applying a nested change stores just the changed position on the guard post's lamp link");
+    for (auto& node : lampAfter.nodes) {
+        if (node.name == "Shade") node.localTransform.scale = Vec3(3.0f, 3.0f, 3.0f);
+    }
+    PrefabSerializer::Serialize(lampAfter, lampPath, error);
+    PrefabOverrideSystem::InvalidateAssetCache(lampPath.generic_string());
+    PrefabOverrideSystem::RefreshInstancesOfPrefab(authoring, lampPath.generic_string());
+    Entity refreshedPost = FindByTag(authoring, "Post");
+    Entity refreshedShade = refreshedPost ? FindChildByTag(authoring, refreshedPost, "Shade") : Entity{};
+    ok &= Check(refreshedShade && Near(refreshedShade.GetComponent<TransformComponent>().scale.x, 3.0f) &&
+                    Near(refreshedShade.GetComponent<TransformComponent>().position.x, 3.0f),
+                "after applying, later lamp changes the guard post did not override still come through");
+
+    // A variant: a prefab made from a single instance links that prefab at its root.
+    Entity variantSource = FindByTag(authoring, "Post");
+    const fs::path variantPath = outDir / "GuardPostVariant.hpprefab";
+    Entity variant;
+    ok &= Check(PrefabOverrideSystem::CreateFromSelection(authoring, variantSource, variantPath, &variant, error),
+                "create a variant");
+    PrefabAsset variantRaw;
+    PrefabSerializer::Deserialize(variantRaw, variantPath, error);
+    ok &= Check(variantRaw.nodes.size() == 1 && PrefabOverrideSystem::PathsReferToSamePrefab(variantRaw.nodes[0].prefabPath, postPath.generic_string()) &&
+                    variantRaw.rootNodeId == variantRaw.nodes[0].id,
+                "a variant's root links the original prefab");
+    PrefabAsset variantExpanded;
+    ok &= Check(PrefabOverrideSystem::LoadAsset(variantPath.generic_string(), variantExpanded, error) &&
+                    variantExpanded.nodes.size() == 3 && variantExpanded.nestedPrefabs.size() == 2,
+                "a variant expands through both levels");
+
+    // A prefab that includes itself loads instead of recursing forever.
+    PrefabAsset loop = variantRaw;
+    loop.nodes[0].prefabPath = (outDir / "Loop.hpprefab").generic_string();
+    PrefabSerializer::Serialize(loop, outDir / "Loop.hpprefab", error);
+    PrefabAsset loopExpanded;
+    error.clear();
+    ok &= Check(PrefabOverrideSystem::LoadAsset((outDir / "Loop.hpprefab").generic_string(), loopExpanded, error),
+                "a prefab that includes itself still loads");
+    return ok;
+}
+
 bool TestCreatedPrefabPathsArePortable(const fs::path& outDir) {
     const fs::path project = outDir / "PortableProject";
     fs::create_directories(project / "assets" / "prefabs");
@@ -1048,6 +1195,7 @@ int main(int argc, char** argv) {
     run("InstantiatePoseAndVars", TestInstantiatePoseAndVars, outDir);
     run("HierarchySceneComponentTypes", TestHierarchySceneComponentTypes, outDir);
     run("RigidBodyMotionInvariant", TestRigidBodyMotionInvariant, outDir);
+    run("NestedPrefabs", TestNestedPrefabs, outDir);
 
     if (failed > 0) {
         std::cerr << failed << " prefab test(s) failed\n";

@@ -332,6 +332,18 @@ QIcon Icon(const QString& name, IconTone tone)
     return icon;
 }
 
+QIcon IconFromFile(const QString& path, IconTone tone)
+{
+    if (!path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+        return QIcon(path);
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QIcon();
+    }
+    return QIcon(new ToneIconEngine(path, file.readAll(), ToneColor(tone)));
+}
+
 QIcon FileIcon(const QString& fileName)
 {
     static const QHash<QString, QString> kIconByExtension = {

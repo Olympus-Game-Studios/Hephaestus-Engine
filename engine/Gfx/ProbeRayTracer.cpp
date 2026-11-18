@@ -139,6 +139,13 @@ void ProbeRayTracer::destroyStructure(AccelerationStructure& as) {
     as = AccelerationStructure{};
 }
 
+void ProbeRayTracer::ForgetMesh(VkBuffer vertexBuffer) {
+    auto found = m_meshStructures.find(vertexBuffer);
+    if (found == m_meshStructures.end()) return;
+    destroyStructure(found->second);
+    m_meshStructures.erase(found);
+}
+
 void ProbeRayTracer::DestroySwapchainResources() {
     if (!m_device) return;
     for (FrameResources& frame : m_frames) {

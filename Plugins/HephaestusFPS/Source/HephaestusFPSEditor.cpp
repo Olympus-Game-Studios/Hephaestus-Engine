@@ -1,5 +1,6 @@
 #include "PluginAPI/PluginAPI.h"
 #include "FPSInputMerge.h"
+#include "FPSLevelChecks.h"
 
 #include <QDesktopServices>
 #include <QFile>
@@ -65,6 +66,13 @@ public:
             {"inputProfile", "Input profile",
              "Optional project input map path. Empty uses assets/input/Default.hpinput.",
              "assets/input/Default.hpinput", SettingScope::Project});
+        if (ILevelAnalysisService* analysis = context.LevelAnalysis()) {
+            LevelCheckDescriptor spawns;
+            spawns.id = "fps.spawns";
+            spawns.displayName = "Team deathmatch spawns";
+            spawns.run = &HephaestusFPS::SpawnChecks::Run;
+            ok &= analysis->RegisterCheck(spawns);
+        }
         return ok;
     }
 

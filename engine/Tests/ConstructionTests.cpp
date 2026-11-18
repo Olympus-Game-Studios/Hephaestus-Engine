@@ -1,0 +1,2534 @@
+#include "Analysis/LevelChecks.h"
+#include "Analysis/Playtest.h"
+#include "Construction/ConstructionBuilding.h"
+#include "Construction/ConstructionGeometry.h"
+#include "Construction/ConstructionKit.h"
+#include "Construction/ConstructionSystem.h"
+#include "Construction/ConstructionTool.h"
+#include "Navigation/NavMesh.h"
+#include "Scene/CharacterControllerComponent.h"
+#include "Scene/Components.h"
+#include "Scene/Entity.h"
+#include "Scene/Scene.h"
+#include "Scene/SceneSerializer.h"
+#include "Scene/PrefabComponentIO.h"
+#include "Scene/PrefabSerializer.h"
+#include "Scene/PrefabOverrideSystem.h"
+
+#include <chrono>
+#include <filesystem>
+#include <cmath>
+#include <iostream>
+#include <string>
+
+using namespace Hephaestus::Construction;
+
+namespace {
+
+bool g_pass = true;
+
+void Check(bool condition, const std::string& message)
+{
+    std::cout << (condition ? "[PASS] " : "[FAIL] ") << message << "\n";
+    g_pass = g_pass && condition;
+}
+
+bool InsideSolid(const EvaluatedGeometry& geometry, const Vec3& p)
+{
+    for (const LocalBox& box : geometry.solids) {
+        if (p.x > box.min.x && p.x < box.max.x && p.y > box.min.y && p.y < box.max.y && p.z > box.min.z &&
+            p.z < box.max.z) {
+            return true;
+        }
+    }
+    return false;
+}
+
+float SolidVolume(const EvaluatedGeometry& geometry)
+{
+    float volume = 0.0f;
+    for (const LocalBox& box : geometry.solids) {
+        volume += (box.max.x - box.min.x) * (box.max.y - box.min.y) * (box.max.z - box.min.z);
+    }
+    return volume;
+}
+
+bool HasGroup(const EvaluatedGeometry& geometry, FaceGroup group)
+{
+    for (const FaceTag& tag : geometry.triangleTags) {
+        if (tag.group == group) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Every triangle's normal must agree with its winding, or back-face culling would hide it.
+bool WindingMatchesNormals(const EvaluatedGeometry& geometry)
+{
+    const MeshData& mesh = geometry.mesh;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const Vertex& a = mesh.vertices[mesh.indices[i]];
+        const Vertex& b = mesh.vertices[mesh.indices[i + 1]];
+        const Vertex& c = mesh.vertices[mesh.indices[i + 2]];
+        const Vec3 pa(a.pos[0], a.pos[1], a.pos[2]);
+        const Vec3 n = vcross(vsub(Vec3(b.pos[0], b.pos[1], b.pos[2]), pa), vsub(Vec3(c.pos[0], c.pos[1], c.pos[2]), pa));
+        if (vdot(n, Vec3(a.normal[0], a.normal[1], a.normal[2])) <= 0.0f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct FakeSink {
+    size_t nextHandle = 0;
+    int uploads = 0;
+    int releases = 0;
+    int live = 0;
+    size_t lastIndices = 0;
+    MeshSink Make()
+    {
+        MeshSink sink;
+        sink.upload = [this](size_t existing, const std::string&, const MeshData& mesh) {
+            ++uploads;
+            lastIndices = mesh.indices.size();
+            if (existing != MeshRendererComponent::InvalidMesh) {
+                return existing;
+            }
+            ++live;
+            return nextHandle++;
+        };
+        sink.release = [this](size_t) {
+            ++releases;
+            --live;
+        };
+        return sink;
+    }
+};
+
+Entity AddBox(Scene& scene, const std::string& name, const BoxParams& params, const Vec3& position = Vec3(0, 0, 0))
+{
+    Entity entity = scene.CreateEntity(name);
+    entity.GetComponent<TransformComponent>().position = position;
+    auto& shape = entity.AddComponent<ConstructionShapeComponent>();
+    shape.recipe = Recipe::Box;
+    shape.box = params;
+    return entity;
+}
+
+Entity AddOpening(Scene& scene, Entity host, const OpeningParams& params)
+{
+    Entity entity = scene.CreateEntity("Opening");
+    auto& shape = entity.AddComponent<ConstructionShapeComponent>();
+    shape.recipe = Recipe::Opening;
+    shape.opening = params;
+    scene.SetParent(entity, host, false);
+    return entity;
+}
+
+BoxParams Room()
+{
+    BoxParams room;
+    room.width = 6.0f;
+    room.depth = 4.0f;
+    room.height = 3.0f;
+    room.hollow = true;
+    room.wallThickness = 0.2f;
+    room.floor = true;
+    room.ceiling = false;
+    return room;
+}
+
+OpeningParams Door()
+{
+    OpeningParams door;
+    door.side = WallSide::PosZ;
+    door.offset = 0.0f;
+    door.sill = 0.2f;  // on top of the floor slab
+    door.width = 1.2f;
+    door.height = 2.1f;
+    return door;
+}
+
+int CountGenerated(Scene& scene)
+{
+    int count = 0;
+    for (auto entity : scene.GetRegistry().view<ConstructionGeneratedComponent>()) {
+        (void)entity;
+        ++count;
+    }
+    return count;
+}
+
+void TestRecipes()
+{
+    EvaluatedGeometry solid;
+    BoxParams box;
+    Check(EvaluateBox(box, {}, solid), "a solid box evaluates");
+    Check(solid.mesh.vertices.size() == 24 && solid.mesh.indices.size() == 36, "a solid box is six quads");
+    Check(solid.solids.size() == 1 && std::fabs(SolidVolume(solid) - 48.0f) < 1e-3f,
+          "a solid box has one collision box with the right volume");
+    Check(WindingMatchesNormals(solid), "solid box winding matches its normals");
+    Check(std::fabs(solid.mesh.bounds.min.y) < 1e-6f && std::fabs(solid.mesh.bounds.max.y - 3.0f) < 1e-6f,
+          "the box stands on its origin");
+
+    EvaluatedGeometry room;
+    Check(EvaluateBox(Room(), {}, room), "a hollow room evaluates");
+    const float shell = 6.0f * 4.0f * 3.0f - 5.6f * 3.6f * 2.8f;
+    Check(std::fabs(SolidVolume(room) - shell) < 1e-3f, "room collision covers exactly the walls and floor");
+    Check(HasGroup(room, FaceGroup::Inner) && !HasGroup(room, FaceGroup::Reveal), "a room without openings has inner faces and no reveals");
+    Check(!InsideSolid(room, Vec3(0.0f, 1.5f, 0.0f)) && InsideSolid(room, Vec3(0.0f, 1.5f, 1.9f)) &&
+              InsideSolid(room, Vec3(0.0f, 0.1f, 0.0f)),
+          "the room is hollow with a wall at +z and a floor slab");
+    Check(WindingMatchesNormals(room), "room winding matches its normals");
+
+    EvaluatedGeometry doorRoom;
+    Check(EvaluateBox(Room(), {Door()}, doorRoom), "a room with a door evaluates");
+    Check(!InsideSolid(doorRoom, Vec3(0.0f, 1.0f, 1.9f)), "the door cuts through the +z wall");
+    Check(InsideSolid(doorRoom, Vec3(0.0f, 1.0f, -1.9f)), "the door does not cut the opposite wall");
+    Check(InsideSolid(doorRoom, Vec3(1.0f, 1.0f, 1.9f)) && InsideSolid(doorRoom, Vec3(0.0f, 2.6f, 1.9f)),
+          "the wall beside and above the door stays solid");
+    Check(InsideSolid(doorRoom, Vec3(0.0f, 0.1f, 1.9f)), "the floor slab under the door stays solid");
+    Check(HasGroup(doorRoom, FaceGroup::Reveal), "the door adds reveal faces");
+    Check(std::fabs(SolidVolume(room) - SolidVolume(doorRoom) - 1.2f * 2.1f * 0.2f) < 1e-3f,
+          "the door removes exactly its volume");
+    Check(WindingMatchesNormals(doorRoom), "room with door winding matches its normals");
+
+    OpeningParams window = Door();
+    window.side = WallSide::NegX;
+    window.offset = 0.5f;
+    window.sill = 1.0f;
+    window.height = 1.0f;
+    EvaluatedGeometry ab;
+    EvaluatedGeometry ba;
+    EvaluateBox(Room(), {Door(), window}, ab);
+    EvaluateBox(Room(), {window, Door()}, ba);
+    Check(HashGeometry(ab) == HashGeometry(ba), "opening order does not change the result");
+    EvaluatedGeometry again;
+    EvaluateBox(Room(), {Door(), window}, again);
+    Check(HashGeometry(ab) == HashGeometry(again), "evaluation is deterministic");
+
+    ConstructionShapeComponent shape;
+    shape.box = Room();
+    const std::uint64_t base = HashInputs(shape, {Door()});
+    OpeningParams moved = Door();
+    moved.offset = 0.5f;
+    Check(HashInputs(shape, {moved}) != base, "moving an opening changes the input hash");
+    Check(HashInputs(shape, {Door()}) == base, "the same inputs hash the same");
+}
+
+void TestSystem()
+{
+    Scene scene("Construction");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+
+    Entity room = AddBox(scene, "Room", Room());
+    Entity other = AddBox(scene, "Block", BoxParams{}, Vec3(10.0f, 0.0f, 0.0f));
+    Entity door = AddOpening(scene, room, Door());
+
+    Check(system.Update(scene) == 2, "the first update evaluates both shapes");
+    Check(room.HasComponent<MeshRendererComponent>() && room.GetComponent<MeshRendererComponent>().HasValidMesh(),
+          "a construction shape gets a mesh");
+    const EvaluatedGeometry* roomGeometry = system.Geometry(room);
+    Check(roomGeometry && CountGenerated(scene) ==
+              static_cast<int>(roomGeometry->solids.size() + system.Geometry(other)->solids.size()),
+          "one generated collision box per solid box");
+    Check(system.Update(scene) == 0, "an update with nothing changed evaluates nothing");
+
+    door.GetComponent<ConstructionShapeComponent>().opening.offset = 1.0f;
+    Check(system.Update(scene) == 1, "moving the door re-evaluates only its host");
+    Check(fake.live == 2, "re-evaluation reuses the mesh slot");
+
+    Hephaestus::Construction::ConstructionHit hit;
+    Check(system.Raycast(scene, Ray(Vec3(1.0f, 1.0f, 10.0f), Vec3(0.0f, 0.0f, -1.0f)), hit) &&
+              hit.entity == room && hit.tag.group == FaceGroup::Inner && hit.tag.wall == static_cast<int>(WallSide::NegZ),
+          "a ray through the door hits the far wall's inner face");
+    Check(system.Raycast(scene, Ray(Vec3(-1.5f, 1.0f, 10.0f), Vec3(0.0f, 0.0f, -1.0f)), hit) &&
+              hit.tag.group == FaceGroup::PosZ && std::fabs(hit.worldPoint.z - 2.0f) < 1e-4f,
+          "a ray beside the door hits the +z wall's outer face");
+
+    // Navigation sees the generated collision: a path from outside into the room goes through the door.
+    Entity ground = scene.CreateEntity("Ground");
+    ground.GetComponent<TransformComponent>().position = Vec3(0.0f, -0.5f, 0.0f);
+    ground.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(15.0f, 0.5f, 15.0f)));
+    auto& groundBody = ground.AddComponent<RigidBodyComponent>();
+    groundBody.isStatic = true;
+    groundBody.motion = RigidBodyMotion::Static;
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::NavBuildSettings{}, error);
+    Check(built && nav.FindPath(Vec3(1.0f, 0.0f, 6.0f), Vec3(0.0f, 0.2f, 0.0f), path) && !path.empty() &&
+              std::fabs(path.back().x) < 0.5f && std::fabs(path.back().z) < 0.5f,
+          "a navmesh path reaches the middle of the room (" + error + ")");
+    bool throughDoor = false;
+    for (size_t i = 1; i < path.size(); ++i) {
+        const Vec3 a = path[i - 1];
+        const Vec3 b = path[i];
+        if ((a.z - 2.0f) * (b.z - 2.0f) <= 0.0f && std::fabs(b.z - a.z) > 1e-4f) {
+            const float t = (2.0f - a.z) / (b.z - a.z);
+            const float x = a.x + (b.x - a.x) * t;
+            throughDoor = throughDoor || (x > 0.4f && x < 1.6f);
+        }
+    }
+    Check(throughDoor, "the path crosses the +z wall inside the moved door");
+
+    // Save and load: parameters survive, generated entities are never written.
+    SceneSerializer writer(scene);
+    const std::string saved = writer.SerializeToString();
+    Check(saved.find("Construction Collision") == std::string::npos, "generated collision is not saved");
+    Check(saved.find("\"ConstructionShape\"") != std::string::npos, "construction shapes are saved");
+    Scene loaded("Loaded");
+    Check(SceneSerializer::DeserializeFromString(loaded, saved), "the saved scene loads");
+    ConstructionSystem loadedSystem;
+    FakeSink loadedSink;
+    loadedSystem.SetMeshSink(loadedSink.Make());
+    loadedSystem.Update(loaded);
+    Entity loadedRoom = loaded.FindEntityByName("Room");
+    Check(loadedRoom && loadedSystem.Geometry(loadedRoom) &&
+              HashGeometry(*loadedSystem.Geometry(loadedRoom)) == HashGeometry(*system.Geometry(room)),
+          "the loaded room regenerates identical geometry");
+
+    // Undo restores a snapshot into the same scene: shapes keep their cached geometry, collision comes back.
+    const std::uint64_t evaluationsBefore = system.Stats().evaluations;
+    Check(SceneSerializer::DeserializeFromString(scene, saved), "a snapshot restores into the live scene");
+    system.Update(scene);
+    Check(system.Stats().evaluations == evaluationsBefore, "restoring a snapshot re-uses cached geometry");
+    room = scene.FindEntityByName("Room");
+    other = scene.FindEntityByName("Block");
+    Check(CountGenerated(scene) == static_cast<int>(system.Geometry(room)->solids.size() +
+                                                    system.Geometry(other)->solids.size()),
+          "restoring a snapshot rebuilds the collision");
+    Check(scene.FindEntityByName("Room").GetComponent<MeshRendererComponent>().HasValidMesh(),
+          "restoring a snapshot reconnects the mesh");
+
+    // Deleting a shape releases its mesh and its collision.
+    scene.DestroyEntity(other);
+    system.Update(scene);
+    Check(fake.live == 1 && CountGenerated(scene) == static_cast<int>(system.Geometry(room)->solids.size()),
+          "a deleted shape releases its mesh and collision");
+
+    // A duplicated room copies its shape and openings but not the generated collision.
+    auto copies = scene.DuplicateEntities({static_cast<entt::entity>(scene.FindEntityByName("Room"))});
+    Check(copies.size() == 1 && copies[0].HasComponent<ConstructionShapeComponent>() &&
+              ConstructionSystem::CollectOpenings(scene, copies[0]).size() == 1,
+          "duplicating a room copies its shape and door");
+    system.Update(scene);
+    Check(CountGenerated(scene) == 2 * static_cast<int>(system.Geometry(room)->solids.size()),
+          "the copy gets its own collision and no stray copies remain");
+}
+
+
+struct ToolCamera {
+    Vec3 eye{0.0f, 6.0f, 14.0f};
+    Mat4 viewProj;
+    ToolCamera()
+    {
+        const Mat4 view = Mat4::LookAt(eye, Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f));
+        const Mat4 proj = Mat4::Perspective(60.0f * 3.14159265f / 180.0f, 16.0f / 9.0f, 0.1f, 500.0f);
+        viewProj = Mat4::Multiply(proj, view);
+    }
+    // Input for the cursor over a world point, as the viewport would build it.
+    ToolInput At(const Vec3& target, bool shift = false) const
+    {
+        ToolInput input;
+        input.ray = Ray(eye, vsub(target, eye));
+        input.viewProj = viewProj;
+        input.viewportWidth = 1600.0f;
+        input.viewportHeight = 900.0f;
+        const Vec3 ndc = Mat4::TransformPoint(viewProj, target);
+        input.screenX = (ndc.x + 1.0f) * 0.5f * 1600.0f;
+        input.screenY = (ndc.y + 1.0f) * 0.5f * 900.0f;
+        input.shift = shift;
+        return input;
+    }
+};
+
+void TestTool()
+{
+    Scene scene("Tool");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    ConstructionTool tool;
+    int undoSteps = 0;
+    int discarded = 0;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [&]() { ++discarded; };
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+
+    tool.SetMode(ToolMode::DrawRoom);
+    Check(tool.OnPress(scene, system, camera.At(Vec3(-3.0f, 0.0f, -2.0f))), "pressing on the ground starts a room");
+    tool.OnMove(scene, system, camera.At(Vec3(3.0f, 0.0f, 2.0f)));
+    Check(tool.OnRelease(scene, system, camera.At(Vec3(3.0f, 0.0f, 2.0f))) && tool.IsBusy(),
+          "releasing the footprint asks for a height");
+    tool.OnMove(scene, system, camera.At(Vec3(0.0f, 3.0f, 0.0f)));
+    tool.OnPress(scene, system, camera.At(Vec3(0.0f, 3.0f, 0.0f)));
+    Entity room(selected, &scene);
+    Check(room && ConstructionSystem::IsBox(scene, selected) && !tool.IsBusy() && undoSteps == 1,
+          "clicking finishes the room as one undo step");
+    const auto& roomShape = room.GetComponent<ConstructionShapeComponent>();
+    Check(std::fabs(roomShape.box.width - 6.0f) < 1e-4f && std::fabs(roomShape.box.depth - 4.0f) < 1e-4f &&
+              std::fabs(roomShape.box.height - 3.0f) < 1e-4f && roomShape.box.hollow,
+          "the drawn room is 6 x 4 x 3 m and hollow");
+    const Vec3 roomPosition = room.GetComponent<TransformComponent>().position;
+    Check(vlen(roomPosition) < 1e-4f, "the room is centred on its footprint at ground level");
+    system.Update(scene);
+
+    tool.SetMode(ToolMode::DrawOpening);
+    tool.OnMove(scene, system, camera.At(Vec3(1.0f, 0.5f, 2.0f)));
+    Check(tool.OnPress(scene, system, camera.At(Vec3(1.0f, 0.5f, 2.0f))), "pressing on a wall starts an opening");
+    tool.OnRelease(scene, system, camera.At(Vec3(1.0f, 0.5f, 2.0f)));
+    auto openings = ConstructionSystem::CollectOpenings(scene, room);
+    Check(openings.size() == 1 && openings[0].side == WallSide::PosZ && std::fabs(openings[0].offset - 1.0f) < 1e-4f &&
+              std::fabs(openings[0].sill - 0.2f) < 1e-4f && std::fabs(openings[0].height - 2.1f) < 1e-4f,
+          "a click low on a wall adds a door standing on the floor");
+    Check(system.Update(scene) == 1, "the new door re-evaluates the room");
+
+    tool.OnPress(scene, system, camera.At(Vec3(1.0f, 1.0f, 2.0f)));
+    tool.OnMove(scene, system, camera.At(Vec3(-0.5f, 1.0f, 2.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(-0.5f, 1.0f, 2.0f)));
+    openings = ConstructionSystem::CollectOpenings(scene, room);
+    Check(openings.size() == 1 && std::fabs(openings[0].offset + 0.5f) < 1e-4f && std::fabs(openings[0].sill - 0.2f) < 1e-4f,
+          "dragging the door moves it along the wall (offset " + std::to_string(openings.empty() ? 0.0f : openings[0].offset) +
+              ", sill " + std::to_string(openings.empty() ? 0.0f : openings[0].sill) + ")");
+
+    tool.SetMode(ToolMode::Select);
+    selected = room;
+    Check(tool.OnPress(scene, system, camera.At(Vec3(3.0f, 1.5f, 0.0f))), "pressing on the +x handle starts a resize");
+    tool.OnMove(scene, system, camera.At(Vec3(4.0f, 1.5f, 0.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(4.0f, 1.5f, 0.0f)));
+    Check(std::fabs(roomShape.box.width - 7.0f) < 1e-3f &&
+              std::fabs(room.GetComponent<TransformComponent>().position.x - 0.5f) < 1e-3f,
+          "dragging the +x face 1 m out widens the room and keeps the -x wall in place");
+    tool.OnPress(scene, system, camera.At(Vec3(4.0f, 1.5f, 0.0f)));
+    tool.OnMove(scene, system, camera.At(Vec3(6.0f, 1.5f, 0.0f)));
+    tool.OnKey(scene, system, 0x01000000);
+    Check(std::fabs(roomShape.box.width - 7.0f) < 1e-3f && discarded == 1, "Esc during a resize puts the room back");
+
+    tool.SetMode(ToolMode::DrawBox);
+    tool.OnPress(scene, system, camera.At(Vec3(8.0f, 0.0f, 0.0f)));
+    for (int key : std::initializer_list<int>{'2', ',', '3', 0x01000004, '1', '.', '5', 0x01000004}) {
+        tool.OnKey(scene, system, key);
+    }
+    Entity block(selected, &scene);
+    const auto* blockShape = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(blockShape && std::fabs(blockShape->box.width - 2.0f) < 1e-4f && std::fabs(blockShape->box.depth - 3.0f) < 1e-4f &&
+              std::fabs(blockShape->box.height - 1.5f) < 1e-4f && !blockShape->box.hollow,
+          "typed sizes draw a 2 x 3 x 1.5 m block");
+
+    tool.SetMode(ToolMode::DrawStairs);
+    host.stepHeight = [] { return 0.3f; };
+    tool.SetHost(host);
+    tool.OnPress(scene, system, camera.At(Vec3(-6.0f, 0.0f, 0.0f)));
+    tool.OnMove(scene, system, camera.At(Vec3(-2.0f, 0.0f, 1.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(-2.0f, 0.0f, 1.0f)));
+    tool.OnKey(scene, system, '2');
+    tool.OnKey(scene, system, 0x01000004);
+    const auto* stairShape = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(stairShape && stairShape->recipe == Recipe::Stairs && std::fabs(stairShape->box.depth - 4.0f) < 1e-4f &&
+              std::fabs(stairShape->box.width - 1.0f) < 1e-4f && std::fabs(stairShape->box.height - 2.0f) < 1e-4f &&
+              std::fabs(stairShape->stairs.maxRise - 0.285f) < 1e-4f,
+          "drawn stairs run along the longer side and keep their steps under the step height");
+    if (stairShape) {
+        const Mat4 world = scene.GetWorldTransform(Entity(selected, &scene));
+        const Vec3 top = Mat4::TransformPoint(world, Vec3(0.0f, 2.0f, 2.0f));
+        Check(std::fabs(top.x + 2.0f) < 1e-3f && std::fabs(top.z - 0.5f) < 1e-3f,
+              "the stairs climb towards where the drag ended");
+    }
+}
+
+void TestStairs()
+{
+    ConstructionShapeComponent shape;
+    shape.recipe = Recipe::Stairs;
+    shape.box.width = 1.2f;
+    shape.box.depth = 3.0f;
+    shape.box.height = 1.5f;
+    shape.stairs.maxRise = 0.285f;
+    Check(StairCount(shape) == 6, "1.5 m with steps up to 0.285 m gives 6 steps (" + std::to_string(StairCount(shape)) + ")");
+    EvaluatedGeometry stairs;
+    Check(EvaluateShape(shape, {}, stairs), "stairs evaluate");
+    Check(WindingMatchesNormals(stairs), "stairs winding matches their normals");
+    const float run = 3.0f / 6.0f;
+    const float rise = 1.5f / 6.0f;
+    bool stepsRight = true;
+    for (int step = 0; step < 6; ++step) {
+        const float z = -1.5f + run * (step + 0.5f);
+        stepsRight = stepsRight && InsideSolid(stairs, Vec3(0.0f, rise * (step + 0.5f), z)) &&
+                     !InsideSolid(stairs, Vec3(0.0f, rise * (step + 1.5f), z));
+    }
+    Check(stepsRight, "each step is solid up to its tread and empty above it");
+    Check(std::fabs(SolidVolume(stairs) - 1.2f * run * rise * 21.0f) < 1e-3f, "stairs collision has the volume of the steps");
+    shape.stairs.steps = 10;
+    EvaluatedGeometry fixed;
+    EvaluateShape(shape, {}, fixed);
+    Check(StairCount(shape) == 10 && HashGeometry(fixed) != HashGeometry(stairs), "an explicit step count is used");
+
+    // A character with the default settings can walk up the stairs on the navmesh.
+    Scene scene("Stairs");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity flight = scene.CreateEntity("Stairs");
+    auto& flightShape = flight.AddComponent<ConstructionShapeComponent>();
+    flightShape.recipe = Recipe::Stairs;
+    flightShape.box.width = 1.6f;
+    flightShape.box.depth = 4.0f;
+    flightShape.box.height = 2.0f;
+    flightShape.stairs.maxRise = 0.285f;
+    BoxParams landing;
+    landing.width = 4.0f;
+    landing.depth = 4.0f;
+    landing.height = 2.0f;
+    AddBox(scene, "Landing", landing, Vec3(0.0f, 0.0f, 4.0f));
+    Entity ground = scene.CreateEntity("Ground");
+    ground.GetComponent<TransformComponent>().position = Vec3(0.0f, -0.5f, 0.0f);
+    ground.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(15.0f, 0.5f, 15.0f)));
+    auto& body = ground.AddComponent<RigidBodyComponent>();
+    body.isStatic = true;
+    body.motion = RigidBodyMotion::Static;
+    system.Update(scene);
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::NavBuildSettings{}, error);
+    Check(built && nav.FindPath(Vec3(0.0f, 0.0f, -6.0f), Vec3(0.0f, 2.0f, 4.0f), path) && !path.empty() &&
+              std::fabs(path.back().y - 2.0f) < 0.3f && std::fabs(path.back().z - 4.0f) < 0.5f,
+          "a navmesh path climbs the stairs onto a 2 m landing (" + error + ")");
+}
+
+void TestSubtract()
+{
+    Scene scene("Subtract");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams wallParams;
+    wallParams.width = 6.0f;
+    wallParams.height = 3.0f;
+    wallParams.depth = 0.4f;
+    Entity wall = AddBox(scene, "Wall", wallParams);
+    Entity other = AddBox(scene, "Far", BoxParams{}, Vec3(20.0f, 0.0f, 0.0f));
+    BoxParams holeParams;
+    holeParams.width = 1.0f;
+    holeParams.height = 1.0f;
+    holeParams.depth = 2.0f;
+    Entity hole = AddBox(scene, "Hole", holeParams, Vec3(1.0f, 1.0f, 0.0f));
+    hole.GetComponent<ConstructionShapeComponent>().operation = Operation::Subtract;
+
+    Check(system.Update(scene) == 3, "the wall, the far block and the subtract box evaluate");
+    const EvaluatedGeometry* wallGeometry = system.Geometry(wall);
+    Check(wallGeometry && !InsideSolid(*wallGeometry, Vec3(1.0f, 1.5f, 0.0f)) && InsideSolid(*wallGeometry, Vec3(-1.0f, 1.5f, 0.0f)),
+          "a subtract box cuts a hole through the wall it overlaps");
+    Check(std::fabs(SolidVolume(*wallGeometry) - (6.0f * 3.0f * 0.4f - 1.0f * 1.0f * 0.4f)) < 1e-3f,
+          "the hole removes exactly the overlapping volume");
+    int holeColliders = 0;
+    for (auto entity : scene.GetRegistry().view<ConstructionGeneratedComponent>()) {
+        holeColliders += scene.GetRegistry().get<ConstructionGeneratedComponent>(entity).ownerEntity ==
+                         static_cast<std::uint32_t>(static_cast<entt::entity>(hole)) ? 1 : 0;
+    }
+    Check(holeColliders == 0 && hole.GetComponent<MeshRendererComponent>().hideInGame,
+          "a subtract box has no collision and is hidden in the game");
+    {
+        ConstructionSystem::SetOperation(scene, hole, Operation::Subtract);
+        Scene reopened("Reopened");
+        SceneSerializer::DeserializeFromString(reopened, SceneSerializer(scene).SerializeToString());
+        Entity reloadedHole = reopened.FindEntityByName("Hole");
+        const auto* material = reloadedHole ? reopened.GetRegistry().try_get<MaterialComponent>(reloadedHole) : nullptr;
+        Check(material && material->blendMode == MaterialBlendMode::AlphaBlend && std::fabs(material->opacity - 0.3f) < 1e-4f,
+              "a reopened subtract box keeps its see-through material");
+    }
+
+    hole.GetComponent<TransformComponent>().position = Vec3(-2.0f, 1.0f, 0.0f);
+    Check(system.Update(scene) == 1, "moving the subtract box re-evaluates only the wall it cuts");
+    Check(!InsideSolid(*system.Geometry(wall), Vec3(-2.0f, 1.5f, 0.0f)) && InsideSolid(*system.Geometry(wall), Vec3(1.0f, 1.5f, 0.0f)),
+          "the hole follows the subtract box");
+
+    ConstructionHit hit;
+    Check(system.Raycast(scene, Ray(Vec3(-2.0f, 1.5f, 10.0f), Vec3(0.0f, 0.0f, -1.0f)), hit) == false,
+          "rays pass through the hole and ignore the subtract box itself");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    ConstructionSystem loadedSystem;
+    loadedSystem.Update(loaded);
+    Entity loadedWall = loaded.FindEntityByName("Wall");
+    Check(loadedWall && HashGeometry(*loadedSystem.Geometry(loadedWall)) == HashGeometry(*system.Geometry(wall)),
+          "a saved and reloaded subtract box cuts the same hole");
+    (void)other;
+}
+
+void TestRoundShapes()
+{
+    Scene scene("Round");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size;
+    size.width = 2.0f;
+    size.height = 3.0f;
+    size.depth = 2.0f;
+    Entity plane = AddBox(scene, "Plane", size);
+    Entity cylinder = AddBox(scene, "Cylinder", size, Vec3(5.0f, 0.0f, 0.0f));
+    Entity sphere = AddBox(scene, "Sphere", size, Vec3(10.0f, 0.0f, 0.0f));
+    plane.GetComponent<ConstructionShapeComponent>().recipe = Recipe::Plane;
+    cylinder.GetComponent<ConstructionShapeComponent>().recipe = Recipe::Cylinder;
+    sphere.GetComponent<ConstructionShapeComponent>().recipe = Recipe::Sphere;
+    sphere.GetComponent<ConstructionShapeComponent>().segments = 16;
+
+    Check(system.Update(scene) == 3, "plane, cylinder and sphere evaluate as construction shapes");
+    const EvaluatedGeometry* planeGeometry = system.Geometry(plane);
+    const EvaluatedGeometry* cylinderGeometry = system.Geometry(cylinder);
+    const EvaluatedGeometry* sphereGeometry = system.Geometry(sphere);
+    Check(planeGeometry && planeGeometry->mesh.indices.size() == 6 && planeGeometry->solids.size() == 1,
+          "a plane is two triangles over a thin walkable slab");
+    Check(cylinderGeometry && cylinderGeometry->rounds.size() == 1 &&
+          cylinderGeometry->rounds[0].kind == RoundCollider::Kind::Cylinder &&
+          std::fabs(cylinderGeometry->mesh.bounds.max.y - 3.0f) < 1e-4f && std::fabs(cylinderGeometry->mesh.bounds.min.y) < 1e-4f,
+          "a cylinder stands on its origin with a cylinder collider");
+    Check(sphereGeometry && sphereGeometry->rounds.size() == 1 && std::fabs(sphereGeometry->rounds[0].center.y - 1.5f) < 1e-4f &&
+          sphereGeometry->mesh.indices.size() == static_cast<size_t>((16 * 8 * 2 - 2 * 16) * 3),
+          "a sphere rests on its origin and uses its segment count");
+    for (const EvaluatedGeometry* geometry : {cylinderGeometry, sphereGeometry}) {
+        const Vec3 center(0.0f, 1.5f, 0.0f);
+        bool outward = true;
+        const auto& v = geometry->mesh.vertices;
+        const auto& idx = geometry->mesh.indices;
+        for (size_t i = 0; i + 2 < idx.size(); i += 3) {
+            const Vec3 a(v[idx[i]].pos[0], v[idx[i]].pos[1], v[idx[i]].pos[2]);
+            const Vec3 b(v[idx[i + 1]].pos[0], v[idx[i + 1]].pos[1], v[idx[i + 1]].pos[2]);
+            const Vec3 c(v[idx[i + 2]].pos[0], v[idx[i + 2]].pos[1], v[idx[i + 2]].pos[2]);
+            const Vec3 n = vcross(vsub(b, a), vsub(c, a));
+            const Vec3 centroid = vscale(vadd(vadd(a, b), c), 1.0f / 3.0f);
+            outward &= vlen(n) < 1e-8f || vdot(n, vsub(centroid, center)) > 0.0f;
+        }
+        Check(outward, "round shape triangles face outward");
+    }
+
+    int colliders = 0;
+    for (auto entity : scene.GetRegistry().view<ConstructionGeneratedComponent, PhysicsShapeComponent>()) {
+        const auto type = scene.GetRegistry().get<PhysicsShapeComponent>(entity).type;
+        colliders += type == PhysicsShapeType::Box || type == PhysicsShapeType::Cylinder || type == PhysicsShapeType::Sphere ? 1 : 0;
+    }
+    Check(colliders == 3, "each round shape gets one generated collider");
+
+    sphere.GetComponent<ConstructionShapeComponent>().segments = 32;
+    Check(system.Update(scene) == 1, "changing segments re-evaluates only that shape");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    Entity loadedSphere = loaded.FindEntityByName("Sphere");
+    Check(loadedSphere && loadedSphere.GetComponent<ConstructionShapeComponent>().recipe == Recipe::Sphere &&
+          loadedSphere.GetComponent<ConstructionShapeComponent>().segments == 32,
+          "round shapes save and load their recipe and segments");
+}
+
+void TestSetOperation()
+{
+    Scene scene("Operation");
+    ConstructionSystem system;
+    Entity block = AddBox(scene, "Block", BoxParams{});
+    ConstructionSystem::SetOperation(scene, block, Operation::Add);
+    Check(block.HasComponent<MaterialComponent>() && block.GetComponent<MaterialComponent>().useAlbedoTexture,
+          "an add block gets the blockout material");
+    system.Update(scene);
+    ConstructionSystem::SetOperation(scene, block, Operation::Subtract);
+    system.Update(scene);
+    Check(IsCutter(block.GetComponent<ConstructionShapeComponent>()) &&
+          block.GetComponent<MaterialComponent>().blendMode == MaterialBlendMode::AlphaBlend &&
+          block.GetComponent<MeshRendererComponent>().hideInGame,
+          "switching to subtract makes it a hidden see-through cutter");
+    ConstructionSystem::SetOperation(scene, block, Operation::Add);
+    Check(!IsCutter(block.GetComponent<ConstructionShapeComponent>()) &&
+          block.GetComponent<MaterialComponent>().useAlbedoTexture && !block.GetComponent<MeshRendererComponent>().hideInGame,
+          "switching back to add restores the blockout look and in-game visibility");
+
+    for (Recipe recipe : {Recipe::Wall, Recipe::Sphere, Recipe::Cylinder, Recipe::Plane}) {
+        Entity other = scene.CreateEntity("Other");
+        other.AddComponent<ConstructionShapeComponent>().recipe = recipe;
+        ConstructionSystem::SetOperation(scene, other, Operation::Subtract);
+        Check(other.HasComponent<MaterialComponent>() && other.GetComponent<MaterialComponent>().useAlbedoTexture &&
+                  other.GetComponent<ConstructionShapeComponent>().operation == Operation::Add,
+              std::string("a ") + RecipeName(recipe) + " gets the blockout material and stays additive");
+    }
+}
+
+Entity AddWall(Scene& scene, const std::string& name, std::vector<WallPoint> points, bool closed,
+               const Vec3& position = Vec3(0, 0, 0))
+{
+    Entity entity = scene.CreateEntity(name);
+    entity.GetComponent<TransformComponent>().position = position;
+    auto& shape = entity.AddComponent<ConstructionShapeComponent>();
+    shape.recipe = Recipe::Wall;
+    shape.wall.points = std::move(points);
+    shape.wall.closed = closed;
+    shape.box.height = 3.0f;
+    shape.box.wallThickness = 0.2f;
+    shape.box.floor = true;
+    Sanitize(shape);
+    return entity;
+}
+
+void TestWalls()
+{
+    ConstructionShapeComponent wall;
+    wall.recipe = Recipe::Wall;
+    wall.box.height = 3.0f;
+    wall.box.wallThickness = 0.2f;
+    wall.wall.points = {{0.0f, 0.0f}, {4.0f, 0.0f}, {4.0f, 3.0f}};
+    EvaluatedGeometry corner;
+    Check(EvaluateShape(wall, {}, corner), "an open L-shaped wall evaluates");
+    Check(corner.hulls.empty() && InsideSolid(corner, Vec3(2.0f, 1.5f, 0.0f)) && InsideSolid(corner, Vec3(4.0f, 1.5f, 1.5f)),
+          "a square-cornered wall collides as boxes along both segments");
+    Check(InsideSolid(corner, Vec3(4.05f, 1.5f, -0.05f)), "the outer corner is filled");
+    Check(std::fabs(SolidVolume(corner) - (4.0f * 0.2f * 3.0f + 3.0f * 0.2f * 3.0f + 0.1f * 0.1f * 3.0f)) < 0.05f,
+          "the corner adds only its outer square, give or take where the two segments overlap");
+    Check(WindingMatchesNormals(corner), "wall winding matches its normals");
+    Check(std::fabs(corner.mesh.bounds.max.x - 4.1f) < 1e-4f && std::fabs(corner.mesh.bounds.min.z + 0.1f) < 1e-4f,
+          "the wall's bounds reach the mitred corner");
+
+    OpeningParams door;
+    door.segment = 1;
+    door.offset = 0.0f;
+    door.width = 1.2f;
+    door.height = 2.1f;
+    EvaluatedGeometry doorway;
+    EvaluateShape(wall, {door}, doorway);
+    Check(!InsideSolid(doorway, Vec3(4.0f, 1.0f, 1.5f)) && InsideSolid(doorway, Vec3(2.0f, 1.0f, 0.0f)) &&
+              InsideSolid(doorway, Vec3(4.0f, 2.5f, 1.5f)),
+          "a doorway cuts only the segment it is on, under its lintel");
+    bool segmentTagged = false;
+    for (const FaceTag& tag : doorway.triangleTags) {
+        segmentTagged = segmentTagged || (tag.segment == 1 && tag.wall == static_cast<std::int8_t>(WallSide::PosZ));
+    }
+    Check(segmentTagged, "wall faces know their segment, so openings can be drawn on them");
+    WallFrame frame;
+    Check(GetHostWallFrame(wall, WallSide::PosZ, 1, frame) && std::fabs(frame.halfLength - 1.5f) < 1e-4f &&
+              std::fabs(frame.u.z - 1.0f) < 1e-4f && std::fabs(frame.center.x - 3.9f) < 1e-4f,
+          "a segment's wall frame runs along it, on its left face");
+
+    ConstructionShapeComponent angled = wall;
+    angled.wall.points = {{0.0f, 0.0f}, {4.0f, 0.0f}, {6.0f, 2.0f}};
+    EvaluatedGeometry slanted;
+    EvaluateShape(angled, {}, slanted);
+    Check(!slanted.hulls.empty() && WindingMatchesNormals(slanted), "a 45 degree wall collides with convex hulls");
+
+    ConstructionShapeComponent room = wall;
+    room.wall.points = {{0.0f, 0.0f}, {6.0f, 0.0f}, {6.0f, 4.0f}, {3.0f, 4.0f}, {3.0f, 7.0f}, {0.0f, 7.0f}};
+    room.wall.closed = true;
+    EvaluatedGeometry lRoom;
+    EvaluateShape(room, {}, lRoom);
+    Check(lRoom.hulls.empty() && InsideSolid(lRoom, Vec3(1.5f, 0.1f, 5.5f)) && InsideSolid(lRoom, Vec3(4.5f, 0.1f, 2.0f)) &&
+              !InsideSolid(lRoom, Vec3(4.5f, 0.1f, 5.5f)) && !InsideSolid(lRoom, Vec3(1.5f, 1.5f, 2.0f)),
+          "an L-shaped room has a floor in both arms and none outside the L");
+    Check(WindingMatchesNormals(lRoom) && HasGroup(lRoom, FaceGroup::Floor), "the room's floor faces up into the room");
+    Check(DisplayName(room) == std::string("Room") && HostFloorTop(room) > 0.19f, "a closed wall is a room with a floor");
+
+    ConstructionShapeComponent triangle = wall;
+    triangle.wall.points = {{0.0f, 0.0f}, {6.0f, 0.0f}, {0.0f, 6.0f}};
+    triangle.wall.closed = true;
+    EvaluatedGeometry triangleRoom;
+    EvaluateShape(triangle, {}, triangleRoom);
+    Check(triangleRoom.hulls.size() >= 2 && WindingMatchesNormals(triangleRoom),
+          "a triangular room's sloped wall and floor collide as convex hulls");
+
+    Check(TriangulatePolygon(room.wall.points).size() == 12, "an L of six points makes four floor triangles");
+
+    Scene scene("Walls");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity lWall = AddWall(scene, "L Room", room.wall.points, true);
+    Entity slope = AddWall(scene, "Triangle", triangle.wall.points, true, Vec3(20.0f, 0.0f, 0.0f));
+    Check(system.Update(scene) == 2, "walls evaluate in the system");
+    int hullColliders = 0;
+    for (auto entity : scene.GetRegistry().view<ConstructionGeneratedComponent, PhysicsShapeComponent>()) {
+        const auto& physicsShape = scene.GetRegistry().get<PhysicsShapeComponent>(entity);
+        hullColliders += physicsShape.type == PhysicsShapeType::ConvexHull && physicsShape.points.size() >= 6 ? 1 : 0;
+    }
+    Check(hullColliders == static_cast<int>(system.Geometry(slope)->hulls.size()), "every hull gets a convex hull collider");
+
+    BoxParams holeParams;
+    holeParams.width = 1.0f;
+    holeParams.height = 1.0f;
+    holeParams.depth = 1.0f;
+    Entity hole = AddBox(scene, "Hole", holeParams, Vec3(3.0f, 1.0f, 0.0f));
+    hole.GetComponent<ConstructionShapeComponent>().operation = Operation::Subtract;
+    system.Update(scene);
+    Check(!InsideSolid(*system.Geometry(lWall), Vec3(3.0f, 1.5f, 0.0f)) && InsideSolid(*system.Geometry(lWall), Vec3(1.0f, 1.5f, 0.0f)),
+          "a subtract block cuts the wall segment it overlaps");
+
+    Entity opening = scene.CreateEntity("Doorway");
+    auto& openingShape = opening.AddComponent<ConstructionShapeComponent>();
+    openingShape.recipe = Recipe::Opening;
+    openingShape.opening = door;
+    openingShape.opening.segment = 4;
+    openingShape.opening.sill = 0.2f;
+    scene.SetParent(opening, lWall, false);
+    Check(system.Update(scene) == 1, "adding an opening re-evaluates only its wall");
+    Check(!InsideSolid(*system.Geometry(lWall), Vec3(1.5f, 1.0f, 7.0f)), "the opening cuts the room's fifth segment");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    ConstructionSystem loadedSystem;
+    loadedSystem.Update(loaded);
+    Entity loadedWall = loaded.FindEntityByName("L Room");
+    Check(loadedWall && loadedWall.GetComponent<ConstructionShapeComponent>().wall.points.size() == 6 &&
+              HashGeometry(*loadedSystem.Geometry(loadedWall)) == HashGeometry(*system.Geometry(lWall)),
+          "a saved and reloaded wall rebuilds the same geometry, openings and cuts included");
+
+    // Bots can use angled rooms: the triangular room's hull floor and walls are in the navmesh.
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    Vec3 floorPoint;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::SettingsForScene(scene), error);
+    Check(built && nav.ClosestPoint(Vec3(21.5f, 0.5f, 1.5f), floorPoint, Vec3(0.3f, 1.0f, 0.3f)) &&
+              std::fabs(floorPoint.y - 0.2f) < 0.15f,
+          "the triangular room's floor is on the navmesh");
+    Check(built && nav.FindPath(Vec3(21.0f, 0.2f, 1.0f), Vec3(22.5f, 0.2f, 2.5f), path) && !path.empty() &&
+              std::fabs(path.back().x - 22.5f) < 0.3f && std::fabs(path.back().z - 2.5f) < 0.3f,
+          "a path crosses the triangular room towards its sloped wall");
+    const bool nearWall = built && nav.ClosestPoint(Vec3(23.0f, 0.5f, 3.0f), floorPoint, Vec3(0.1f, 1.0f, 0.1f));
+    const float fromWall = std::fabs(floorPoint.x - 20.0f + floorPoint.z - 6.0f) / std::sqrt(2.0f);
+    Check(built && (!nearWall || fromWall >= 0.35f),
+          "nothing walkable lies within the sloped wall or an agent's radius of it");
+}
+
+void TestResizeSnapsToNeighbours()
+{
+    Scene scene("Resize Snapping");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    ConstructionTool tool;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.pushUndo = [](const std::string&) {};
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+    BoxParams params;
+    params.width = 2.0f;
+    params.height = 3.0f;
+    params.depth = 2.0f;
+    Entity block = AddBox(scene, "Block", params);
+    AddBox(scene, "Neighbour", params, Vec3(3.93f, 0.0f, 0.0f));
+    system.Update(scene);
+    selected = block;
+    auto& shape = block.GetComponent<ConstructionShapeComponent>();
+
+    // The grid alone would stop the face at 2.75, 18 cm short of the neighbour's face at 2.93.
+    tool.OnPress(scene, system, camera.At(Vec3(1.0f, 1.5f, 0.0f)));
+    tool.OnMove(scene, system, camera.At(Vec3(2.8f, 1.5f, 0.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(2.8f, 1.5f, 0.0f)));
+    Check(std::fabs(shape.box.width - 3.93f) < 1e-3f &&
+              std::fabs(block.GetComponent<TransformComponent>().position.x - 0.965f) < 1e-3f,
+          "a resized face snaps onto a nearby face (width " + std::to_string(shape.box.width) + ")");
+
+    ToolInput far = camera.At(Vec3(2.2f, 1.5f, 0.0f));
+    tool.OnPress(scene, system, camera.At(Vec3(2.93f, 1.5f, 0.0f)));
+    tool.OnMove(scene, system, far);
+    tool.OnRelease(scene, system, far);
+    Check(std::fabs(shape.box.width - 3.25f) < 1e-3f, "out of reach, the face stays on the grid (width " +
+                                                          std::to_string(shape.box.width) + ")");
+}
+
+void TestCopyPaste()
+{
+    Scene scene("Copy Paste");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams params;
+    params.width = 1.5f;
+    Entity hole = AddBox(scene, "Hole", params, Vec3(2.0f, 1.0f, 0.0f));
+    ConstructionSystem::SetOperation(scene, hole, Operation::Subtract);
+    system.Update(scene);
+
+    scene.CopyEntityToClipboard(hole);
+    Entity pasted = scene.PasteClipboard();
+    const auto* shape = pasted ? scene.GetRegistry().try_get<ConstructionShapeComponent>(pasted) : nullptr;
+    Check(shape && shape->recipe == Recipe::Box && shape->operation == Operation::Subtract &&
+              std::fabs(shape->box.width - 1.5f) < 1e-4f,
+          "a pasted subtract block is still a subtract block of the same size");
+    system.Update(scene);
+    Check(pasted && system.Geometry(pasted) != nullptr, "the pasted block is evaluated like any construction shape");
+}
+
+void TestWallsLineUp()
+{
+    Scene scene("Wall Snapping");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    ConstructionTool tool;
+    int undoSteps = 0;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+    tool.SetMode(ToolMode::DrawWall);
+    auto click = [&](const Vec3& p) {
+        tool.OnMove(scene, system, camera.At(p));
+        tool.OnPress(scene, system, camera.At(p));
+        tool.OnRelease(scene, system, camera.At(p));
+    };
+    auto finish = [&]() { tool.OnKey(scene, system, 0x01000004); };  // Enter
+
+    // A side clicked a grid square off straight (0.5 m over 6 m) comes out straight.
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    click(Vec3(3.0f, 0.0f, -1.5f));
+    finish();
+    Entity first(selected, &scene);
+    const auto& firstShape = first.GetComponent<ConstructionShapeComponent>();
+    Check(firstShape.wall.points.size() == 2 && std::fabs(firstShape.wall.points[1].z) < 1e-4f,
+          "a side within 6 degrees of straight is drawn straight");
+
+    // Starting on its end carries on the same wall, so the corner is mitred instead of two ends meeting.
+    click(Vec3(3.1f, 0.0f, -1.9f));
+    click(Vec3(3.0f, 0.0f, 3.0f));
+    finish();
+    int walls = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionShapeComponent>()) {
+        walls += scene.GetRegistry().get<ConstructionShapeComponent>(handle).recipe == Recipe::Wall ? 1 : 0;
+    }
+    Check(walls == 1 && selected == static_cast<entt::entity>(first) && firstShape.wall.points.size() == 3 &&
+              std::fabs(firstShape.wall.points[2].x - 6.0f) < 1e-4f && std::fabs(firstShape.wall.points[2].z - 5.0f) < 1e-4f,
+          "drawing on from a wall's end extends that wall with a mitred corner");
+
+    // Drawing on from its first point puts new corners before it, and openings move to the same segments.
+    OpeningParams door = Door();
+    door.segment = 0;
+    AddOpening(scene, first, door);
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    click(Vec3(-3.0f, 0.0f, 3.0f));
+    finish();
+    int doorSegment = -1;
+    for (entt::entity child : first.GetComponent<TransformComponent>().children) {
+        doorSegment = scene.GetRegistry().get<ConstructionShapeComponent>(child).opening.segment;
+    }
+    Check(firstShape.wall.points.size() == 4 && std::fabs(firstShape.wall.points[0].z - 5.0f) < 1e-4f && doorSegment == 1,
+          "drawing on from the first point adds corners before it and keeps the door on its side");
+
+    // A separate wall started near a room's corner starts exactly on it.
+    BoxParams room = Room();
+    AddBox(scene, "Room", room, Vec3(20.0f, 0.0f, 0.0f));
+    click(Vec3(22.75f, 0.0f, 2.0f));  // the room's centre-line corner is at (22.9, 1.9)
+    click(Vec3(26.0f, 0.0f, 2.0f));
+    finish();
+    const auto& tail = scene.GetRegistry().get<ConstructionShapeComponent>(selected);
+    const Vec3 start = scene.GetRegistry().get<TransformComponent>(selected).position;
+    Check(std::fabs(start.x - 22.9f) < 1e-4f && std::fabs(start.z - 1.9f) < 1e-4f && tail.wall.points.size() == 2,
+          "a wall started near a room's corner starts on the corner (" + std::to_string(start.x) + ", " +
+              std::to_string(start.z) + ")");
+    (void)undoSteps;
+}
+
+void TestWallTool()
+{
+    Scene scene("Wall Tool");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    ConstructionTool tool;
+    int undoSteps = 0;
+    int discarded = 0;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [&]() { ++discarded; };
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+
+    tool.SetMode(ToolMode::DrawWall);
+    auto click = [&](const Vec3& p, bool shift = false) {
+        tool.OnMove(scene, system, camera.At(p, shift));
+        tool.OnPress(scene, system, camera.At(p, shift));
+        tool.OnRelease(scene, system, camera.At(p, shift));
+    };
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    Check(tool.IsBusy(), "clicking the ground starts a wall");
+    click(Vec3(3.0f, 0.0f, -2.0f));
+    click(Vec3(3.2f, 0.0f, 2.0f), true);
+    click(Vec3(-3.0f, 0.0f, 2.0f));
+    Check(tool.IsBusy() && undoSteps == 0, "each click adds a corner without changing the scene yet");
+    click(Vec3(-3.0f, 0.0f, -2.0f));
+    Entity room(selected, &scene);
+    const auto* roomShape = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(!tool.IsBusy() && undoSteps == 1 && roomShape && roomShape->recipe == Recipe::Wall && roomShape->wall.closed &&
+              roomShape->wall.points.size() == 4,
+          "clicking the first corner closes the path into a room in one undo step");
+    Check(roomShape && std::fabs(roomShape->wall.points[2].x - 6.0f) < 1e-4f && std::fabs(roomShape->wall.points[2].z - 4.0f) < 1e-4f &&
+              vlen(vsub(room.GetComponent<TransformComponent>().position, Vec3(-3.0f, 0.0f, -2.0f))) < 1e-4f,
+          "corners are stored from the first one, and Shift kept the third side straight");
+    system.Update(scene);
+
+    tool.SetMode(ToolMode::DrawOpening);
+    tool.OnMove(scene, system, camera.At(Vec3(0.0f, 0.5f, 2.1f)));
+    Check(tool.OnPress(scene, system, camera.At(Vec3(0.0f, 0.5f, 2.1f))), "pressing on a wall segment starts an opening");
+    tool.OnRelease(scene, system, camera.At(Vec3(0.0f, 0.5f, 2.1f)));
+    const auto openings = ConstructionSystem::CollectOpenings(scene, room);
+    Check(openings.size() == 1 && openings[0].segment == 2 && std::fabs(openings[0].sill - 0.2f) < 1e-4f &&
+              std::fabs(std::fabs(openings[0].offset) - 0.0f) < 1e-4f,
+          "a click low on the room's far wall adds a door on that segment, standing on the floor");
+    system.Update(scene);
+    Check(!InsideSolid(*system.Geometry(room), Vec3(3.0f, 1.0f, 4.0f)), "the door is cut through the wall");
+
+    tool.SetMode(ToolMode::Select);
+    selected = room;
+    Check(tool.OnPress(scene, system, camera.At(Vec3(3.0f, 0.0f, 2.0f))), "pressing on a corner handle starts a drag");
+    tool.OnMove(scene, system, camera.At(Vec3(4.0f, 0.0f, 3.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(4.0f, 0.0f, 3.0f)));
+    Check(std::fabs(roomShape->wall.points[2].x - 7.0f) < 1e-4f && std::fabs(roomShape->wall.points[2].z - 5.0f) < 1e-4f,
+          "dragging a corner moves it on the ground");
+    tool.OnPress(scene, system, camera.At(Vec3(4.0f, 0.0f, 3.0f)));
+    tool.OnMove(scene, system, camera.At(Vec3(6.0f, 0.0f, 3.0f)));
+    tool.OnKey(scene, system, 0x01000000);
+    Check(std::fabs(roomShape->wall.points[2].x - 7.0f) < 1e-4f && discarded == 1, "Esc during a corner drag puts it back");
+
+    tool.SetMode(ToolMode::DrawWall);
+    click(Vec3(8.0f, 0.0f, 0.0f));
+    for (int key : std::initializer_list<int>{'4', 0x01000004, 0x01000004}) {
+        tool.OnKey(scene, system, key);
+    }
+    const auto* typed = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(typed && typed->recipe == Recipe::Wall && !typed->wall.closed && typed->wall.points.size() == 2 &&
+              std::fabs(typed->wall.points[1].x - 4.0f) < 1e-4f,
+          "typing 4 then Enter places a corner 4 m along, and Enter again finishes an open wall");
+}
+
+void TestRampsAndTurns()
+{
+    ConstructionShapeComponent ramp;
+    ramp.recipe = Recipe::Ramp;
+    ramp.box.width = 2.0f;
+    ramp.box.height = 1.5f;
+    ramp.box.depth = 4.0f;
+    EvaluatedGeometry slope;
+    Check(EvaluateShape(ramp, {}, slope) && slope.hulls.size() == 1 && slope.hulls[0].size() == 6 &&
+              slope.mesh.indices.size() == 8 * 3 && WindingMatchesNormals(slope),
+          "a ramp is a closed wedge that collides as one convex hull");
+    Check(std::fabs(slope.mesh.bounds.max.y - 1.5f) < 1e-5f && std::fabs(slope.mesh.bounds.max.z - 2.0f) < 1e-5f,
+          "a ramp rises to its height at +Z");
+
+    auto turning = [](StairTurn turn) {
+        ConstructionShapeComponent stairs;
+        stairs.recipe = Recipe::Stairs;
+        stairs.box.width = 3.0f;
+        stairs.box.depth = 4.0f;
+        stairs.box.height = 2.0f;
+        stairs.stairs.maxRise = 0.285f;
+        stairs.stairs.turn = turn;
+        stairs.stairs.flightWidth = 1.2f;
+        Sanitize(stairs);
+        return stairs;
+    };
+    EvaluatedGeometry left;
+    Check(EvaluateShape(turning(StairTurn::Left), {}, left) && WindingMatchesNormals(left), "quarter-turn stairs evaluate");
+    Check(InsideSolid(left, Vec3(-0.9f, 0.1f, -1.9f)) && !InsideSolid(left, Vec3(-0.9f, 0.4f, -1.9f)) &&
+              InsideSolid(left, Vec3(-0.9f, 1.2f, 1.4f)) && InsideSolid(left, Vec3(1.4f, 1.9f, 1.4f)) &&
+              !InsideSolid(left, Vec3(1.0f, 0.5f, -1.0f)),
+          "a left quarter turn climbs the -X side, lands in the far corner and climbs across towards +X");
+    EvaluatedGeometry right;
+    EvaluateShape(turning(StairTurn::Right), {}, right);
+    Check(InsideSolid(right, Vec3(0.9f, 0.1f, -1.9f)) && InsideSolid(right, Vec3(-1.4f, 1.9f, 1.4f)),
+          "a right quarter turn is its mirror image");
+    EvaluatedGeometry uTurn;
+    EvaluateShape(turning(StairTurn::UTurnLeft), {}, uTurn);
+    Check(InsideSolid(uTurn, Vec3(0.0f, 1.2f, 1.4f)) && InsideSolid(uTurn, Vec3(0.9f, 1.9f, -1.9f)) &&
+              !InsideSolid(uTurn, Vec3(0.9f, 1.9f, 0.0f)) && !InsideSolid(uTurn, Vec3(0.0f, 0.5f, -1.0f)),
+          "a U-turn lands across the far side and climbs back along the +X side");
+    Check(StairCount(turning(StairTurn::Left)) == 8, "turning stairs keep every step under Max Step");
+
+    // Bots can walk up a ramp and round a quarter turn.
+    Scene scene("Ramps");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity ground = scene.CreateEntity("Ground");
+    ground.GetComponent<TransformComponent>().position = Vec3(0.0f, -0.5f, 0.0f);
+    ground.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(20.0f, 0.5f, 20.0f)));
+    auto& body = ground.AddComponent<RigidBodyComponent>();
+    body.isStatic = true;
+    body.motion = RigidBodyMotion::Static;
+    Entity stairs = scene.CreateEntity("Stairs");
+    stairs.AddComponent<ConstructionShapeComponent>(turning(StairTurn::Left));
+    BoxParams top;
+    top.width = 4.0f;
+    top.depth = 4.0f;
+    top.height = 2.0f;
+    AddBox(scene, "Top", top, Vec3(3.5f, 0.0f, 1.4f));
+    Entity rampEntity = scene.CreateEntity("Ramp");
+    rampEntity.GetComponent<TransformComponent>().position = Vec3(-8.0f, 0.0f, 0.0f);
+    rampEntity.AddComponent<ConstructionShapeComponent>(ramp);
+    BoxParams rampTop;
+    rampTop.width = 4.0f;
+    rampTop.depth = 4.0f;
+    rampTop.height = 1.5f;
+    AddBox(scene, "Ramp Top", rampTop, Vec3(-8.0f, 0.0f, 4.0f));
+    system.Update(scene);
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::SettingsForScene(scene), error);
+    Check(built && nav.FindPath(Vec3(-0.9f, 0.0f, -6.0f), Vec3(4.0f, 2.0f, 1.4f), path) && !path.empty() &&
+              std::fabs(path.back().y - 2.0f) < 0.3f && std::fabs(path.back().x - 4.0f) < 0.5f,
+          "a navmesh path climbs quarter-turn stairs onto the landing beyond them");
+    Check(built && nav.FindPath(Vec3(-8.0f, 0.0f, -6.0f), Vec3(-8.0f, 1.5f, 4.5f), path) && !path.empty() &&
+              std::fabs(path.back().y - 1.5f) < 0.3f && std::fabs(path.back().z - 4.5f) < 0.5f,
+          "a navmesh path walks up the ramp");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    Entity loadedStairs = loaded.FindEntityByName("Stairs");
+    Entity loadedRamp = loaded.FindEntityByName("Ramp");
+    Check(loadedStairs && loadedStairs.GetComponent<ConstructionShapeComponent>().stairs.turn == StairTurn::Left &&
+              std::fabs(loadedStairs.GetComponent<ConstructionShapeComponent>().stairs.flightWidth - 1.2f) < 1e-5f &&
+              loadedRamp && loadedRamp.GetComponent<ConstructionShapeComponent>().recipe == Recipe::Ramp,
+          "turning stairs and ramps save and load");
+
+    ConstructionTool tool;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    tool.SetHost(host);
+    const ToolCamera camera;
+    tool.SetMode(ToolMode::DrawRamp);
+    tool.OnPress(scene, system, camera.At(Vec3(6.0f, 0.0f, -6.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(6.0f, 0.0f, -6.0f)));
+    const auto* drawn = selected != entt::null ? scene.GetRegistry().try_get<ConstructionShapeComponent>(selected) : nullptr;
+    Check(drawn && drawn->recipe == Recipe::Ramp && std::fabs(drawn->box.depth - 4.0f) < 1e-4f &&
+              std::fabs(drawn->box.height - 1.0f) < 1e-4f,
+          "clicking with Draw Ramp drops a 2 x 4 m ramp 1 m high");
+}
+
+void TestFaceTextureAlignment()
+{
+    Scene scene("Texture Alignment");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size;
+    size.width = 4.0f;
+    size.height = 2.0f;
+    size.depth = 1.0f;
+    Entity block = AddBox(scene, "Block", size);
+    auto& shape = block.GetComponent<ConstructionShapeComponent>();
+    FaceMaterial front{FaceTag{FaceGroup::PosZ, static_cast<std::int8_t>(WallSide::PosZ), -1}, "assets/materials/Brick.hematerial"};
+    front.fit = true;
+    shape.faceMaterials.push_back(front);
+    system.Update(scene);
+    // The UV range of the painted face's triangles.
+    auto range = [&](Vec3& lo, Vec3& hi) {
+        const EvaluatedGeometry* geometry = system.Geometry(block);
+        lo = Vec3(1e9f, 1e9f, 0.0f);
+        hi = Vec3(-1e9f, -1e9f, 0.0f);
+        int count = 0;
+        for (size_t t = 0; geometry && t < geometry->triangleTags.size(); ++t) {
+            if (!SameFace(geometry->triangleTags[t], front.face)) continue;
+            for (size_t k = 0; k < 3; ++k) {
+                const float* uv = geometry->mesh.vertices[geometry->mesh.indices[t * 3 + k]].texCoord;
+                lo = Vec3(std::min(lo.x, uv[0]), std::min(lo.y, uv[1]), 0.0f);
+                hi = Vec3(std::max(hi.x, uv[0]), std::max(hi.y, uv[1]), 0.0f);
+                ++count;
+            }
+        }
+        return count > 0;
+    };
+    Vec3 lo;
+    Vec3 hi;
+    const bool fitted = range(lo, hi);
+    Check(fitted && std::fabs(lo.x) < 1e-4f && std::fabs(lo.y) < 1e-4f && std::fabs(hi.x - 1.0f) < 1e-4f &&
+              std::fabs(hi.y - 1.0f) < 1e-4f,
+          "Fit stretches the texture once across the face");
+
+    shape.faceMaterials[0].rotation = 90.0f;
+    shape.faceMaterials[0].scaleU = 2.0f;
+    shape.faceMaterials[0].scaleV = 2.0f;
+    shape.faceMaterials[0].offsetU = 0.5f;
+    shape.faceMaterials[0].offsetV = 0.5f;
+    Check(system.Update(scene) == 1, "changing the alignment re-evaluates the shape");
+    const bool turned = range(lo, hi);
+    Check(turned && std::fabs(lo.x) < 1e-4f && std::fabs(hi.x - 0.5f) < 1e-4f && std::fabs(lo.y - 0.5f) < 1e-4f &&
+              std::fabs(hi.y - 1.0f) < 1e-4f,
+          "the fitted texture is turned a quarter, made twice as big and moved by half a repeat (u " +
+              std::to_string(lo.x) + " to " + std::to_string(hi.x) + ", v " + std::to_string(lo.y) + " to " +
+              std::to_string(hi.y) + ")");
+
+    Scene reopened("Reopened");
+    SceneSerializer::DeserializeFromString(reopened, SceneSerializer(scene).SerializeToString());
+    Entity loaded = reopened.FindEntityByName("Block");
+    const auto* loadedShape = loaded ? reopened.GetRegistry().try_get<ConstructionShapeComponent>(loaded) : nullptr;
+    Check(loadedShape && loadedShape->faceMaterials.size() == 1 && loadedShape->faceMaterials[0].fit &&
+              std::fabs(loadedShape->faceMaterials[0].rotation - 90.0f) < 1e-4f &&
+              std::fabs(loadedShape->faceMaterials[0].scaleV - 2.0f) < 1e-4f &&
+              std::fabs(loadedShape->faceMaterials[0].offsetU - 0.5f) < 1e-4f,
+          "texture alignment is saved with the scene and read back");
+    ConstructionShapeComponent copied;
+    std::string error;
+    Check(ApplyShapeJson(copied, ShapeToJson(shape), error) && copied.faceMaterials.size() == 1 &&
+              std::fabs(copied.faceMaterials[0].scaleU - 2.0f) < 1e-4f && copied.faceMaterials[0].fit,
+          "texture alignment survives prefabs and copy and paste (" + error + ")");
+}
+
+void TestFaceMaterials()
+{
+    Scene scene("Faces");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity room = AddBox(scene, "Room", Room());
+    auto& shape = room.GetComponent<ConstructionShapeComponent>();
+    shape.faceMaterials.push_back({FaceTag{FaceGroup::Floor, -1, -1}, "assets/materials/Tiles.hematerial"});
+    shape.faceMaterials.push_back({FaceTag{FaceGroup::Inner, static_cast<std::int8_t>(WallSide::PosZ), -1},
+                                   "assets/materials/Brick.hematerial"});
+    shape.faceMaterials.push_back({FaceTag{FaceGroup::PosZ, static_cast<std::int8_t>(WallSide::PosZ), -1},
+                                   "assets/materials/Brick.hematerial"});
+    auto& renderer = room.AddComponent<MeshRendererComponent>();
+    renderer.appliedMaterialPaths = {"assets/materials/Plaster.hematerial"};
+    system.Update(scene);
+    const EvaluatedGeometry* geometry = system.Geometry(room);
+    Check(geometry && geometry->mesh.submeshes.size() == 3, "painted faces split the room into three material slots");
+    Check(renderer.submeshCount == 3 && renderer.appliedMaterialPaths.size() == 3 &&
+              renderer.appliedMaterialPaths[0] == "assets/materials/Plaster.hematerial" &&
+              renderer.appliedMaterialPaths[1] == "assets/materials/Tiles.hematerial" &&
+              renderer.appliedMaterialPaths[2] == "assets/materials/Brick.hematerial",
+          "slot 0 keeps the shape's own material and each painted material gets one slot");
+    bool tagsFollow = geometry != nullptr;
+    for (const auto& submesh : geometry->mesh.submeshes) {
+        for (uint32_t i = submesh.indexOffset; i < submesh.indexOffset + submesh.indexCount; i += 3) {
+            const FaceTag& tag = geometry->triangleTags[i / 3];
+            const int expected = tag.group == FaceGroup::Floor ? 1
+                : (tag.wall == static_cast<std::int8_t>(WallSide::PosZ) &&
+                   (tag.group == FaceGroup::Inner || tag.group == FaceGroup::PosZ)) ? 2 : 0;
+            tagsFollow = tagsFollow && submesh.materialSlot == expected;
+        }
+    }
+    Check(tagsFollow, "every triangle lands in its face's slot and keeps its face tag");
+    ConstructionHit hit;
+    Check(system.Raycast(scene, Ray(Vec3(0.0f, 5.0f, 0.0f), Vec3(0.0f, -1.0f, 0.0f)), hit) &&
+              hit.tag.group == FaceGroup::Floor,
+          "picking still finds the floor after the triangles are regrouped");
+
+    shape.faceMaterials.erase(shape.faceMaterials.begin());
+    Check(system.Update(scene) == 1 && renderer.submeshCount == 2 &&
+              renderer.appliedMaterialPaths[1] == "assets/materials/Brick.hematerial",
+          "clearing a face's material re-evaluates the room with one slot fewer");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    Entity loadedRoom = loaded.FindEntityByName("Room");
+    const auto* loadedShape = loadedRoom ? loaded.GetRegistry().try_get<ConstructionShapeComponent>(loadedRoom) : nullptr;
+    Check(loadedShape && loadedShape->faceMaterials.size() == 2 &&
+              loadedShape->faceMaterials[1].face.group == FaceGroup::PosZ &&
+              loadedShape->faceMaterials[1].face.wall == static_cast<std::int8_t>(WallSide::PosZ) &&
+              loadedShape->faceMaterials[1].material == "assets/materials/Brick.hematerial",
+          "painted faces save and load");
+
+    // Wall segments are painted one by one.
+    ConstructionShapeComponent wall;
+    wall.recipe = Recipe::Wall;
+    wall.box.height = 3.0f;
+    wall.box.wallThickness = 0.2f;
+    wall.wall.points = {{0.0f, 0.0f}, {4.0f, 0.0f}, {4.0f, 3.0f}};
+    wall.faceMaterials.push_back({FaceTag{FaceGroup::PosZ, static_cast<std::int8_t>(WallSide::PosZ), 1},
+                                  "assets/materials/Brick.hematerial"});
+    EvaluatedGeometry painted;
+    EvaluateShape(wall, {}, painted);
+    const auto slots = AssignFaceMaterials(wall.faceMaterials, painted);
+    bool onlySegment = slots.size() == 2 && painted.mesh.submeshes.size() == 2;
+    for (const auto& submesh : painted.mesh.submeshes) {
+        for (uint32_t i = submesh.indexOffset; submesh.materialSlot == 1 && i < submesh.indexOffset + submesh.indexCount; i += 3) {
+            onlySegment = onlySegment && painted.triangleTags[i / 3].segment == 1;
+        }
+    }
+    Check(onlySegment && DescribeFace(wall.faceMaterials[0].face) == "+Z side of wall 2",
+          "a wall's face is painted on its own segment only");
+}
+
+KitDefinition TestKit()
+{
+    KitDefinition kit;
+    kit.name = "Test";
+    kit.pieces = {
+        {"assets/kit/Wall2.hpprefab", "wall", 2.0f, 0.05f, 0.0f, 0.0f},
+        {"assets/kit/Wall1.hpprefab", "wall", 1.0f, 0.05f, 0.0f, 0.0f},
+        {"assets/kit/Filler.hpprefab", "filler", 0.5f, 0.5f, 0.0f, 0.0f},
+        {"assets/kit/Corner.hpprefab", "corner", 0.2f, 0.0f, 0.0f, 0.0f},
+        {"assets/kit/Door.hpprefab", "door", 1.6f, 0.0f, 1.0f, 1.4f},
+        {"assets/kit/Wall2Vent.hpprefab", "wall", 2.0f, 0.05f, 0.0f, 0.0f, true},
+    };
+    return kit;
+}
+
+void TestKits()
+{
+    const KitDefinition kit = TestKit();
+    Check(ValidateKit(kit).empty(), "a kit with walls, a filler, a corner and a door frame validates");
+    KitDefinition broken = kit;
+    broken.pieces[4].openingMax = 0.0f;
+    broken.pieces[1].role = "column";
+    Check(ValidateKit(broken).size() == 2, "a frame without opening widths and an unknown role are reported");
+
+    const RunFill run = SolveRun(kit, 7.3f);
+    float total = 0.0f;
+    bool withinLimits = run.filled;
+    for (const KitPiece* piece : run.pieces) {
+        total += piece->width * run.scale;
+        withinLimits = withinLimits && std::fabs(run.scale - 1.0f) <= piece->stretch + 1e-4f;
+    }
+    Check(run.filled && std::fabs(total - 7.3f) < 1e-3f && withinLimits,
+          "a 7.3 m run fills with declared pieces, stretched within every piece's limit");
+    Check(SolveRun(kit, 4.0f).pieces.size() == 2 && std::fabs(SolveRun(kit, 4.0f).scale - 1.0f) < 1e-5f,
+          "a 4 m run is two 2 m pieces with no stretch");
+    Check(!SolveRun(kit, 0.2f).filled, "a run shorter than anything in the kit stays unfilled");
+
+    ConstructionShapeComponent room;
+    room.recipe = Recipe::Box;
+    room.box = Room();
+    room.box.width = 6.0f;
+    room.box.depth = 4.0f;
+    OpeningParams door;
+    door.side = WallSide::PosZ;
+    door.offset = 0.0f;
+    door.sill = room.box.wallThickness;
+    door.width = 1.2f;
+    const KitFillResult fill = FillShape(room, {door}, kit);
+    int corners = 0;
+    int doors = 0;
+    for (const KitPlacement& placement : fill.placements) {
+        corners += placement.piece && placement.piece->role == "corner" ? 1 : 0;
+        doors += placement.piece && placement.piece->role == "door" ? 1 : 0;
+    }
+    Check(fill.gaps == 0 && corners == 4 && doors == 1 && fill.maxStretch <= 0.05f + 1e-4f,
+          "a 6 x 4 m room with a door gets four corners, a door frame and wall runs with no gaps");
+    bool variantUsed = false;
+    std::string panelSlot;
+    for (const KitPlacement& placement : fill.placements) {
+        variantUsed = variantUsed || (placement.piece && placement.piece->variant);
+        if (panelSlot.empty() && placement.piece && placement.piece->width == 2.0f && placement.piece->role == "wall") {
+            panelSlot = placement.slot;
+        }
+    }
+    Check(!variantUsed && !panelSlot.empty() && DescribeSlot("1:r0.2") == "Wall 2, run 1, piece 3",
+          "the kit never picks a variant by itself, and every spot is named");
+
+    ConstructionShapeComponent swapped = room;
+    swapped.kitSwaps = {{panelSlot, "assets/kit/Wall2Vent.hpprefab"}, {"0:c", "assets/kit/Wall1.hpprefab"}};
+    auto shownAt = [](const KitFillResult& result, const std::string& slot) -> const KitPiece* {
+        for (const KitPlacement& placement : result.placements) {
+            if (placement.slot == slot) return placement.piece;
+        }
+        return nullptr;
+    };
+    const KitFillResult swappedFill = FillShape(swapped, {door}, kit);
+    const KitPiece* shown = shownAt(swappedFill, panelSlot);
+    Check(shown && shown->variant && swappedFill.swapped == 1 && swappedFill.staleSwaps == 1 &&
+              swappedFill.pieces == fill.pieces,
+          "a variant swapped into a spot replaces the kit's piece there; a piece of another width is refused");
+    swapped.box.width = 8.0f;
+    const KitFillResult resized = FillShape(swapped, {door}, kit);
+    shown = shownAt(resized, panelSlot);
+    Check(shown && shown->variant && resized.swapped == 1, "a swap stays in its spot when the room is resized");
+
+    // In a scene: pieces are linked prefab copies under the room, the room stays the collision.
+    namespace fs = std::filesystem;
+    const fs::path project = fs::temp_directory_path() / "hephaestus_kit_tests";
+    fs::remove_all(project);
+    fs::create_directories(project / "assets/kit");
+    std::string error;
+    for (const KitPiece& piece : kit.pieces) {
+        PrefabAsset prefab;
+        prefab.guid = piece.prefab;
+        prefab.name = piece.role;
+        prefab.rootNodeId = "root";
+        PrefabNode root;
+        root.id = "root";
+        root.name = "Kit " + piece.role;
+        MeshRendererComponent renderer(AABB(Vec3(-piece.width * 0.5f, 0.0f, -0.1f), Vec3(piece.width * 0.5f, 3.0f, 0.1f)));
+        renderer.meshAssetPath = "builtin://cube";
+        root.components.push_back({"MeshRenderer", true, PrefabComponentIO::MeshRendererToJson(renderer)});
+        root.components.push_back({"PhysicsShape", true, PrefabComponentIO::MakeObject()});
+        prefab.nodes.push_back(root);
+        PrefabSerializer::Serialize(prefab, project / piece.prefab, error);
+    }
+    SaveKit(project / "assets/kit/Test.hpkit", kit, error);
+    PrefabOverrideSystem::SetProjectRoot(project);
+    PrefabOverrideSystem::InvalidateAssetCache();
+    AABB measured;
+    Check(MeasurePiece("assets/kit/Wall2.hpprefab", measured, error) && std::fabs(measured.max.x - measured.min.x - 2.0f) < 1e-4f &&
+              std::fabs(measured.max.y - 3.0f) < 1e-4f,
+          "a piece prefab is measured from its meshes (" + error + ")");
+
+    Scene scene("Kit");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity dressed = AddBox(scene, "Dressed Room", room.box);
+    AddOpening(scene, dressed, door);
+    system.Update(scene);
+    const size_t bareIndices = fake.lastIndices;
+    const int bareGenerated = CountGenerated(scene);
+    dressed.GetComponent<ConstructionShapeComponent>().kit = "assets/kit/Test.hpkit";
+    system.Update(scene);
+    const size_t dressedIndices = fake.lastIndices;
+    KitSummary summary;
+    Check(system.Kit(dressed, summary) && summary.error.empty() && summary.pieces == static_cast<int>(fill.pieces) &&
+              summary.gaps == 0,
+          "the room is dressed with the kit's pieces (" + summary.error + ")");
+    int pieceRoots = 0;
+    int pieceEntities = 0;
+    bool physicsStripped = true;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        ++pieceEntities;
+        pieceRoots += scene.GetRegistry().get<PrefabNodeComponent>(handle).nodeId == "root" ? 1 : 0;
+        physicsStripped = physicsStripped && !scene.GetRegistry().all_of<PhysicsShapeComponent>(handle);
+    }
+    Check(pieceRoots == fill.pieces && physicsStripped && scene.GetRegistry().all_of<EditorOnlyComponent>(
+              *scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>().begin()),
+          "each piece is a prefab copy under the room, without its own collision, and is never saved");
+    Check(dressed.GetComponent<MeshRendererComponent>().visible && dressedIndices > 0 && dressedIndices < bareIndices &&
+              CountGenerated(scene) - pieceEntities == bareGenerated,
+          "only the floor of the blockout is still drawn, and its collision stays");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Check(saved.find("\"kit\": \"assets/kit/Test.hpkit\"") != std::string::npos && saved.find("Kit wall") == std::string::npos,
+          "the scene saves the kit, not the pieces");
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    ConstructionSystem loadedSystem;
+    loadedSystem.SetMeshSink(fake.Make());
+    loadedSystem.Update(loaded);
+    KitSummary loadedSummary;
+    Check(loadedSystem.Kit(loaded.FindEntityByName("Dressed Room"), loadedSummary) && loadedSummary.pieces == summary.pieces,
+          "a loaded scene dresses the room again");
+
+    dressed.GetComponent<ConstructionShapeComponent>().kit.clear();
+    system.Update(scene);
+    int left = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        (void)handle;
+        ++left;
+    }
+    Check(left == 0 && fake.lastIndices == bareIndices, "removing the kit brings the blockout walls back");
+
+    // A preview dresses the room see-through without changing it, until it is accepted or cleared.
+    system.SetKitPreview(dressed, "assets/kit/Test.hpkit");
+    system.Update(scene);
+    int ghosts = 0;
+    int previewEntities = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        ++previewEntities;
+        const auto* renderer = scene.GetRegistry().try_get<MeshRendererComponent>(handle);
+        ghosts += renderer && renderer->previewGhost ? 1 : 0;
+    }
+    KitSummary previewSummary;
+    Check(previewEntities == pieceEntities && ghosts == pieceRoots && system.Kit(dressed, previewSummary) &&
+              previewSummary.pieces == summary.pieces && dressed.GetComponent<ConstructionShapeComponent>().kit.empty() &&
+              fake.lastIndices == bareIndices,
+          "a kit preview shows every piece see-through over the blockout, and leaves the room's kit unset");
+    system.SetKitPreview(dressed, std::string());
+    system.Update(scene);
+    int afterCancel = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        (void)handle;
+        ++afterCancel;
+    }
+    Check(afterCancel == 0 && system.KitPreview(dressed).empty(), "cancelling a preview removes its pieces");
+    system.SetKitPreview(dressed, "assets/kit/Test.hpkit");
+    system.Update(scene);
+    dressed.GetComponent<ConstructionShapeComponent>().kit = "assets/kit/Test.hpkit";
+    system.SetKitPreview(dressed, std::string());
+    system.Update(scene);
+    int solidPieces = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, MeshRendererComponent>()) {
+        solidPieces += scene.GetRegistry().all_of<PrefabNodeComponent>(handle) &&
+                               !scene.GetRegistry().get<MeshRendererComponent>(handle).previewGhost ? 1 : 0;
+    }
+    Check(solidPieces == pieceRoots && fake.lastIndices == dressedIndices,
+          "accepting a preview dresses the room for real");
+    dressed.GetComponent<ConstructionShapeComponent>().kit.clear();
+    system.Update(scene);
+
+    auto& dressedShape = dressed.GetComponent<ConstructionShapeComponent>();
+    dressedShape.kit = "assets/kit/Test.hpkit";
+    dressedShape.kitSwaps = {{panelSlot, "assets/kit/Wall2Vent.hpprefab"}};
+    system.Update(scene);
+    KitSlotInfo slotInfo;
+    int slotEntities = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent>()) {
+        slotEntities += scene.GetRegistry().get<ConstructionGeneratedComponent>(handle).kitSlot == panelSlot ? 1 : 0;
+    }
+    Check(system.Kit(dressed, summary) && summary.swapped == 1 && system.KitSlot(dressed, panelSlot, slotInfo) &&
+              slotInfo.prefab == "assets/kit/Wall2Vent.hpprefab" && slotInfo.kitChoice == "assets/kit/Wall2.hpprefab" &&
+              slotInfo.choices.size() == 2 && slotEntities > 0,
+          "a swap in the scene places the variant, and its entities know their spot");
+    const std::string swappedScene = SceneSerializer(scene).SerializeToString();
+    Scene swappedLoaded("Swapped");
+    SceneSerializer::DeserializeFromString(swappedLoaded, swappedScene);
+    Check(swappedLoaded.FindEntityByName("Dressed Room").GetComponent<ConstructionShapeComponent>().kitSwaps.size() == 1,
+          "swaps are saved with the scene");
+    PrefabOverrideSystem::SetProjectRoot({});
+    PrefabOverrideSystem::InvalidateAssetCache();
+}
+
+void TestLevelChecks()
+{
+    using namespace Hephaestus::Analysis;
+    Scene scene("Checks");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity home = AddBox(scene, "Home", Room());
+    OpeningParams narrow = Door();
+    narrow.width = 0.5f;
+    Entity narrowDoor = AddOpening(scene, home, narrow);
+    OpeningParams low = Door();
+    low.side = WallSide::NegZ;
+    low.height = 1.5f;
+    AddOpening(scene, home, low);
+    OpeningParams window = Door();
+    window.side = WallSide::PosX;
+    window.sill = 1.0f;
+    window.width = 0.4f;
+    window.height = 0.8f;
+    AddOpening(scene, home, window);
+    AddBox(scene, "Sealed", Room(), Vec3(20.0f, 0.0f, 0.0f));
+    Entity stairs = scene.CreateEntity("Steep Stairs");
+    stairs.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 12.0f);
+    auto& stairShape = stairs.AddComponent<ConstructionShapeComponent>();
+    stairShape.recipe = Recipe::Stairs;
+    stairShape.box.height = 1.5f;
+    stairShape.box.depth = 3.0f;
+    stairShape.box.width = 1.2f;
+    stairShape.stairs.steps = 2;
+    Entity ramp = scene.CreateEntity("Steep Ramp");
+    ramp.GetComponent<TransformComponent>().position = Vec3(10.0f, 0.0f, 12.0f);
+    auto& rampShape = ramp.AddComponent<ConstructionShapeComponent>();
+    rampShape.recipe = Recipe::Ramp;
+    rampShape.box.height = 3.0f;
+    rampShape.box.depth = 2.0f;
+    system.Update(scene);
+
+    LevelCheckReport report = CheckLevel(scene);
+    auto count = [&](const std::string& check, Severity severity) {
+        int n = 0;
+        for (const LevelProblem& problem : report.problems) n += problem.check == check && problem.severity == severity;
+        return n;
+    };
+    Check(count("no-characters", Severity::Info) == 1 && count("unreachable-floor", Severity::Warning) == 0,
+          "without characters, reachability is skipped and says so");
+
+    Entity player = scene.CreateEntity("Player");
+    player.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.1f, 0.0f);
+    auto& controller = player.AddComponent<CharacterControllerComponent>();
+    controller.jumpSpeed = 4.43f;
+    report = CheckLevel(scene);
+    const float expectedJump = 4.43f * 4.43f / (2.0f * 9.81f);
+    Check(report.metrics.fromControllers && std::fabs(report.metrics.jumpHeight - expectedJump) < 1e-3f &&
+              std::fabs(report.metrics.stepHeight - controller.stepHeight) < 1e-5f,
+          "traversal metrics come from the character controller, jump height from jump speed and gravity");
+    bool narrowAtDoor = false;
+    for (const LevelProblem& problem : report.problems) {
+        narrowAtDoor = narrowAtDoor || (problem.check == "door-too-narrow" && problem.entity == narrowDoor &&
+                                        std::fabs(problem.position.z - 2.0f) < 0.2f && std::fabs(problem.position.x) < 1e-3f);
+    }
+    Check(count("door-too-narrow", Severity::Error) == 1 && narrowAtDoor,
+          "a 0.5 m doorway is too narrow for a 0.6 m wide player, and is placed at the door");
+    Check(count("door-too-low", Severity::Error) == 1, "a 1.5 m high doorway is too low for a 1.8 m player");
+    Check(count("step-too-high", Severity::Error) == 1, "two 0.75 m steps are too high to climb");
+    Check(count("ramp-too-steep", Severity::Error) == 1, "a 56 degree ramp is too steep to walk");
+    Check(report.navPolygons > 0 && count("unreachable-floor", Severity::Warning) >= 1,
+          "the floor of a room with no way in can't be reached (" + std::to_string(report.islands) + " islands)");
+    bool sealedFlagged = false;
+    bool homeFlagged = false;
+    for (const LevelProblem& problem : report.problems) {
+        if (problem.check != "unreachable-floor") continue;
+        sealedFlagged = sealedFlagged || std::fabs(problem.position.x - 20.0f) < 2.0f;
+        homeFlagged = homeFlagged || std::fabs(problem.position.x) < 2.5f && std::fabs(problem.position.z) < 1.5f;
+    }
+    Check(sealedFlagged && !homeFlagged, "the sealed room is reported and the player's own room is not");
+
+    narrowDoor.GetComponent<ConstructionShapeComponent>().opening.width = 1.2f;
+    system.Update(scene);
+    report = CheckLevel(scene);
+    Check(count("door-too-narrow", Severity::Error) == 0 && count("door-too-narrow", Severity::Warning) == 0,
+          "widening the doorway clears the problem");
+}
+
+void TestJumpChecks()
+{
+    using namespace Hephaestus::Analysis;
+    Scene scene("Jumps");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    auto block = [&](const std::string& name, float width, float height, float depth, const Vec3& position) {
+        BoxParams box;
+        box.width = width;
+        box.height = height;
+        box.depth = depth;
+        return AddBox(scene, name, box, position);
+    };
+    block("Ground", 30.0f, 0.2f, 10.0f, Vec3(0.0f, 0.0f, 0.0f));
+    block("Low Platform", 2.0f, 1.0f, 2.0f, Vec3(6.0f, 0.0f, 0.0f));
+    block("Pillar", 2.0f, 3.0f, 2.0f, Vec3(-6.0f, 0.0f, 0.0f));
+    block("Far Island", 3.0f, 0.2f, 3.0f, Vec3(19.5f, 0.0f, 0.0f));   // a 3 m gap from the ground's edge
+    block("Near Island", 3.0f, 0.2f, 3.0f, Vec3(-18.0f, 0.0f, 0.0f));  // a 1.5 m gap
+    block("Walled Island", 3.0f, 0.2f, 3.0f, Vec3(0.0f, 0.0f, 6.5f));  // 1 m away, behind a wall
+    block("Wall", 30.0f, 3.0f, 0.2f, Vec3(0.0f, 0.0f, 5.5f));
+    Entity player = scene.CreateEntity("Player");
+    player.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.2f, 0.0f);
+    auto& controller = player.AddComponent<CharacterControllerComponent>();
+    controller.walkSpeed = 2.0f;
+    system.Update(scene);
+
+    const LevelCheckReport report = CheckLevel(scene);
+    const TraversalMetrics& m = report.metrics;
+    Check(std::fabs(JumpReach(m, 0.0f) - 2.0f * 2.0f * 5.5f / 9.81f) < 1e-3f && JumpReach(m, 2.0f) < 0.0f,
+          "a level jump at walking speed carries speed x airtime, and nothing reaches above the jump height");
+    auto near = [&](const std::string& check, const Vec3& where, float within) {
+        for (const LevelProblem& problem : report.problems) {
+            if (problem.check == check && std::fabs(problem.position.x - where.x) < within &&
+                std::fabs(problem.position.z - where.z) < within) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::string seen;
+    for (const LevelProblem& problem : report.problems) seen += "\n  " + problem.check + ": " + problem.message;
+    Check(near("jump-only", Vec3(6.0f, 0.0f, 0.0f), 1.5f), "a 0.8 m high platform is reached by jumping" + seen);
+    Check(near("too-high-to-jump", Vec3(-6.0f, 0.0f, 0.0f), 1.5f), "a 2.8 m high pillar top is out of jump reach");
+    Check(near("gap-too-wide", Vec3(19.5f, 0.0f, 0.0f), 2.0f), "a 3 m gap is wider than a 2.2 m jump");
+    Check(near("jump-only", Vec3(-18.0f, 0.0f, 0.0f), 2.0f), "a 1.5 m gap can be jumped");
+    Check(!near("jump-only", Vec3(0.0f, 0.0f, 6.5f), 2.0f) && !near("gap-too-wide", Vec3(0.0f, 0.0f, 6.5f), 2.0f),
+          "a wall between two floors rules out jumping across");
+
+    std::string navError;
+    const auto sharedNav = LevelNavMesh(scene, {}, navError);
+    Check(sharedNav != nullptr, "the level navmesh builds (" + navError + ")");
+    const Hephaestus::Navigation::NavMesh& navMesh = *sharedNav;
+    const WalkRoute across = MeasureWalk(navMesh, m, Vec3(-10.0f, 0.2f, -2.0f), Vec3(10.0f, 0.2f, -2.0f));
+    Check(across.found && across.complete && std::fabs(across.length - 20.0f) < 0.3f &&
+              std::fabs(across.seconds - across.length / 2.0f) < 1e-3f,
+          "a 20 m walk across open ground takes 10 s at 2 m/s (" + std::to_string(across.length) + " m)");
+    const WalkRoute around = MeasureWalk(navMesh, m, Vec3(4.0f, 0.2f, 0.0f), Vec3(8.0f, 0.2f, 0.0f));
+    Check(around.complete && around.length > around.straight + 0.3f,
+          "a walk past the platform goes around it, longer than the straight line");
+    const WalkRoute stranded = MeasureWalk(navMesh, m, Vec3(0.0f, 0.2f, 0.0f), Vec3(19.5f, 0.2f, 0.0f));
+    Check(stranded.found && !stranded.complete, "a walk to the far island stops short of it");
+
+    ConstructionTool tool;
+    tool.SetMode(ToolMode::MeasureWalk);
+    ToolCamera camera;
+    camera.eye = Vec3(0.0f, 20.0f, -3.0f);
+    Check(tool.OnPress(scene, system, camera.At(Vec3(-4.0f, 0.2f, -2.0f))), "Measure Walk places the start on a click");
+    tool.OnMove(scene, system, camera.At(Vec3(4.0f, 0.2f, -2.0f)));
+    const std::string following = tool.StatusText();
+    tool.OnPress(scene, system, camera.At(Vec3(4.0f, 0.2f, -2.0f)));
+    const std::string placed = tool.StatusText();
+    Check(following.find("Walk 8.0 m, 4.0 s (straight line 8.0 m)") != std::string::npos &&
+              following.find("Click to place the end") != std::string::npos &&
+              placed.find("Esc to clear") != std::string::npos,
+          "Measure Walk follows the cursor, then holds the measurement (" + following + ")");
+    std::vector<EditorDebugLine> lines;
+    std::vector<EditorDebugPoint> points;
+    tool.AppendOverlay(scene, system, lines, points);
+    Check(lines.size() >= 2 && points.size() >= 2, "the route and its ends are drawn");
+
+    LevelCheck added;
+    added.owner = "test-owner";
+    added.id = "test.floor-height";
+    added.name = "Floor height";
+    added.run = [](const LevelCheckContext& context, std::vector<LevelProblem>& problems) {
+        Vec3 hit;
+        const bool down = RaycastLevel(context.geometry, Vec3(2.0f, 5.0f, -2.0f), Vec3(2.0f, -5.0f, -2.0f), hit);
+        problems.push_back({"", Severity::Info, down ? "floor found" : "no floor", hit, entt::null});
+    };
+    std::string registerError;
+    Check(RegisterLevelCheck(added, registerError) && !RegisterLevelCheck(added, registerError),
+          "a level check registers once; a second check with its id is refused");
+    LevelCheckReport withAdded = CheckLevel(scene);
+    bool ran = false;
+    for (const LevelProblem& problem : withAdded.problems) {
+        ran = ran || (problem.check == "test.floor-height" && problem.message == "floor found" &&
+                      std::fabs(problem.position.y - 0.2f) < 1e-3f);
+    }
+    Check(ran, "a registered check runs with the level, and its raycast finds the top of the ground");
+    UnregisterLevelChecks("test-owner");
+    withAdded = CheckLevel(scene);
+    bool stillRuns = false;
+    for (const LevelProblem& problem : withAdded.problems) stillRuns = stillRuns || problem.check == "test.floor-height";
+    Check(!stillRuns && LevelCheckIds().empty(), "removing the owner's checks stops them running");
+}
+
+void TestStoreys()
+{
+    Scene scene("Storeys");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams ground = Room();
+    ground.width = 8.0f;
+    ground.depth = 6.0f;
+    ground.ceiling = true;
+    Entity house = AddBox(scene, "House", ground, Vec3(10.0f, 0.0f, 0.0f));
+    AddOpening(scene, house, Door());
+    system.Update(scene);
+    std::string error;
+    const entt::entity firstFloor = AddStorey(scene, house, error);
+    Check(firstFloor != entt::null && StoreyAbove(scene, house) == firstFloor && AddStorey(scene, house, error) == entt::null,
+          "a storey goes on a room once (" + error + ")");
+    const auto& upper = scene.GetRegistry().get<ConstructionShapeComponent>(firstFloor);
+    const Mat4 upperWorld = scene.GetWorldTransform(Entity(firstFloor, &scene));
+    const Vec3 upperBase = Mat4::TransformPoint(upperWorld, Vec3(0.0f, 0.0f, 0.0f));
+    Check(upper.box.width == 8.0f && upper.box.floor && upper.box.ceiling &&
+              !house.GetComponent<ConstructionShapeComponent>().box.ceiling &&
+              std::fabs(upperBase.y - 3.0f) < 1e-4f && std::fabs(upperBase.x - 10.0f) < 1e-4f,
+          "the storey sits on the room's walls with the same footprint; its floor replaces the room's ceiling");
+    const entt::entity secondFloor = AddStorey(scene, firstFloor, error);
+    Check(secondFloor != entt::null &&
+              std::fabs(Mat4::TransformPoint(scene.GetWorldTransform(Entity(secondFloor, &scene)), Vec3(0, 0, 0)).y - 6.0f) < 1e-4f,
+          "storeys stack on storeys");
+
+    const entt::entity flight = AddStairsUp(scene, house, 0.285f, error);
+    Check(flight != entt::null && AddStairsUp(scene, secondFloor, 0.285f, error) == entt::null &&
+              error.find("storey above") != std::string::npos,
+          "stairs go up to a storey above, and only where there is one");
+    const auto& stairs = scene.GetRegistry().get<ConstructionShapeComponent>(flight);
+    Check(stairs.recipe == Recipe::Stairs && std::fabs(stairs.box.height - 3.0f) < 1e-4f && stairs.stairs.steps == 11 &&
+              stairs.box.height / stairs.stairs.steps <= 0.285f,
+          "the flight climbs from the floor to the top of the floor above in steps no taller than allowed");
+    BoxParams cramped = Room();
+    cramped.width = 3.0f;
+    cramped.depth = 3.0f;
+    Entity shed = AddBox(scene, "Shed", cramped, Vec3(-20.0f, 0.0f, 0.0f));
+    AddStorey(scene, shed, error);
+    Check(AddStairsUp(scene, shed, 0.285f, error) == entt::null && error.find("too small") != std::string::npos,
+          "a room too short for the flight says so (" + error + ")");
+
+    // Walk from outside, through the door and up the stairs to the first floor.
+    Entity player = scene.CreateEntity("Player");
+    player.AddComponent<CharacterControllerComponent>();
+    system.Update(scene);
+    std::string navError;
+    const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, navError);
+    Check(navMesh != nullptr, "the building's navmesh builds (" + navError + ")");
+    if (navMesh) {
+        const Hephaestus::Analysis::WalkRoute route = Hephaestus::Analysis::MeasureWalk(
+            *navMesh, Hephaestus::Analysis::TraversalMetrics{}, Vec3(10.0f, 0.2f, 1.0f), Vec3(12.0f, 3.2f, 1.5f));
+        Check(route.complete && route.corners.back().y > 3.0f,
+              "the first floor can be walked to from the ground floor, up the stairs (" +
+                  std::to_string(route.length) + " m)");
+    }
+    const entt::entity secondFlight = AddStairsUp(scene, firstFloor, 0.285f, error);
+    Check(secondFlight != entt::null, "a second flight goes from the first floor to the second (" + error + ")");
+    if (secondFlight != entt::null) {
+        const Vec3 lower = scene.GetRegistry().get<TransformComponent>(flight).position;
+        const Vec3 upperFlight = scene.GetRegistry().get<TransformComponent>(secondFlight).position;
+        Check(std::fabs(upperFlight.z - lower.z) > 1.0f,
+              "the second flight runs along the other wall, clear of the stairwell it would otherwise stand over");
+        system.Update(scene);
+        const auto tall = Hephaestus::Analysis::LevelNavMesh(scene, {}, navError);
+        const Hephaestus::Analysis::WalkRoute toTop = Hephaestus::Analysis::MeasureWalk(
+            *tall, Hephaestus::Analysis::TraversalMetrics{}, Vec3(10.0f, 0.2f, 1.0f), Vec3(12.0f, 6.2f, 1.0f));
+        Check(toTop.complete, "the second floor can be walked to from the ground floor (" +
+                                  std::to_string(toTop.length) + " m)");
+    }
+    auto& steep = scene.GetRegistry().get<ConstructionShapeComponent>(flight);
+    steep.box.depth = 11 * 0.25f;
+    bool shortTreads = false;
+    for (const auto& problem : Hephaestus::Analysis::CheckLevel(scene).problems) {
+        shortTreads = shortTreads || (problem.check == "tread-too-short" && problem.entity == flight);
+    }
+    Check(shortTreads, "stairs with 0.25 m treads are reported: bots can't path up treads one navmesh cell deep");
+}
+
+void TestStoreysAnyShape()
+{
+    Scene scene("Shaped storeys");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    Entity player = scene.CreateEntity("Player");
+    player.AddComponent<CharacterControllerComponent>();
+    auto reaches = [&](const Vec3& from, const Vec3& to) {
+        system.Update(scene);
+        std::string error;
+        const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, error);
+        return navMesh && Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{}, from, to).complete;
+    };
+
+    // An L-shaped room drawn with walls: a 9 x 4 m arm along X and a 4 x 4 m arm going up in Z from its +X end.
+    Entity lHouse = AddWall(scene, "L House", {{0, 0}, {9, 0}, {9, 8}, {5, 8}, {5, 4}, {0, 4}}, true);
+    OpeningParams lDoor = Door();
+    lDoor.segment = 0;
+    lDoor.offset = -2.0f;  // x 1.9 to 3.1 on the long wall the flight would otherwise start along
+    AddOpening(scene, lHouse, lDoor);
+    std::string error;
+    const entt::entity lUpper = AddStorey(scene, lHouse, error);
+    Check(lUpper != entt::null && scene.GetRegistry().get<ConstructionShapeComponent>(lUpper).wall.points.size() == 6,
+          "a room drawn with walls gets a storey with the same outline (" + error + ")");
+    const entt::entity lStairs = AddStairsUp(scene, lHouse, 0.285f, error);
+    Check(lStairs != entt::null &&
+              scene.GetRegistry().get<ConstructionShapeComponent>(lStairs).stairs.turn == StairTurn::Straight,
+          "a straight flight goes along one of its long inside walls (" + error + ")");
+    system.Update(scene);
+    const EvaluatedGeometry* upperFloor = system.Geometry(lUpper);
+    BoxParams yard;
+    yard.width = 40.0f;
+    yard.depth = 40.0f;
+    yard.height = 0.2f;
+    AddBox(scene, "Yard", yard, Vec3(4.5f, -0.2f, 4.0f));
+    Check(upperFloor && reaches(Vec3(2.5f, 0.0f, -3.0f), Vec3(7.0f, 3.2f, 6.0f)),
+          "the L's upper floor, holed for the stairwell, can be walked to from outside, in through the door");
+
+    // A 4.6 m square room is too short for a straight flight of 11 steps with room to step on; it turns back.
+    BoxParams square = Room();
+    square.width = 4.6f;
+    square.depth = 4.6f;
+    Entity tower = AddBox(scene, "Tower", square, Vec3(30.0f, 0.0f, 0.0f));
+    AddStorey(scene, tower, error);
+    const entt::entity turning = AddStairsUp(scene, tower, 0.285f, error);
+    Check(turning != entt::null &&
+              scene.GetRegistry().get<ConstructionShapeComponent>(turning).stairs.turn == StairTurn::UTurnLeft,
+          "a room too short for a straight flight gets one that turns back (" + error + ")");
+    Check(reaches(Vec3(30.0f, 0.2f, 1.5f), Vec3(31.2f, 3.2f, 1.5f)),
+          "and its upper floor can be walked to up the turning flight");
+}
+
+void TestRoofsAndBalconies()
+{
+    Scene scene("Roofs");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size = Room();
+    size.width = 8.0f;
+    size.depth = 6.0f;
+    size.ceiling = true;
+    Entity house = AddBox(scene, "House", size);
+    std::string error;
+    const entt::entity upper = AddStorey(scene, house, error);
+    Check(AddRoof(scene, house, RoofStyle::Flat, 0.3f, error) == entt::null && error.find("top storey") != std::string::npos,
+          "a roof goes on the top storey, not under it");
+    const entt::entity flat = AddRoof(scene, upper, RoofStyle::Flat, 0.3f, error);
+    Check(flat != entt::null && AddRoof(scene, upper, RoofStyle::Pitched, 0.3f, error) == entt::null &&
+              !scene.GetRegistry().get<ConstructionShapeComponent>(upper).box.ceiling,
+          "a flat roof goes on once and replaces the ceiling");
+    const auto& flatShape = scene.GetRegistry().get<ConstructionShapeComponent>(flat);
+    const Vec3 flatBase = Mat4::TransformPoint(scene.GetWorldTransform(Entity(flat, &scene)), Vec3(0, 0, 0));
+    Check(!flatShape.box.hollow && std::fabs(flatShape.box.width - 8.6f) < 1e-4f && std::fabs(flatBase.y - 6.0f) < 1e-4f,
+          "the flat roof is a slab on top of the walls, overhanging by 0.3 m");
+
+    Entity cottage = AddBox(scene, "Cottage", size, Vec3(20.0f, 0.0f, 0.0f));
+    const entt::entity pitched = AddRoof(scene, cottage, RoofStyle::Pitched, 0.3f, error);
+    int slopes = 0;
+    if (pitched != entt::null) {
+        for (entt::entity child : scene.GetRegistry().get<TransformComponent>(pitched).children) {
+            slopes += scene.GetRegistry().get<ConstructionShapeComponent>(child).recipe == Recipe::Ramp ? 1 : 0;
+        }
+    }
+    system.Update(scene);
+    float ridge = 0.0f;
+    for (auto handle : scene.GetRegistry().view<ConstructionShapeComponent>()) {
+        if (scene.GetRegistry().get<ConstructionShapeComponent>(handle).recipe != Recipe::Ramp) continue;
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        const EvaluatedGeometry* g = system.Geometry(handle);
+        ridge = std::max(ridge, Mat4::TransformPoint(world, Vec3(0.0f, g->mesh.bounds.max.y, 0.0f)).y);
+    }
+    Check(slopes == 2 && std::fabs(ridge - (3.0f + 3.3f * std::tan(0.5236f))) < 1e-3f,
+          "a pitched roof is two 30 degree slopes meeting along the longer side (ridge at " + std::to_string(ridge) + ")");
+    Entity lHouse = AddWall(scene, "L House", {{0, 0}, {9, 0}, {9, 8}, {5, 8}, {5, 4}, {0, 4}}, true,
+                            Vec3(-30.0f, 0.0f, 0.0f));
+    Check(AddRoof(scene, lHouse, RoofStyle::Pitched, 0.3f, error) == entt::null &&
+              AddRoof(scene, lHouse, RoofStyle::Flat, 0.0f, error) != entt::null,
+          "a room drawn with walls takes a flat roof over its outline");
+
+    // A balcony outside an upper floor's door.
+    OpeningParams door = Door();
+    door.offset = 1.0f;  // on the +Z wall of the upper storey
+    const entt::entity upperDoor = AddOpening(scene, Entity(upper, &scene), door);
+    OpeningParams window = Door();
+    window.side = WallSide::PosX;
+    window.sill = 1.0f;
+    window.height = 1.0f;
+    const entt::entity upperWindow = AddOpening(scene, Entity(upper, &scene), window);
+    Check(AddBalcony(scene, upperWindow, 1.5f, error) == entt::null && error.find("window") != std::string::npos,
+          "a window takes no balcony");
+    const entt::entity balcony = AddBalcony(scene, upperDoor, 1.5f, error);
+    Check(balcony != entt::null &&
+              scene.GetRegistry().get<ConstructionShapeComponent>(balcony).recipe == Recipe::Balcony &&
+              scene.GetRegistry().get<TransformComponent>(balcony).children.empty(),
+          "a balcony goes outside a door as one shape, slab and railings together");
+    {
+        ConstructionShapeComponent single;
+        single.recipe = Recipe::Balcony;
+        single.box.width = 3.0f;
+        single.box.depth = 1.5f;
+        single.box.height = 1.2f;
+        single.box.wallThickness = 0.2f;
+        EvaluatedGeometry narrow;
+        EvaluateShape(single, {}, narrow);
+        single.box.width = 5.0f;
+        EvaluatedGeometry wide;
+        EvaluateShape(single, {}, wide);
+        Check(WindingMatchesNormals(wide) && InsideSolid(wide, Vec3(2.47f, 0.8f, 0.0f)) &&
+                  !InsideSolid(narrow, Vec3(2.47f, 0.8f, 0.0f)) && InsideSolid(wide, Vec3(0.0f, 0.8f, 0.72f)) &&
+                  !InsideSolid(wide, Vec3(0.0f, 0.8f, -0.72f)),
+              "widening a balcony moves its side railings out with it; its wall side stays open");
+    }
+    const Vec3 balconyTop =
+        Mat4::TransformPoint(scene.GetWorldTransform(Entity(balcony, &scene)), Vec3(0.0f, 0.2f, 0.0f));
+    Check(std::fabs(balconyTop.y - 3.2f) < 1e-4f && balconyTop.z > 3.0f + 0.5f && std::fabs(balconyTop.x - 1.0f) < 1e-4f,
+          "its floor is level with the storey's floor, outside the wall, centred on the door");
+    Entity player = scene.CreateEntity("Player");
+    player.AddComponent<CharacterControllerComponent>();
+    system.Update(scene);
+    std::string navError;
+    const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, navError);
+    Check(navMesh && Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{},
+                                                       Vec3(-1.0f, 3.2f, 0.0f), Vec3(1.0f, 3.2f, 3.9f)).complete,
+          "the balcony can be walked onto through the door");
+    Check(!Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{},
+                                             Vec3(1.0f, 3.2f, 3.9f), Vec3(1.0f, 0.0f, 7.0f)).complete,
+          "and its railing keeps walkers from stepping off it");
+}
+
+void TestBalconiesJoin()
+{
+    Scene scene("Balconies");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    auto balcony = [&](const std::string& name, const Vec3& at, float yaw, float width) {
+        Entity entity = scene.CreateEntity(name);
+        entity.GetComponent<TransformComponent>().position = at;
+        entity.GetComponent<TransformComponent>().rotation = Vec3(0.0f, yaw, 0.0f);
+        auto& shape = entity.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Recipe::Balcony;
+        shape.box.width = width;
+        shape.box.depth = 1.5f;
+        shape.box.height = 1.2f;
+        shape.box.wallThickness = 0.2f;
+        return entity;
+    };
+    // Along a +Z wall from x -2 to 2, and round the corner along a +X wall from z -0.75 to 3.25.
+    Entity front = balcony("Front", Vec3(0.0f, 0.0f, 0.0f), 0.0f, 4.0f);
+    Entity side = balcony("Side", Vec3(2.75f, 0.0f, 1.25f), 1.57079633f, 4.0f);
+    system.Update(scene);
+    const EvaluatedGeometry* a = system.Geometry(front);
+    Check(a && !InsideSolid(*a, Vec3(1.97f, 0.8f, 0.0f)) && InsideSolid(*a, Vec3(-1.97f, 0.8f, 0.0f)) &&
+              InsideSolid(*a, Vec3(0.0f, 0.8f, 0.72f)),
+          "where the corner balcony's floor continues, the front balcony's railing is left out; its other edges keep theirs");
+    std::string error;
+    const auto navMesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, error);
+    Check(navMesh && Hephaestus::Analysis::MeasureWalk(*navMesh, Hephaestus::Analysis::TraversalMetrics{},
+                                                       Vec3(-1.0f, 0.2f, 0.0f), Vec3(2.75f, 0.2f, 2.5f)).complete,
+          "the two balconies make one walkway round the corner");
+    side.GetComponent<TransformComponent>().position.y = 1.0f;
+    system.Update(scene);
+    Check(InsideSolid(*system.Geometry(front), Vec3(1.97f, 0.8f, 0.0f)),
+          "a balcony at another height does not join: the railing comes back");
+}
+
+// Volume enclosed by the drawn triangles: right only when the surface is closed and every triangle faces out.
+float EnclosedVolume(const EvaluatedGeometry& geometry)
+{
+    const MeshData& mesh = geometry.mesh;
+    float volume = 0.0f;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const Vertex& a = mesh.vertices[mesh.indices[i]];
+        const Vertex& b = mesh.vertices[mesh.indices[i + 1]];
+        const Vertex& c = mesh.vertices[mesh.indices[i + 2]];
+        volume += vdot(Vec3(a.pos[0], a.pos[1], a.pos[2]),
+                       vcross(Vec3(b.pos[0], b.pos[1], b.pos[2]), Vec3(c.pos[0], c.pos[1], c.pos[2]))) / 6.0f;
+    }
+    return volume;
+}
+
+// Every edge of every face is used once each way, so the mesh has no holes or cracks.
+bool MeshClosed(const EditableMesh& mesh)
+{
+    std::vector<std::pair<int, int>> edges;
+    for (const std::vector<int>& loop : mesh.faces) {
+        for (size_t k = 0; k < loop.size(); ++k) edges.push_back({loop[k], loop[(k + 1) % loop.size()]});
+    }
+    for (const auto& [a, b] : edges) {
+        if (std::count(edges.begin(), edges.end(), std::make_pair(a, b)) != 1 ||
+            std::count(edges.begin(), edges.end(), std::make_pair(b, a)) != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void TestMeshTools()
+{
+    ConstructionShapeComponent block;
+    block.box.width = 2.0f;
+    block.box.height = 2.0f;
+    block.box.depth = 2.0f;
+    MakeEditable(block);
+    EditableMesh& mesh = block.mesh;
+
+    Check(SplitFace(mesh, 0) && mesh.faces.size() == 7 && mesh.vertices.size() == 10 && MeshClosed(mesh),
+          "splitting the top face makes two faces and keeps the mesh closed");
+    EvaluatedGeometry split;
+    Check(EvaluateShape(block, {}, split) && std::fabs(EnclosedVolume(split) - 8.0f) < 1e-3f,
+          "a split face changes no volume");
+
+    const Vec3 normal = FaceNormal(mesh, 0);
+    Check(std::fabs(normal.y - 1.0f) < 1e-5f, "the top half still faces up");
+    Check(ExtrudeFace(mesh, 0) && MeshClosed(mesh), "extruding a face keeps the mesh closed");
+    for (int index : mesh.faces[0]) mesh.vertices[static_cast<size_t>(index)].y += 1.0f;
+    EvaluatedGeometry extruded;
+    Check(EvaluateShape(block, {}, extruded) && std::fabs(EnclosedVolume(extruded) - 10.0f) < 1e-3f,
+          "pulling the half face up 1 m adds half a cubic metre per metre of face (volume " +
+              std::to_string(EnclosedVolume(extruded)) + ")");
+    Check(extruded.collideAsMesh && extruded.hulls.empty() && extruded.solids.empty(),
+          "the L shape collides as its own triangles, not one hull around both parts");
+
+    {
+        Scene saved("Saved Mesh");
+        Entity savedEntity = saved.CreateEntity("Mesh");
+        savedEntity.AddComponent<ConstructionShapeComponent>(block);
+        Scene reopened("Reopened");
+        SceneSerializer::DeserializeFromString(reopened, SceneSerializer(saved).SerializeToString());
+        Entity reloaded = reopened.FindEntityByName("Mesh");
+        const auto* reloadedShape = reloaded ? reopened.GetRegistry().try_get<ConstructionShapeComponent>(reloaded) : nullptr;
+        Check(reloadedShape && reloadedShape->mesh.faces == mesh.faces && reloadedShape->mesh.vertices.size() == mesh.vertices.size(),
+              "an extruded mesh is saved with the scene and read back");
+    }
+
+    {
+        ConstructionShapeComponent pit;
+        pit.box = block.box;
+        pit.box.height = 2.0f;
+        MakeEditable(pit);
+        SplitFace(pit.mesh, 0);
+        ExtrudeFace(pit.mesh, 0);
+        for (int index : pit.mesh.faces[0]) pit.mesh.vertices[static_cast<size_t>(index)].y -= 0.5f;
+        EvaluatedGeometry recessed;
+        Check(EvaluateShape(pit, {}, recessed) && MeshClosed(pit.mesh) && std::fabs(EnclosedVolume(recessed) - 7.0f) < 1e-3f,
+              "pushing half the top 0.5 m in leaves a closed mesh with that much less volume (volume " +
+                  std::to_string(EnclosedVolume(recessed)) + ")");
+    }
+
+    Vec3 shift;
+    Check(RevertToRecipe(block, shift) && block.source == SourceKind::Recipe && block.recipe == Recipe::Box &&
+              std::fabs(block.box.height - 3.0f) < 1e-4f && std::fabs(block.box.width - 2.0f) < 1e-4f &&
+              std::fabs(shift.y) < 1e-4f && block.mesh.vertices.empty(),
+          "turning it back gives a block that fits around the mesh");
+
+    Scene scene("Mesh Tools");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size;
+    size.width = 2.0f;
+    size.height = 2.0f;
+    size.depth = 2.0f;
+    Entity entity = AddBox(scene, "Block", size);
+    auto& shape = entity.GetComponent<ConstructionShapeComponent>();
+    MakeEditable(shape);
+    system.Update(scene);
+    ConstructionTool tool;
+    entt::entity selected = entity;
+    int undoSteps = 0;
+    int discarded = 0;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [&] { ++discarded; };
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    tool.SetMode(ToolMode::Select);
+    const ToolCamera camera;
+
+    // The +Z face's handle sits at its centre, facing the camera.
+    const Vec3 front(0.0f, 1.0f, 1.0f);
+    Check(tool.OnPress(scene, system, camera.At(front)) && tool.StatusText().find("face") != std::string::npos,
+          "pressing the middle of a face grabs that face");
+    tool.OnMove(scene, system, camera.At(Vec3(0.0f, 1.0f, 1.5f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(0.0f, 1.0f, 1.5f)));
+    bool pushed = true;
+    for (int index : shape.mesh.faces[3]) pushed = pushed && std::fabs(shape.mesh.vertices[static_cast<size_t>(index)].z - 1.5f) < 1e-4f;
+    Check(pushed && shape.mesh.vertices.size() == 8, "dragging a face moves all its corners along its normal");
+
+    ToolInput press = camera.At(Vec3(0.0f, 1.0f, 1.5f));
+    press.shift = true;
+    tool.OnPress(scene, system, press);
+    tool.OnRelease(scene, system, press);
+    Check(shape.mesh.vertices.size() == 8 && discarded == 1, "a Shift-click that pulls nothing out leaves the mesh as it was (" +
+          std::to_string(shape.mesh.vertices.size()) + " corners, " + std::to_string(discarded) + " discarded, " + tool.StatusText() + ")");
+
+    tool.OnPress(scene, system, press);
+    ToolInput pull = camera.At(Vec3(0.0f, 1.0f, 2.5f));
+    pull.shift = true;
+    tool.OnMove(scene, system, pull);
+    tool.OnRelease(scene, system, pull);
+    Check(shape.mesh.vertices.size() == 12 && shape.mesh.faces.size() == 10 && MeshClosed(shape.mesh) &&
+              std::fabs(FaceCentre(shape.mesh, 3).z - 2.5f) < 1e-4f,
+          "Shift-dragging a face pulls out a new part");
+
+    const size_t facesBefore = shape.mesh.faces.size();
+    ToolInput alt = camera.At(Vec3(0.0f, 1.0f, 2.5f));
+    alt.alt = true;
+    const int stepsBefore = undoSteps;
+    Check(tool.OnPress(scene, system, alt) && !tool.IsBusy() && shape.mesh.faces.size() == facesBefore + 1 &&
+              undoSteps == stepsBefore + 1 && MeshClosed(shape.mesh),
+          "Alt-clicking a face splits it as one undo step");
+
+    // The edge along the top of the +X face (from z -1 to 1.5 since the +Z face moved), moved out 0.5 m.
+    const Vec3 edge(1.0f, 2.0f, 0.25f);
+    tool.OnPress(scene, system, camera.At(edge));
+    tool.OnMove(scene, system, camera.At(Vec3(1.5f, 2.0f, 0.25f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(1.5f, 2.0f, 0.25f)));
+    Check(std::fabs(shape.mesh.vertices[5].x - 1.5f) < 1e-4f && std::fabs(shape.mesh.vertices[6].x - 1.5f) < 1e-4f &&
+              std::fabs(shape.mesh.vertices[1].x - 1.0f) < 1e-4f,
+          "dragging an edge moves both of its corners and nothing else");
+    Check(system.Update(scene) == 1 && WindingMatchesNormals(*system.Geometry(entity)), "the edited mesh evaluates");
+
+    // A platform with a recess pushed into half of its top: bots walk on both levels, and its collider is the mesh.
+    Scene pitScene("Recess");
+    ConstructionSystem pitSystem;
+    pitSystem.SetMeshSink(fake.Make());
+    BoxParams platformSize;
+    platformSize.width = 8.0f;
+    platformSize.height = 1.0f;
+    platformSize.depth = 8.0f;
+    Entity platform = AddBox(pitScene, "Platform", platformSize);
+    auto& platformShape = platform.GetComponent<ConstructionShapeComponent>();
+    MakeEditable(platformShape);
+    SplitFace(platformShape.mesh, 0);
+    ExtrudeFace(platformShape.mesh, 0);
+    for (int index : platformShape.mesh.faces[0]) platformShape.mesh.vertices[static_cast<size_t>(index)].y -= 0.5f;
+    pitSystem.Update(pitScene);
+    int meshColliders = 0;
+    for (auto collider : pitScene.GetRegistry().view<ConstructionGeneratedComponent, PhysicsShapeComponent>()) {
+        const auto& physicsShape = pitScene.GetRegistry().get<PhysicsShapeComponent>(collider);
+        meshColliders += physicsShape.type == PhysicsShapeType::Mesh && physicsShape.triangles &&
+                                 physicsShape.triangles->indices.size() == pitSystem.Geometry(platform)->mesh.indices.size()
+                             ? 1 : 0;
+    }
+    Check(meshColliders == 1, "the editable mesh gets one collider made of its own triangles");
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(pitScene),
+                                 Hephaestus::Navigation::SettingsForScene(pitScene), error);
+    Vec3 low;
+    Vec3 high;
+    Check(built && nav.ClosestPoint(Vec3(0.0f, 0.6f, 2.0f), low, Vec3(0.5f, 0.3f, 0.5f)) && std::fabs(low.y - 0.5f) < 0.15f &&
+              nav.ClosestPoint(Vec3(0.0f, 1.1f, -2.0f), high, Vec3(0.5f, 0.3f, 0.5f)) && std::fabs(high.y - 1.0f) < 0.15f,
+          "bots can stand in the recess and on the top beside it (" + error + ")");
+}
+
+void TestMeshOpenings()
+{
+    Scene scene("Mesh Openings");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams groundSize;
+    groundSize.width = 30.0f;
+    groundSize.height = 0.2f;
+    groundSize.depth = 30.0f;
+    AddBox(scene, "Ground", groundSize, Vec3(0.0f, -0.2f, 0.0f));
+    BoxParams slabSize;
+    slabSize.width = 20.0f;
+    slabSize.height = 3.0f;
+    slabSize.depth = 0.4f;
+    Entity slab = AddBox(scene, "Slab", slabSize);
+    auto& slabShape = slab.GetComponent<ConstructionShapeComponent>();
+    MakeEditable(slabShape);
+    Check(CanHostOpenings(slabShape), "an editable mesh takes doors and windows");
+    WallFrame frame;
+    Check(GetHostWallFrame(slabShape, WallSide::PosZ, 3, frame) && std::fabs(frame.normal.z - 1.0f) < 1e-5f &&
+              std::fabs(frame.halfLength - 10.0f) < 1e-4f && std::fabs(frame.thickness - 0.4f) < 1e-4f &&
+              !GetHostWallFrame(slabShape, WallSide::PosZ, 0, frame),
+          "an upright face is an opening frame through the whole mesh; the top face is not");
+
+    // The tool puts a door where a click lands near the bottom of the mesh's +Z face.
+    ConstructionTool tool;
+    entt::entity selected = slab;
+    ToolHost host;
+    host.pushUndo = [](const std::string&) {};
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+    system.Update(scene);
+    tool.SetMode(ToolMode::DrawOpening);
+    tool.OnPress(scene, system, camera.At(Vec3(0.0f, 0.5f, 0.2f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(0.0f, 0.5f, 0.2f)));
+    std::vector<OpeningParams> openings = ConstructionSystem::CollectOpenings(scene, slab);
+    Check(openings.size() == 1 && openings[0].segment == 3 && openings[0].sill < 0.01f,
+          "clicking low on an editable mesh's face places a door in that face");
+    Check(system.Update(scene) >= 1, "the door re-evaluates the mesh");
+
+    const EvaluatedGeometry* geometry = system.Geometry(slab);
+    const float expected = 20.0f * 3.0f * 0.4f - (openings.empty() ? 0.0f : openings[0].width * openings[0].height * 0.4f);
+    Check(geometry && geometry->collideAsMesh && std::fabs(EnclosedVolume(*geometry) - expected) < 1e-2f,
+          "the door is cut through the mesh, leaving it closed (volume " +
+              std::to_string(geometry ? EnclosedVolume(*geometry) : 0.0f) + ", expected " + std::to_string(expected) + ")");
+    ConstructionHit hit;
+    Check(!system.Raycast(scene, Ray(Vec3(0.0f, 1.0f, 5.0f), Vec3(0.0f, 0.0f, -1.0f)), hit) || hit.entity != slab,
+          "a ray through the doorway passes the mesh");
+    Check(system.Raycast(scene, Ray(Vec3(3.0f, 1.0f, 5.0f), Vec3(0.0f, 0.0f, -1.0f)), hit) && hit.entity == slab,
+          "a ray beside the doorway hits the mesh");
+
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::SettingsForScene(scene), error);
+    float pathLength = 0.0f;
+    const bool found = built && nav.FindPath(Vec3(0.0f, 0.0f, 3.0f), Vec3(0.0f, 0.0f, -3.0f), path) && !path.empty();
+    for (size_t n = 1; n < path.size(); ++n) pathLength += vlen(vsub(path[n], path[n - 1]));
+    Check(found && pathLength < 8.0f && std::fabs(path.back().z + 3.0f) < 0.3f,
+          "bots walk straight through the door in the mesh (path " + std::to_string(pathLength) + " m)");
+
+    // A subtract block cuts an editable mesh as it cuts a block.
+    BoxParams holeSize;
+    holeSize.width = 1.0f;
+    holeSize.height = 1.0f;
+    holeSize.depth = 2.0f;
+    Entity hole = AddBox(scene, "Hole", holeSize, Vec3(6.0f, 1.0f, 0.0f));
+    hole.GetComponent<ConstructionShapeComponent>().operation = Operation::Subtract;
+    system.Update(scene);
+    Check(std::fabs(EnclosedVolume(*system.Geometry(slab)) - (expected - 0.4f)) < 1e-2f,
+          "a subtract block cuts a window through the mesh (volume " + std::to_string(EnclosedVolume(*system.Geometry(slab))) + ")");
+}
+
+void TestEditableMesh()
+{
+    ConstructionShapeComponent room;
+    room.box = Room();
+    Check(!CanMakeEditable(room), "a room is not made editable (its walls and openings are a recipe)");
+    ConstructionShapeComponent ramp;
+    ramp.recipe = Recipe::Ramp;
+    ramp.box.width = 2.0f;
+    ramp.box.height = 1.0f;
+    ramp.box.depth = 4.0f;
+    EvaluatedGeometry rampRecipe;
+    EvaluateShape(ramp, {}, rampRecipe);
+    Check(MakeEditable(ramp) && ramp.mesh.vertices.size() == 6 && ramp.mesh.faces.size() == 5,
+          "a ramp becomes six corners and five faces");
+    EvaluatedGeometry rampMesh;
+    Check(EvaluateShape(ramp, {}, rampMesh) && WindingMatchesNormals(rampMesh) &&
+              rampMesh.mesh.indices.size() == rampRecipe.mesh.indices.size() &&
+              std::fabs(rampMesh.mesh.bounds.max.y - 1.0f) < 1e-5f,
+          "the editable ramp has the recipe's triangles, facing outwards");
+
+    Scene scene("Editable");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size;
+    size.width = 2.0f;
+    size.height = 3.0f;
+    size.depth = 4.0f;
+    Entity block = AddBox(scene, "Block", size);
+    system.Update(scene);
+    auto& shape = block.GetComponent<ConstructionShapeComponent>();
+    Check(MakeEditable(shape) && shape.source == SourceKind::EditableMesh && shape.mesh.vertices.size() == 8 &&
+              HasOwnGeometry(shape) && CanHostOpenings(shape) && !MakeEditable(shape),
+          "a block becomes eight corners, keeps its geometry, still takes openings and converts once");
+    Check(system.Update(scene) == 1, "making it editable re-evaluates it");
+    const EvaluatedGeometry* geometry = system.Geometry(block);
+    int top = 0;
+    for (const FaceTag& tag : geometry->triangleTags) top += tag.group == FaceGroup::Top && tag.segment == 0 ? 1 : 0;
+    Check(geometry && geometry->mesh.indices.size() == 36 && WindingMatchesNormals(*geometry) &&
+              geometry->collideAsMesh && geometry->hulls.empty() && top == 2,
+          "it draws twelve outward triangles, collides as those triangles, and its top face is face 0");
+
+    ConstructionTool tool;
+    entt::entity selected = block;
+    int undoSteps = 0;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    tool.SetMode(ToolMode::Select);
+    const ToolCamera camera;
+    const Vec3 corner(1.0f, 3.0f, 2.0f);  // the top corner nearest the camera on the +X side
+    Check(tool.OnPress(scene, system, camera.At(corner)) && undoSteps == 1 &&
+              tool.StatusText().find("corner") != std::string::npos,
+          "pressing a corner handle starts moving that corner as one undo step");
+    tool.OnMove(scene, system, camera.At(Vec3(2.0f, 3.0f, 2.5f)));
+    const Vec3 moved = shape.mesh.vertices[6];
+    tool.OnRelease(scene, system, camera.At(Vec3(2.0f, 3.0f, 2.5f)));
+    Check(std::fabs(moved.x - 2.0f) < 1e-4f && std::fabs(moved.y - 3.0f) < 1e-4f && std::fabs(moved.z - 2.5f) < 1e-4f,
+          "dragging moves the corner across at its own height, on the grid (" + std::to_string(moved.x) + ", " +
+              std::to_string(moved.z) + ")");
+    tool.OnPress(scene, system, camera.At(Vec3(2.0f, 3.0f, 2.5f)));
+    ToolInput up = camera.At(Vec3(2.0f, 4.0f, 2.5f));
+    up.shift = true;
+    tool.OnMove(scene, system, up);
+    tool.OnRelease(scene, system, up);
+    Check(std::fabs(shape.mesh.vertices[6].y - 4.0f) < 1e-4f && std::fabs(shape.mesh.vertices[6].x - 2.0f) < 1e-4f,
+          "with Shift the corner moves straight up");
+    Check(system.Update(scene) == 1 && system.Geometry(block)->mesh.bounds.max.y > 3.9f,
+          "the moved corners re-shape the mesh");
+    tool.OnPress(scene, system, camera.At(Vec3(2.0f, 4.0f, 2.5f)));
+    tool.OnMove(scene, system, camera.At(Vec3(0.0f, 4.0f, 0.0f)));
+    tool.Cancel(scene);
+    Check(std::fabs(shape.mesh.vertices[6].x - 2.0f) < 1e-4f, "Esc puts a corner back where the drag started");
+
+    const std::string saved = SceneSerializer(scene).SerializeToString();
+    Scene loaded("Loaded");
+    SceneSerializer::DeserializeFromString(loaded, saved);
+    const auto& reloaded = loaded.FindEntityByName("Block").GetComponent<ConstructionShapeComponent>();
+    Check(reloaded.source == SourceKind::EditableMesh && reloaded.mesh.faces.size() == 6 &&
+              std::fabs(reloaded.mesh.vertices[6].y - 4.0f) < 1e-4f,
+          "an editable mesh saves and loads with its corners");
+}
+
+void TestPlaytestHeatmap()
+{
+    using namespace Hephaestus::Analysis;
+    RecordPlaytestEvent({"kill", Vec3(1.0f, 0.0f, 1.0f), 1});
+    Check(EndPlaytest().empty() && !IsPlaytestRunning(), "nothing is recorded outside a playtest");
+    BeginPlaytest();
+    Check(IsPlaytestRunning(), "a playtest records once begun");
+    AdvancePlaytestClock(2.5f);
+    RecordPlaytestEvent({"kill", Vec3(1.0f, 0.5f, 1.0f), 1});
+    RecordPlaytestEvent({"kill", Vec3(1.5f, 1.5f, 1.9f), 2});
+    RecordPlaytestEvent({"kill", Vec3(-3.0f, 0.0f, 1.0f), 2});
+    RecordPlaytestEvent({"traffic", Vec3(0.0f, 0.0f, 0.0f), 1});
+    const float clock = PlaytestClock();
+    const std::vector<PlaytestEvent> events = EndPlaytest();
+    Check(events.size() == 4 && events[0].time == 2.5f && clock == 2.5f && !IsPlaytestRunning(),
+          "events keep the simulated time they happened at, and ending stops recording");
+    const Heatmap kills = BuildHeatmap(events, "kill", 2.0f);
+    Check(kills.total == 3 && kills.cells.size() == 2 && kills.maxCount == 2 && kills.cells[0].count == 2 &&
+              kills.cells[0].x == 0 && kills.cells[0].z == 0 && std::fabs(kills.cells[0].height - 1.0f) < 1e-5f &&
+              kills.cells[1].x == -2,
+          "kills bin into 2 m cells, busiest first, at the mean height of their events");
+    std::vector<EditorDebugLine> lines;
+    AppendHeatmapLines(kills, lines);
+    Check(!lines.empty() && lines.front().color.x > 0.9f && lines.front().color.y < 0.2f &&
+              lines.back().color.y > lines.front().color.y + 0.2f,
+          "the busiest cell is drawn red and a quieter one further towards yellow and blue");
+}
+
+void TestLargeLevel()
+{
+    // Recast addresses a heightfield's spans with 24 bits, so one 840 m floor in a single tile built nothing.
+    Scene scene("Large");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams floor;
+    floor.width = 839.55f;
+    floor.depth = 839.55f;
+    floor.height = 1.4f;
+    AddBox(scene, "Floor", floor, Vec3(0.0f, -1.4f, 0.0f));
+    AddBox(scene, "Room", Room(), Vec3(100.0f, 0.0f, 100.0f));
+    system.Update(scene);
+    std::string error;
+    auto timed = [&](Hephaestus::Navigation::NavUpdateStats& stats, double& ms) {
+        const auto start = std::chrono::steady_clock::now();
+        auto mesh = Hephaestus::Analysis::LevelNavMesh(scene, {}, error, &stats);
+        ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        return mesh;
+    };
+    Hephaestus::Navigation::NavUpdateStats full;
+    double fullMs = 0.0;
+    const auto shared = timed(full, fullMs);
+    Check(shared != nullptr, "an 840 m floor builds a navmesh (" + error + ")");
+    const Hephaestus::Navigation::NavMesh& navMesh = *shared;
+    std::cout << "[INFO] 840 m floor: navmesh " << fullMs << " ms, " << full.tilesBuilt << " tiles, "
+              << navMesh.PolygonCount() << " polygons\n";
+    const Hephaestus::Analysis::WalkRoute route = Hephaestus::Analysis::MeasureWalk(
+        navMesh, Hephaestus::Analysis::TraversalMetrics{}, Vec3(-300.0f, 0.0f, -10.0f), Vec3(300.0f, 0.0f, 10.0f));
+    Check(route.complete && route.length < route.straight * 1.005f,
+          "a 600 m walk across tiles follows the straight line (" + std::to_string(route.length) + " m)");
+    const auto islands = navMesh.Islands({Vec3(0.0f, 0.0f, 0.0f)});
+    int reachedFloor = 0;
+    for (const auto& island : islands) reachedFloor += island.reached && island.area > 600000.0f ? 1 : 0;
+    Check(reachedFloor == 1, "the floor's tiles join into one island");
+
+    Hephaestus::Navigation::NavUpdateStats same;
+    double sameMs = 0.0;
+    timed(same, sameMs);
+    Check(same.tilesBuilt == 0 && same.tilesKept == full.tilesBuilt, "an unchanged level rebuilds no tiles");
+    Entity crate = AddBox(scene, "Crate", BoxParams{}, Vec3(200.0f, 0.0f, 200.0f));
+    system.Update(scene);
+    Hephaestus::Navigation::NavUpdateStats edited;
+    double editMs = 0.0;
+    timed(edited, editMs);
+    std::cout << "[INFO] 840 m floor: one new block rebuilt " << edited.tilesBuilt << " tiles in " << editMs
+              << " ms (unchanged: " << sameMs << " ms)\n";
+    Vec3 onTop;
+    Check(edited.tilesBuilt >= 1 && edited.tilesBuilt <= 4 &&
+              navMesh.ClosestPoint(Vec3(200.0f, 3.2f, 200.0f), onTop, Vec3(0.5f, 0.5f, 0.5f)) &&
+              std::fabs(onTop.y - 3.0f) < 0.2f,
+          "a new block rebuilds only the tiles it touches, and its top is walkable");
+    scene.DestroyEntity(crate);
+    system.Update(scene);
+    Hephaestus::Navigation::NavUpdateStats removed;
+    timed(removed, editMs);
+    Check(removed.tilesBuilt == edited.tilesBuilt &&
+              !navMesh.ClosestPoint(Vec3(200.0f, 3.2f, 200.0f), onTop, Vec3(0.5f, 0.5f, 0.5f)),
+          "removing it rebuilds the same tiles and its top is gone");
+    CharacterControllerComponent wide;
+    wide.radius = 0.5f;
+    scene.CreateEntity("Wide").AddComponent<CharacterControllerComponent>(wide);
+    Hephaestus::Navigation::NavUpdateStats resized;
+    timed(resized, editMs);
+    Check(resized.tilesKept == 0 && resized.tilesBuilt > 0, "a different character size rebuilds every tile");
+
+    // A later editor session: a new navmesh with the same project cache loads tiles instead of building them.
+    namespace fs = std::filesystem;
+    const fs::path project = fs::temp_directory_path() / "hephaestus_navmesh_cache_test";
+    fs::remove_all(project);
+    fs::create_directories(project / ".hephaestus");
+    const auto geometry = Hephaestus::Navigation::CollectSceneGeometry(scene);
+    const auto settings = Hephaestus::Navigation::SettingsForScene(scene);
+    Hephaestus::Navigation::NavMesh firstSession;
+    firstSession.SetTileCache(project);
+    Hephaestus::Navigation::NavUpdateStats firstStats;
+    firstSession.Update(geometry, settings, error, &firstStats);
+    Hephaestus::Navigation::NavMesh secondSession;
+    secondSession.SetTileCache(project);
+    Hephaestus::Navigation::NavUpdateStats secondStats;
+    const auto loadStart = std::chrono::steady_clock::now();
+    const bool loadedOk = secondSession.Update(geometry, settings, error, &secondStats);
+    const double loadMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - loadStart).count();
+    std::cout << "[INFO] 840 m floor: next session loaded " << secondStats.tilesLoaded << " tiles in " << loadMs << " ms\n";
+    const Hephaestus::Analysis::WalkRoute cachedRoute = Hephaestus::Analysis::MeasureWalk(
+        secondSession, Hephaestus::Analysis::TraversalMetrics{}, Vec3(-300.0f, 0.0f, -10.0f), Vec3(300.0f, 0.0f, 10.0f));
+    Check(loadedOk && firstStats.tilesBuilt > 0 && secondStats.tilesBuilt == 0 &&
+              secondStats.tilesLoaded == firstStats.tilesBuilt && cachedRoute.complete &&
+              secondSession.PolygonCount() == firstSession.PolygonCount(),
+          "a later session loads every tile from the project cache and walks the same");
+    Hephaestus::Navigation::NavMesh packaged;
+    packaged.SetTileCache(project / "no-project-here");
+    Hephaestus::Navigation::NavUpdateStats packagedStats;
+    packaged.Update(geometry, settings, error, &packagedStats);
+    Check(packagedStats.tilesLoaded == 0 && !fs::exists(project / "no-project-here" / ".hephaestus"),
+          "without a .hephaestus folder (a packaged game) nothing is cached");
+    fs::remove_all(project);
+}
+
+void TestScale()
+{
+    Scene scene("Scale");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    std::vector<Entity> rooms;
+    std::vector<Entity> doors;
+    for (int i = 0; i < 1000; ++i) {
+        Entity room = AddBox(scene, "Room" + std::to_string(i), Room(), Vec3(float(i % 40) * 8.0f, 0.0f, float(i / 40) * 6.0f));
+        doors.push_back(AddOpening(scene, room, Door()));
+        rooms.push_back(room);
+    }
+    auto start = std::chrono::steady_clock::now();
+    Check(system.Update(scene) == 1000, "1,000 rooms evaluate on the first update");
+    const double fullMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    system.Update(scene);
+    const double idleMs = system.Stats().lastUpdateMs;
+    doors[500].GetComponent<ConstructionShapeComponent>().opening.offset = 1.0f;
+    Check(system.Update(scene) == 1, "one door edit among 1,000 rooms re-evaluates one room");
+    const double editMs = system.Stats().lastUpdateMs;
+    const double evalMs = system.Stats().lastEvaluateMs;
+    const auto snapshotStart = std::chrono::steady_clock::now();
+    const std::string snapshot = SceneSerializer(scene).SerializeToString();
+    const double snapshotMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - snapshotStart).count();
+    std::cout << "[INFO] 1,000 rooms: undo snapshot (scene serialisation) " << snapshotMs << " ms, "
+              << snapshot.size() / 1024 << " KB\n";
+    // Timings are reported, not asserted: they depend on the machine and build configuration.
+    std::cout << "[INFO] 1,000 rooms: first update " << fullMs << " ms, idle update " << idleMs
+              << " ms, one door edit " << editMs << " ms (evaluation " << evalMs << " ms)\n";
+    const auto navStart = std::chrono::steady_clock::now();
+    Hephaestus::Navigation::NavMesh nav;
+    std::string navError;
+    const bool navBuilt = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                    Hephaestus::Navigation::SettingsForScene(scene), navError);
+    const double navMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - navStart).count();
+    std::cout << "[INFO] 1,000 rooms: navmesh " << (navBuilt ? std::string("built") : "failed: " + navError) << " in "
+              << navMs << " ms, " << nav.PolygonCount() << " polygons\n";
+}
+
+} // namespace
+
+int main()
+{
+    std::cout << std::unitbuf;
+    TestRecipes();
+    TestSystem();
+    TestTool();
+    TestStairs();
+    TestSubtract();
+    TestRoundShapes();
+    TestSetOperation();
+    TestWalls();
+    TestWallTool();
+    TestWallsLineUp();
+    TestCopyPaste();
+    TestResizeSnapsToNeighbours();
+    TestMeshTools();
+    TestMeshOpenings();
+    TestRampsAndTurns();
+    TestFaceMaterials();
+    TestFaceTextureAlignment();
+    TestKits();
+    TestLevelChecks();
+    TestJumpChecks();
+    TestStoreys();
+    TestStoreysAnyShape();
+    TestRoofsAndBalconies();
+    TestBalconiesJoin();
+    TestEditableMesh();
+    TestPlaytestHeatmap();
+    TestLargeLevel();
+    TestScale();
+    if (!g_pass) {
+        return 1;
+    }
+    std::cout << "ConstructionTests passed\n";
+    return 0;
+}

@@ -15,6 +15,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -23,7 +24,7 @@
 #include <Jolt/Math/Float3.h>
 
 #include "../Assets/MeshAsset.h"
-#include "../Assets/ModelImporter.h"
+#include "../Assets/MeshGeometryCache.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -44,142 +45,6 @@
 
 namespace {
 
-std::filesystem::path ResolveMeshAssetPath(const std::string& assetPath, const std::filesystem::path& projectRoot = {})
-{
-    namespace fs = std::filesystem;
-
-    if (assetPath.empty()) {
-        return {};
-    }
-
-    // Skip built-in resources
-    if (assetPath.rfind("builtin://", 0) == 0) {
-        return {};
-    }
-
-    fs::path path(assetPath);
-    std::error_code ec;
-
-    // Absolute path
-    if (path.is_absolute() && fs::exists(path, ec)) {
-        return path.lexically_normal();
-    }
-
-    auto tryRoots = [&](const fs::path& root) -> fs::path {
-        if (root.empty()) {
-            return {};
-        }
-
-        // root / assetPath
-        fs::path candidate = (root / path).lexically_normal();
-        if (fs::exists(candidate, ec)) {
-            return candidate;
-        }
-
-        // root / assets / assetPath (handles passing paths without leading "assets/")
-        candidate = (root / "assets" / path).lexically_normal();
-        if (fs::exists(candidate, ec)) {
-            return candidate;
-        }
-
-        return {};
-    };
-
-    // FIRST: Try the explicitly provided project root
-    if (!projectRoot.empty()) {
-        fs::path resolved = tryRoots(projectRoot);
-        if (!resolved.empty()) {
-            return resolved;
-        }
-    }
-
-    auto tryWalkUp = [&](fs::path start) -> fs::path {
-        fs::path cur = start;
-        for (int depth = 0; depth < 10 && !cur.empty(); ++depth) {
-            fs::path resolved = tryRoots(cur);
-            if (!resolved.empty()) {
-                return resolved;
-            }
-            if (!cur.has_parent_path()) {
-                break;
-            }
-            cur = cur.parent_path();
-        }
-        return {};
-    };
-
-    // Try relative to CWD and parents
-    {
-        fs::path resolved = tryWalkUp(fs::current_path());
-        if (!resolved.empty()) {
-            return resolved;
-        }
-    }
-
-    // Try relative to executable directory and parents
-    fs::path exeDir;
-#ifdef _WIN32
-    std::wstring buffer(512, L'\0');
-    while (true) {
-        DWORD result = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (result == 0) {
-            break;
-        }
-        if (result < buffer.size() - 1) {
-            buffer.resize(result);
-            exeDir = fs::path(buffer).parent_path();
-            break;
-        }
-        buffer.resize(buffer.size() * 2);
-    }
-#endif
-    if (!exeDir.empty()) {
-        fs::path resolved = tryWalkUp(exeDir);
-        if (!resolved.empty()) {
-            return resolved;
-        }
-    }
-
-    // Last attempt: if there's an engine-like root with a "projects" folder, scan project roots.
-    auto findProjectsRoot = [&](fs::path start) -> fs::path {
-        fs::path cur = start;
-        for (int depth = 0; depth < 10 && !cur.empty(); ++depth) {
-            fs::path projects = (cur / "projects").lexically_normal();
-            if (fs::exists(projects, ec) && fs::is_directory(projects, ec)) {
-                return projects;
-            }
-            if (!cur.has_parent_path()) {
-                break;
-            }
-            cur = cur.parent_path();
-        }
-        return {};
-    };
-
-    fs::path projectsRoot;
-    projectsRoot = findProjectsRoot(fs::current_path());
-    if (projectsRoot.empty() && !exeDir.empty()) {
-        projectsRoot = findProjectsRoot(exeDir);
-    }
-
-    if (!projectsRoot.empty()) {
-        for (const auto& entry : fs::directory_iterator(projectsRoot, ec)) {
-            if (ec) {
-                break;
-            }
-            if (!entry.is_directory(ec)) {
-                continue;
-            }
-            fs::path projRoot = entry.path();
-            fs::path resolved = tryRoots(projRoot);
-            if (!resolved.empty()) {
-                return resolved;
-            }
-        }
-    }
-
-    return {};
-}
 
 JPH::Quat EulerXYZToQuat(const Vec3& euler)
 {
@@ -781,45 +646,6 @@ JPH::BoxShapeSettings MakeBoxSettings(const Vec3& half)
                                  std::min(JPH::cDefaultConvexRadius, smallest));
 }
 
-struct MeshCacheEntry {
-    MeshData mesh;
-    std::filesystem::file_time_type lastWrite{};
-};
-
-std::unordered_map<std::string, MeshCacheEntry> g_MeshCache;
-
-const MeshData* GetMeshDataForPath(const std::string& meshAssetPath, const std::filesystem::path& projectRoot = {}) {
-    std::filesystem::path meshPath = ResolveMeshAssetPath(meshAssetPath, projectRoot);
-    if (meshPath.empty()) {
-        return nullptr;
-    }
-
-    std::error_code ec;
-    const std::string key = meshPath.lexically_normal().generic_string();
-    auto lastWrite = std::filesystem::last_write_time(meshPath, ec);
-    if (ec) {
-        lastWrite = std::filesystem::file_time_type::min();
-    }
-
-    auto it = g_MeshCache.find(key);
-    if (it != g_MeshCache.end() && it->second.lastWrite == lastWrite) {
-        return &it->second.mesh;
-    }
-
-    MeshData mesh;
-    std::string error;
-    if (!ModelImporter::LoadModel(meshPath, mesh, error)) {
-        std::cerr << "Failed to load mesh for collision: " << error << "\n";
-        return nullptr;
-    }
-
-    MeshCacheEntry entry;
-    entry.mesh = std::move(mesh);
-    entry.lastWrite = lastWrite;
-    auto result = g_MeshCache.emplace(key, std::move(entry));
-    return &result.first->second.mesh;
-}
-
 } // namespace
 
 bool JoltPhysicsSystem::DecomposeEntityPose(Scene& scene, entt::entity entity, WorldPose& out) const
@@ -942,7 +768,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
             return {};
         }
 
-        const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath);
+        const auto meshData = Hephaestus::MeshGeometryCache::Get(renderer.meshAssetPath, m_ProjectRoot);
         if (!meshData) {
             return {};
         }
@@ -1052,8 +878,30 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
                 std::cerr << "Failed to create cylinder collision shape: " << result.GetError().c_str() << "\n";
                 break;
             }
+            case PhysicsShapeType::ConvexHull: {
+                std::vector<JPH::Vec3> points;
+                points.reserve(shapeComp.points.size());
+                for (const Vec3& p : shapeComp.points) {
+                    points.emplace_back(p.x * scale.x, p.y * scale.y, p.z * scale.z);
+                }
+                if (points.size() < 4) {
+                    std::cerr << "Convex hull collision shape needs at least 4 points\n";
+                    break;
+                }
+                // A small convex radius keeps the hull's corners sharp; the default would round them by 5 cm.
+                JPH::ConvexHullShapeSettings settings(points.data(), static_cast<int>(points.size()), 0.005f);
+                auto result = settings.Create();
+                if (!result.HasError()) {
+                    return applyOffset(result.Get());
+                }
+                std::cerr << "Failed to create convex hull collision shape: " << result.GetError().c_str() << "\n";
+                break;
+            }
             case PhysicsShapeType::Mesh:
-                // Handled outside (needs mesh renderer)
+                // A mesh renderer's model is handled outside; here only triangles carried by the shape itself.
+                if (shapeComp.triangles && rigidBody.IsStatic()) {
+                    return applyOffset(BuildMeshShapeFromMeshData(*shapeComp.triangles, scale));
+                }
                 break;
             default:
                 break;
@@ -1674,7 +1522,7 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
             it = m_EntityToBodyMap.end();
         }
         if (it == m_EntityToBodyMap.end()) {
-            const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath, m_ProjectRoot);
+            const auto meshData = Hephaestus::MeshGeometryCache::Get(renderer.meshAssetPath, m_ProjectRoot);
             if (!meshData) {
                 continue;
             }
@@ -1896,7 +1744,7 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
         }
         const Mat4 meshWorldMat = scene.GetWorldTransform(meshColliderEntity);
         const auto& renderer = meshColliderEntity.GetComponent<MeshRendererComponent>();
-        const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath, m_ProjectRoot);
+        const auto meshData = Hephaestus::MeshGeometryCache::Get(renderer.meshAssetPath, m_ProjectRoot);
         if (!meshData || meshData->vertices.empty() || meshData->indices.size() < 3) {
             continue;
         }

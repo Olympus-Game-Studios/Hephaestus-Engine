@@ -1,9 +1,13 @@
 #pragma once
 
+#include "../Assets/DerivedDataCache.h"
+#include "../Assets/MeshAsset.h"
 #include "../Core/Math.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class Scene;
@@ -12,12 +16,13 @@ class dtNavMeshQuery;
 
 namespace Hephaestus::Navigation {
 
+// Agent values default to CharacterControllerComponent's defaults; SettingsForScene fits them to the scene's characters.
 struct NavBuildSettings {
-    float cellSize = 0.2f;
+    float cellSize = 0.15f;  // half the agent radius, so erosion is exactly the radius
     float cellHeight = 0.1f;
     float agentHeight = 1.8f;
-    float agentRadius = 0.35f;
-    float agentMaxClimb = 0.4f;
+    float agentRadius = 0.3f;
+    float agentMaxClimb = 0.3f;
     float agentMaxSlopeDegrees = 45.0f;
     float regionMinSize = 8.0f;
     float regionMergeSize = 20.0f;
@@ -45,18 +50,59 @@ struct NavGeometry {
     std::vector<float> vertices;
     std::vector<int> triangles;
     std::vector<NavLink> links;  // both ways
+    // Each Add call, in order: its first triangle, and whether it is a closed convex solid. A piece's triangles run to
+    // the next piece. The navmesh fills a solid's whole volume, so the inside of a block is never walkable; other
+    // pieces (meshes) are rasterized as surfaces.
+    struct Piece {
+        int firstTriangle = 0;
+        bool solid = true;
+    };
+    std::vector<Piece> pieces;
 
     void AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3& offset);
+    // Upright around local Y through offset, with flat ends; height is the whole length.
+    void AddCylinder(const Mat4& world, float radius, float height, const Vec3& offset);
+    void AddSphere(const Mat4& world, float radius, const Vec3& offset);
+    // The convex hull of the points (local space, plus offset). More than 64 points fall back to their bounding box.
+    void AddConvexHull(const Mat4& world, const std::vector<Vec3>& points, const Vec3& offset);
+    // A mesh's triangles as surfaces, such as imported level art with mesh collision.
+    void AddMesh(const Mat4& world, const MeshData& mesh);
     bool Empty() const { return triangles.empty(); }
 };
 
-// Walkable geometry of a scene: static, solid rigid bodies with box collision shapes.
-NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes = nullptr);
+// Walkable geometry of a scene, shaped and placed as the physics system builds it: static, solid rigid bodies (box,
+// sphere, capsule, cylinder, convex hull and mesh shapes, or the mesh bounds when there is no shape) and static mesh
+// colliders with complex collision. skippedShapes counts mesh collision whose model could not be loaded.
+// projectRoot is where model paths are looked up first, as JoltPhysicsSystem::SetProjectRoot.
+NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes = nullptr,
+                                 const std::filesystem::path& projectRoot = {});
+
+// Build settings fitted to the scene's character controllers: the widest radius, tallest height, lowest step and
+// shallowest slope, so every character fits where the navmesh says it can go. Defaults when there are none.
+NavBuildSettings SettingsForScene(Scene& scene);
 
 // Adds links across the scene's vaultable cover: upright static boxes from vaultMinHeight to vaultMaxHeight tall and
 // no deeper than vaultMaxDepth, every vaultLinkSpacing along their length, where no other box blocks a standing body
 // over the top. Returns how many were added.
 int AddVaultLinks(Scene& scene, const NavBuildSettings& settings, NavGeometry& geometry);
+
+// A connected part of the navmesh: everywhere a walker can get to from anywhere else in it, links included.
+struct NavIsland {
+    float area = 0.0f;  // square metres, seen from above
+    Vec3 centre;        // area-weighted centre of its polygons
+    Vec3 min;
+    Vec3 max;
+    bool reached = false;  // holds the walkable point nearest one of the starts
+    std::vector<std::pair<Vec3, Vec3>> edges;  // its outline: polygon edges with nothing walkable beyond them
+};
+
+// What an Update did: tiles rebuilt because their geometry changed, kept as they were, and dropped.
+struct NavUpdateStats {
+    int tilesBuilt = 0;
+    int tilesLoaded = 0;  // read back from the tile cache instead of being built
+    int tilesKept = 0;
+    int tilesRemoved = 0;
+};
 
 class NavMesh {
 public:
@@ -66,7 +112,14 @@ public:
     NavMesh& operator=(const NavMesh&) = delete;
 
     bool Build(const NavGeometry& geometry, const NavBuildSettings& settings, std::string& error);
+    // Brings the navmesh up to date with the geometry, rebuilding only the tiles whose geometry, links or settings
+    // changed since the last Build or Update. A change of agent settings rebuilds everything.
+    bool Update(const NavGeometry& geometry, const NavBuildSettings& settings, std::string& error,
+                NavUpdateStats* stats = nullptr);
     void Clear();
+    // Keeps built tiles in the project's derived data cache (.hephaestus/ddc/navmesh), so a later session loads
+    // unchanged tiles instead of building them. Only projects with a .hephaestus folder (not packaged games) cache.
+    void SetTileCache(const std::filesystem::path& projectRoot);
     bool IsReady() const { return m_query != nullptr; }
     int PolygonCount() const;
 
@@ -77,11 +130,18 @@ public:
     bool ClosestPoint(const Vec3& point, Vec3& out, const Vec3& searchExtents = Vec3(2.0f, 4.0f, 2.0f)) const;
     // A random walkable point within radius (along the navmesh) of center; rngState is advanced.
     bool RandomPointAround(const Vec3& center, float radius, std::uint32_t& rngState, Vec3& out) const;
+    // Every connected part of the navmesh, marking those that hold the walkable point nearest one of starts.
+    std::vector<NavIsland> Islands(const std::vector<Vec3>& starts,
+                                   const Vec3& searchExtents = Vec3(2.0f, 4.0f, 2.0f)) const;
 
 private:
     dtNavMesh* m_navMesh = nullptr;
     dtNavMeshQuery* m_query = nullptr;
     float m_vaultLinkCost = 1.0f;
+    std::unordered_map<std::int64_t, std::uint64_t> m_tileHashes;
+    std::uint64_t m_settingsHash = 0;
+    unsigned int m_tileBits = 0;
+    DerivedDataCache m_tileCache;
 };
 
 } // namespace Hephaestus::Navigation

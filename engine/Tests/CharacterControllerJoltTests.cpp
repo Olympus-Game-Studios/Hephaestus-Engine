@@ -1,3 +1,4 @@
+#include "Construction/ConstructionSystem.h"
 #include "Physics/CharacterControllerSystem.h"
 #include "Physics/JoltPhysicsEngine.h"
 #include "Physics/JoltPhysicsSystem.h"
@@ -191,6 +192,133 @@ CrateMeasure PushCrate(float mass, float pushStrength)
 
 int main()
 {
+    {
+        // Construction stairs (generated box colliders) are climbable with the default controller settings.
+        Session session("ConstructionStairs");
+        AddFloor(session);
+        Entity stairs = session.scene.CreateEntity("Stairs");
+        auto& shape = stairs.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Hephaestus::Construction::Recipe::Stairs;
+        shape.box.width = 1.6f;
+        shape.box.depth = 4.0f;
+        shape.box.height = 2.0f;
+        shape.stairs.maxRise = CharacterControllerComponent{}.stepHeight * 0.95f;
+        Entity landing = session.scene.CreateEntity("Landing");
+        landing.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 4.0f);
+        auto& landingShape = landing.AddComponent<ConstructionShapeComponent>();
+        landingShape.box.width = 4.0f;
+        landingShape.box.depth = 4.0f;
+        landingShape.box.height = 2.0f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, -4.0f));
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(10);
+        Physics::RaycastHit stepHit;
+        const bool tread = session.system.Raycast(entt::null, Vec3(0.0f, 5.0f, -1.25f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, stepHit);
+        Check(tread && std::fabs(stepHit.point.y - 0.5f) < 0.01f,
+              "Construction stairs collide at their treads (hit y " + std::to_string(stepHit.point.y) + ")");
+        session.controllers.SetMoveInput(id, 0.0f, 1.0f);
+        float topY = -100.0f;
+        float furthest = -100.0f;
+        for (int frame = 0; frame < 240; ++frame) {
+            session.Step(1);
+            const auto state = StateOf(session, id);
+            topY = std::max(topY, state.position.y);
+            furthest = std::max(furthest, state.position.z);
+            if (state.position.z > 3.5f) {
+                session.controllers.ClearMoveInput(id);
+            }
+        }
+        const Vec3 feet(0.0f, topY, furthest);
+        Check(feet.y > 1.9f && feet.z > 2.5f,
+              "A character walks up construction stairs onto the landing (feet at " + std::to_string(feet.y) + ", z " +
+                  std::to_string(feet.z) + ")");
+    }
+    {
+        // A construction ramp (a convex hull collider) can be walked up with the default controller.
+        Session session("ConstructionRamp");
+        AddFloor(session);
+        Entity ramp = session.scene.CreateEntity("Ramp");
+        auto& shape = ramp.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Hephaestus::Construction::Recipe::Ramp;
+        shape.box.width = 2.0f;
+        shape.box.depth = 4.0f;
+        shape.box.height = 1.5f;
+        Entity landing = session.scene.CreateEntity("Landing");
+        landing.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 4.0f);
+        auto& landingShape = landing.AddComponent<ConstructionShapeComponent>();
+        landingShape.box.width = 4.0f;
+        landingShape.box.depth = 4.0f;
+        landingShape.box.height = 1.5f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, -4.0f));
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(10);
+        session.controllers.SetMoveInput(id, 0.0f, 1.0f);
+        float topY = -100.0f;
+        float furthest = -100.0f;
+        for (int frame = 0; frame < 240; ++frame) {
+            session.Step(1);
+            const auto state = StateOf(session, id);
+            topY = std::max(topY, state.position.y);
+            furthest = std::max(furthest, state.position.z);
+            if (state.position.z > 3.5f) {
+                session.controllers.ClearMoveInput(id);
+            }
+        }
+        Check(topY > 1.4f && furthest > 2.5f,
+              "A character walks up a construction ramp onto the landing (feet at " + std::to_string(topY) + ", z " +
+                  std::to_string(furthest) + ")");
+    }
+    {
+        // An editable mesh with a recess pushed into half its top collides as its own triangles, recess included.
+        Session session("ConstructionRecess");
+        Entity platform = session.scene.CreateEntity("Platform");
+        auto& shape = platform.AddComponent<ConstructionShapeComponent>();
+        shape.box.width = 4.0f;
+        shape.box.depth = 4.0f;
+        shape.box.height = 1.0f;
+        Hephaestus::Construction::MakeEditable(shape);
+        Hephaestus::Construction::SplitFace(shape.mesh, 0);
+        Hephaestus::Construction::ExtrudeFace(shape.mesh, 0);
+        for (int index : shape.mesh.faces[0]) shape.mesh.vertices[static_cast<size_t>(index)].y -= 0.5f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        session.Step(2);
+        Physics::RaycastHit low;
+        Physics::RaycastHit high;
+        const bool inRecess = session.system.Raycast(entt::null, Vec3(0.0f, 5.0f, 1.0f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, low);
+        const bool onTop = session.system.Raycast(entt::null, Vec3(0.0f, 5.0f, -1.0f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, high);
+        Check(inRecess && std::fabs(low.point.y - 0.5f) < 0.02f && onTop && std::fabs(high.point.y - 1.0f) < 0.02f,
+              "A recess pushed into an editable mesh is hollow to collision (recess y " + std::to_string(low.point.y) +
+                  ", top y " + std::to_string(high.point.y) + ")");
+    }
+    {
+        // A triangular construction room: its sloped wall and floor are convex hull colliders.
+        Session session("ConstructionHulls");
+        Entity room = session.scene.CreateEntity("Triangle Room");
+        auto& shape = room.AddComponent<ConstructionShapeComponent>();
+        shape.recipe = Hephaestus::Construction::Recipe::Wall;
+        shape.wall.points = {{0.0f, 0.0f}, {6.0f, 0.0f}, {0.0f, 6.0f}};
+        shape.wall.closed = true;
+        shape.box.height = 3.0f;
+        shape.box.wallThickness = 0.2f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        session.Step(2);
+        Physics::RaycastHit floorHit;
+        const bool floor = session.system.Raycast(entt::null, Vec3(1.5f, 5.0f, 1.5f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, floorHit);
+        Check(floor && std::fabs(floorHit.point.y - 0.2f) < 0.02f,
+              "A triangular room's floor hull collides at its top (hit y " + std::to_string(floorHit.point.y) + ")");
+        Physics::RaycastHit wallHit;
+        const Vec3 towardWall = vnorm(Vec3(1.0f, 0.0f, 1.0f));
+        const bool wall = session.system.Raycast(entt::null, Vec3(1.0f, 1.5f, 1.0f), towardWall, 10.0f, wallHit);
+        const float expected = 2.0f * std::sqrt(2.0f) - 0.1f;
+        Check(wall && std::fabs(wallHit.distance - expected) < 0.03f,
+              "The sloped wall hull stops a ray at its inner face (distance " + std::to_string(wallHit.distance) + ")");
+    }
     {
         Session session("Lifecycle");
         AddFloor(session);
@@ -897,23 +1025,35 @@ int main()
                   && character.GetComponent<CharacterComponent>().externalPose,
               "The ragdoll replaces the character controller and its children's colliders and stops the animation");
         const float headStartX = BoneWorld(session, character, 4).x;
-        session.Step(240);
+        // How long a fall takes to settle is chaotic (Debug and Release builds differ by seconds), so wait for rest.
+        int restFrames = 0;
+        for (; restFrames < 600; ++restFrames) {
+            bool anyAwake = false;
+            for (JPH::BodyID part : ragdolls.PartBodies(id)) {
+                anyAwake = anyAwake || session.engine.GetBodyInterface().IsActive(part);
+            }
+            if (!anyAwake) break;
+            session.Step(1);
+        }
         const Vec3 hips = BoneWorld(session, character, 0);
         const Vec3 head = BoneWorld(session, character, 4);
         float lowest = 1e9f;
         bool finite = true;
         bool settled = true;
+        int awake = 0;
         JPH::BodyInterface& bodies = session.engine.GetBodyInterface();
         for (JPH::BodyID part : ragdolls.PartBodies(id)) {
             const JPH::RVec3 position = bodies.GetCenterOfMassPosition(part);
             lowest = std::min(lowest, static_cast<float>(position.GetY()));
             finite = finite && std::isfinite(static_cast<float>(position.GetY()));
             settled = settled && !bodies.IsActive(part);
+            awake += bodies.IsActive(part) ? 1 : 0;
         }
         Check(finite && settled && hips.y < 0.4f && head.y < 1.0f && lowest > -0.02f,
               "The ragdoll collapses onto the floor and comes to rest without falling through it (hips y=" +
                   std::to_string(hips.y) + ", head y=" + std::to_string(head.y) + ", lowest part=" +
-                  std::to_string(lowest) + ")");
+                  std::to_string(lowest) + ", " + std::to_string(awake) + " parts still moving after " +
+                  std::to_string(restFrames) + " frames)");
         Check(head.x > headStartX + 0.3f, "An impulse at the head pushes the body that way (head x=" + std::to_string(head.x) + ")");
         Physics::RaycastHit hit;
         session.system.Raycast(entt::null, Vec3(hips.x, 3.0f, hips.z), Vec3(0.0f, -1.0f, 0.0f), 5.0f, hit);

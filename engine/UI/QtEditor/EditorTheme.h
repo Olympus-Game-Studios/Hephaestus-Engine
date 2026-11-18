@@ -92,6 +92,8 @@ enum class IconTone
  * in text/on-action.
  */
 QIcon Icon(const QString& name, IconTone tone = IconTone::Secondary);
+/** An icon from an SVG file outside the icon set (plugin icons), tinted like Icon when drawn with currentColor. */
+QIcon IconFromFile(const QString& path, IconTone tone = IconTone::Secondary);
 
 /**
  * Full-colour icon for a code file from the Material Icon Theme

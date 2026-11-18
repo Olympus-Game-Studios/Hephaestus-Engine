@@ -212,14 +212,48 @@ void CaptureLiveParentAndRoot(Scene& scene, Entity root, PrefabInstanceComponent
     }
 }
 
-bool SaveAsset(const PrefabAsset& asset, const std::string& path, std::string& error) {
-    const fs::path resolved = PrefabOverrideSystem::ResolveAssetFilePath(path, true);
-    if (!PrefabSerializer::Serialize(asset, resolved, error)) {
-        return false;
+std::vector<std::string>& LoadingStack() {
+    static thread_local std::vector<std::string> stack;
+    return stack;
+}
+
+void ApplyOverrideToNode(PrefabNode& node, const PrefabNodeOverride& overrideData, bool isRoot) {
+    auto transformProps = overrideData.componentOverrides.find("Transform");
+    const bool hasTransformPaths = transformProps != overrideData.componentOverrides.end() &&
+                                   !transformProps->second.properties.empty();
+    if (!isRoot && overrideData.hasTransform && !hasTransformPaths) {
+        PrefabComponentIO::CopyLocalTransform(node.localTransform, overrideData.transform);
     }
-    PrefabOverrideSystem::InvalidateAssetCache(path);
-    PrefabOverrideSystem::InvalidateAssetCache(resolved.generic_string());
-    return true;
+    if (!isRoot && hasTransformPaths) {
+        for (const auto& [property, value] : transformProps->second.properties) {
+            ApplyTransformProperty(node.localTransform, property, value);
+        }
+    }
+    auto entryFor = [&](const std::string& type) -> PrefabComponentEntry& {
+        for (auto& entry : node.components) {
+            if (entry.type == type) return entry;
+        }
+        PrefabComponentEntry created;
+        created.type = type;
+        created.enabled = true;
+        created.data = PrefabComponentIO::MakeObject();
+        node.components.push_back(std::move(created));
+        return node.components.back();
+    };
+    for (const auto& [type, componentOverride] : overrideData.componentOverrides) {
+        if (type != "Transform" && !componentOverride.properties.empty()) {
+            PrefabComponentIO::MergeOverrides(entryFor(type).data, componentOverride.properties);
+        }
+    }
+    if (!overrideData.scriptVars.empty()) {
+        JsonValue& data = entryFor("LuaScript").data;
+        if (!data.IsObject()) data = PrefabComponentIO::MakeObject();
+        JsonValue& variables = data.objectValue["variables"];
+        if (!variables.IsObject()) variables = PrefabComponentIO::MakeObject();
+        for (const auto& [key, value] : overrideData.scriptVars) {
+            variables.objectValue[key] = PrefabComponentIO::PropertyToJson(value);
+        }
+    }
 }
 
 } // namespace
@@ -381,6 +415,15 @@ bool PrefabOverrideSystem::LoadAsset(const std::string& path, PrefabAsset& out, 
         error = loadError.empty() ? "Unable to open prefab file." : loadError;
         return false;
     }
+    {
+        auto& stack = LoadingStack();
+        stack.push_back(resolvedKey.empty() ? key : resolvedKey);
+        std::string nestedError;
+        if (!ExpandNested(loaded, nestedError)) {
+            std::cerr << "[Prefab] '" << path << "': " << nestedError << "\n";
+        }
+        stack.pop_back();
+    }
 
     cache[key] = loaded;
     if (!resolvedKey.empty()) {
@@ -400,6 +443,186 @@ void PrefabOverrideSystem::InvalidateAssetCache(const std::string& path) {
     auto& cache = AssetCache();
     cache.erase(key);
     cache.erase(path);
+    for (auto it = cache.begin(); it != cache.end();) {
+        const auto& nested = it->second.nestedPrefabs;
+        const bool includes = std::any_of(nested.begin(), nested.end(), [&](const std::string& inner) {
+            return PathsReferToSamePrefab(inner, path);
+        });
+        it = includes ? cache.erase(it) : std::next(it);
+    }
+}
+
+bool PrefabOverrideSystem::SaveAsset(const PrefabAsset& expanded, const std::string& path, std::string& error) {
+    const fs::path resolved = ResolveAssetFilePath(path, true);
+    PrefabAsset raw;
+    std::string rawError;
+    std::error_code ec;
+    if (fs::exists(resolved, ec) && !PrefabSerializer::Deserialize(raw, resolved, rawError)) {
+        raw = PrefabAsset{};
+    }
+    if (!PrefabSerializer::Serialize(CollapseNested(expanded, raw), resolved, error)) {
+        return false;
+    }
+    InvalidateAssetCache(path);
+    InvalidateAssetCache(resolved.generic_string());
+    return true;
+}
+
+bool PrefabOverrideSystem::ExpandNested(PrefabAsset& asset, std::string& error, const NestedLoader& loadNested) {
+    const bool hasNested = std::any_of(asset.nodes.begin(), asset.nodes.end(),
+                                       [](const PrefabNode& node) { return !node.prefabPath.empty(); });
+    if (!hasNested) {
+        return true;
+    }
+    bool ok = true;
+    std::vector<PrefabNode> expanded;
+    std::vector<std::string> nested;
+    for (PrefabNode& node : asset.nodes) {
+        if (node.prefabPath.empty()) {
+            expanded.push_back(std::move(node));
+            continue;
+        }
+        nested.push_back(node.prefabPath);
+        auto& stack = LoadingStack();
+        const fs::path innerResolved = ResolveAssetFilePath(node.prefabPath, false);
+        const std::string innerKey = NormalizePathKey(innerResolved.empty() ? node.prefabPath : innerResolved.generic_string());
+        const bool cycle = stack.size() > 32 || std::any_of(stack.begin(), stack.end(), [&](const std::string& loading) {
+            return loading == innerKey || loading == NormalizePathKey(node.prefabPath);
+        });
+        PrefabAsset inner;
+        std::string innerError;
+        bool loaded = false;
+        if (!cycle) {
+            if (loadNested) {
+                stack.push_back(innerKey);
+                loaded = loadNested(node.prefabPath, inner, innerError);
+                stack.pop_back();
+            } else {
+                loaded = LoadAsset(node.prefabPath, inner, innerError);
+            }
+        }
+        if (!loaded) {
+            ok = false;
+            error += (error.empty() ? "" : "; ") + std::string("nested prefab '") + node.prefabPath + "' " +
+                     (cycle ? "includes itself" : innerError);
+            PrefabNode placeholder = std::move(node);
+            placeholder.components.clear();
+            placeholder.nestedFrom = placeholder.id;
+            placeholder.nestedNodeId.clear();
+            expanded.push_back(std::move(placeholder));
+            continue;
+        }
+        nested.insert(nested.end(), inner.nestedPrefabs.begin(), inner.nestedPrefabs.end());
+        for (PrefabNode innerNode : inner.nodes) {
+            const std::string innerId = innerNode.id;
+            const bool isRoot = innerId == inner.rootNodeId;
+            if (isRoot) {
+                innerNode.id = node.id;
+                innerNode.name = node.name;
+                innerNode.parentId = node.parentId;
+                innerNode.localTransform = node.localTransform;
+            } else {
+                innerNode.id = node.id + "/" + innerId;
+                innerNode.parentId = innerNode.parentId.empty() || innerNode.parentId == inner.rootNodeId
+                    ? node.id : node.id + "/" + innerNode.parentId;
+            }
+            if (auto overrideIt = node.nestedOverrides.find(innerId); overrideIt != node.nestedOverrides.end()) {
+                ApplyOverrideToNode(innerNode, overrideIt->second, isRoot);
+            }
+            innerNode.prefabPath.clear();
+            innerNode.nestedOverrides.clear();
+            innerNode.nestedFrom = node.id;
+            innerNode.nestedNodeId = innerId;
+            expanded.push_back(std::move(innerNode));
+        }
+    }
+    asset.nodes = std::move(expanded);
+    std::sort(nested.begin(), nested.end());
+    nested.erase(std::unique(nested.begin(), nested.end()), nested.end());
+    asset.nestedPrefabs = std::move(nested);
+    return ok;
+}
+
+PrefabAsset PrefabOverrideSystem::CollapseNested(const PrefabAsset& expanded, const PrefabAsset& raw) {
+    PrefabAsset out = expanded;
+    out.nodes.clear();
+    out.nestedPrefabs.clear();
+    std::unordered_map<std::string, const PrefabNode*> references;
+    for (const PrefabNode& node : raw.nodes) {
+        if (!node.prefabPath.empty()) {
+            references[node.id] = &node;
+        }
+    }
+    std::unordered_set<std::string> emitted;
+    for (const PrefabNode& node : expanded.nodes) {
+        auto reference = node.nestedFrom.empty() ? references.end() : references.find(node.nestedFrom);
+        if (reference == references.end()) {
+            PrefabNode own = node;
+            own.nestedFrom.clear();
+            own.nestedNodeId.clear();
+            out.nodes.push_back(std::move(own));
+            continue;
+        }
+        if (!emitted.insert(node.nestedFrom).second) {
+            continue;
+        }
+        PrefabNode collapsed = *reference->second;
+        collapsed.components.clear();
+        if (const PrefabNode* placed = FindAssetNode(expanded, collapsed.id)) {
+            collapsed.name = placed->name;
+            collapsed.parentId = placed->parentId;
+            collapsed.localTransform = placed->localTransform;
+        }
+        PrefabAsset inner;
+        std::string innerError;
+        if (LoadAsset(collapsed.prefabPath, inner, innerError)) {
+            collapsed.nestedOverrides.clear();
+            for (const PrefabNode& part : expanded.nodes) {
+                if (part.nestedFrom != collapsed.id || part.nestedNodeId.empty()) {
+                    continue;
+                }
+                const PrefabNode* original = FindAssetNode(inner, part.nestedNodeId);
+                if (!original) {
+                    continue;
+                }
+                PrefabNodeOverride overrideData;
+                if (part.nestedNodeId != inner.rootNodeId) {
+                    // Only the parts of the transform that differ, so later changes to the rest still come through.
+                    auto& transformProperties = overrideData.componentOverrides["Transform"].properties;
+                    for (const char* property : {"position", "rotation", "scale"}) {
+                        const PropertyValue mine = TransformProperty(part.localTransform, property);
+                        const PropertyValue theirs = TransformProperty(original->localTransform, property);
+                        if (!PrefabComponentIO::JsonEquals(PrefabComponentIO::PropertyToJson(mine),
+                                                           PrefabComponentIO::PropertyToJson(theirs))) {
+                            transformProperties[property] = mine;
+                        }
+                    }
+                    overrideData.hasTransform = !transformProperties.empty();
+                    if (transformProperties.empty()) {
+                        overrideData.componentOverrides.erase("Transform");
+                    } else {
+                        PrefabComponentIO::CopyLocalTransform(overrideData.transform, part.localTransform);
+                    }
+                }
+                for (const PrefabComponentEntry& component : part.components) {
+                    const PrefabComponentEntry* base = FindAssetComponent(*original, component.type);
+                    std::unordered_map<std::string, PropertyValue> changed;
+                    PrefabComponentIO::DiffJson(component.data, base ? base->data : PrefabComponentIO::MakeObject(),
+                                                changed);
+                    if (!changed.empty()) {
+                        overrideData.componentOverrides[component.type].properties = std::move(changed);
+                    }
+                }
+                if (!PrefabComponentIO::IsNodeOverrideEmpty(overrideData)) {
+                    collapsed.nestedOverrides[part.nestedNodeId] = std::move(overrideData);
+                }
+            }
+        }
+        collapsed.nestedFrom.clear();
+        collapsed.nestedNodeId.clear();
+        out.nodes.push_back(std::move(collapsed));
+    }
+    return out;
 }
 
 const PrefabNode* PrefabOverrideSystem::FindAssetNode(const PrefabAsset& asset, const std::string& nodeId) {
@@ -1067,7 +1290,17 @@ int PrefabOverrideSystem::RefreshInstancesOfPrefab(Scene& scene, const std::stri
             continue;
         }
         const auto& inst = entity.GetComponent<PrefabInstanceComponent>();
-        if (!PathsReferToSamePrefab(inst.prefabPath, prefabPath)) {
+        bool affected = PathsReferToSamePrefab(inst.prefabPath, prefabPath);
+        if (!affected) {
+            // Instances of prefabs that include the changed one are rebuilt too.
+            PrefabAsset including;
+            std::string includingError;
+            if (LoadAsset(inst.prefabPath, including, includingError)) {
+                affected = std::any_of(including.nestedPrefabs.begin(), including.nestedPrefabs.end(),
+                                       [&](const std::string& inner) { return PathsReferToSamePrefab(inner, prefabPath); });
+            }
+        }
+        if (!affected) {
             continue;
         }
         roots.push_back(entity);
@@ -1147,10 +1380,11 @@ bool PrefabOverrideSystem::CaptureHierarchy(Scene& scene, Entity root, PrefabAss
 
     std::unordered_map<uint32_t, std::string> idMap;
     std::vector<entt::entity> captured;
+    std::unordered_set<entt::entity> nestedMembers;
     int counter = 0;
     for (auto handle : entities) {
         Entity entity(handle, &scene);
-        if (!entity || entity.HasComponent<EditorOnlyComponent>()) {
+        if (!entity || entity.HasComponent<EditorOnlyComponent>() || nestedMembers.count(handle)) {
             continue;
         }
         PrefabNode node;
@@ -1161,7 +1395,35 @@ bool PrefabOverrideSystem::CaptureHierarchy(Scene& scene, Entity root, PrefabAss
             const auto& transform = entity.GetComponent<TransformComponent>();
             PrefabComponentIO::CopyLocalTransform(node.localTransform, transform);
         }
-        PrefabComponentIO::CaptureFromEntity(entity, node.components);
+        if (entity.HasComponent<PrefabInstanceComponent>() &&
+            !entity.GetComponent<PrefabInstanceComponent>().missingPrefab) {
+            // A prefab instance inside the selection stays linked: it becomes a nested prefab node with the
+            // instance's overrides, and its own entities are not captured.
+            SyncInstance(scene, entity);
+            const auto& inst = entity.GetComponent<PrefabInstanceComponent>();
+            node.prefabPath = inst.prefabPath;
+            node.nestedOverrides = inst.overrides;
+            if (auto rootOverride = node.nestedOverrides.find(inst.rootNodeId); rootOverride != node.nestedOverrides.end()) {
+                rootOverride->second.hasTransform = false;
+                rootOverride->second.componentOverrides.erase("Transform");
+                if (PrefabComponentIO::IsNodeOverrideEmpty(rootOverride->second)) {
+                    node.nestedOverrides.erase(rootOverride);
+                }
+            }
+            std::vector<entt::entity> members;
+            CollectInstanceEntities(scene, entity, members);
+            for (entt::entity member : members) {
+                const auto* memberNode = scene.GetRegistry().try_get<PrefabNodeComponent>(member);
+                if (member == handle || !memberNode || memberNode->instanceId != inst.instanceId) {
+                    continue;
+                }
+                nestedMembers.insert(member);
+                idMap[static_cast<uint32_t>(member)] =
+                    memberNode->nodeId == inst.rootNodeId ? node.id : node.id + "/" + memberNode->nodeId;
+            }
+        } else {
+            PrefabComponentIO::CaptureFromEntity(entity, node.components);
+        }
         if (handle == static_cast<entt::entity>(root)) {
             outAsset.rootNodeId = node.id;
         }
@@ -1218,6 +1480,10 @@ bool PrefabOverrideSystem::CreateFromSelection(Scene& scene, Entity selectionRoo
         return false;
     }
     InvalidateAssetCache(destPath.generic_string());
+    std::string expandError;
+    if (!ExpandNested(asset, expandError)) {
+        std::cerr << "[Prefab] " << expandError << "\n";
+    }
 
     TransformComponent placement;
     entt::entity parent = entt::null;
