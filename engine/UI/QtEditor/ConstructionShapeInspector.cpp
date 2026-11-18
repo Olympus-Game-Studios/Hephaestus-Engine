@@ -258,6 +258,10 @@ void ConstructionShapeInspector::buildUI()
     m_makeEditable->setToolTip(tr("Turn this block or ramp into a mesh whose corners you drag one by one in the "
                                   "viewport. Its size settings go away; Ctrl+Z turns it back."));
     layout->addWidget(m_makeEditable);
+    m_revertEditable = new QPushButton(tr("Turn Back Into Block"));
+    m_revertEditable->setToolTip(tr("Turn this mesh back into the block or ramp it was made from, sized to fit around "
+                                    "it. Its corner edits are lost; Ctrl+Z brings them back."));
+    layout->addWidget(m_revertEditable);
     m_remove = new QPushButton(tr("Remove Component"));
     layout->addWidget(m_remove);
 }
@@ -349,6 +353,20 @@ void ConstructionShapeInspector::connectSignals()
             Construction::MakeEditable(shape);
         });
         EndEdit();
+        Refresh();
+    });
+    connect(m_revertEditable, &QPushButton::clicked, this, [this]() {
+        if (!m_ctx || !m_ctx->HasActiveScene()) return;
+        Scene& scene = *m_ctx->GetActiveScene();
+        BeginEdit("Turn back into block");
+        ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& shape, entt::entity entity) {
+            Vec3 shift;
+            if (!Construction::RevertToRecipe(shape, shift)) return;
+            auto& transform = scene.GetRegistry().get<TransformComponent>(entity);
+            transform.position = vadd(transform.position, Mat4::TransformDirection(transform.GetLocalMatrix(), shift));
+        });
+        EndEdit();
+        m_ctx->MarkDirty();
         Refresh();
     });
     connect(m_remove, &QPushButton::clicked, this, [this]() {
@@ -488,6 +506,8 @@ void ConstructionShapeInspector::Refresh()
         meshFaces = static_cast<int>(shape.mesh.faces.size());
     });
     m_makeEditable->setVisible(convertible && !editable);
+    m_revertEditable->setVisible(editable);
+    m_revertEditable->setText(recipe == Recipe::Ramp ? tr("Turn Back Into Ramp") : tr("Turn Back Into Block"));
     const auto* primary = m_ctx && m_ctx->HasActiveScene()
         ? m_ctx->GetActiveScene()->GetRegistry().try_get<ConstructionShapeComponent>(GetEntity()) : nullptr;
     const bool room = Targets().size() == 1 && primary && primary->source == Construction::SourceKind::Recipe &&
@@ -521,9 +541,9 @@ void ConstructionShapeInspector::Refresh()
                              primary->opening.sill <= Construction::HostFloorTop(*host) + 0.05f);
     m_storeyInfo->setVisible(room && !m_storeyInfo->text().isEmpty());
     m_meshInfo->setVisible(editable);
-    m_meshInfo->setText(tr("%1 corners, %2 faces. Select the shape and drag a corner's handle in the viewport to move "
-                           "it; hold Shift to move it up or down. It collides as the smallest convex shape around its "
-                           "corners.").arg(meshCorners).arg(meshFaces));
+    m_meshInfo->setText(tr("%1 corners, %2 faces. In the viewport, drag a corner or edge handle to move it (Shift: up "
+                           "or down) and a face handle to push or pull that face. Shift-drag a face to pull out a new "
+                           "part, Alt-click a face to split it in two.").arg(meshCorners).arg(meshFaces));
     m_generalForm->setRowVisible(m_operation, recipe == Recipe::Box && !editable);
     m_boxGroup->setVisible(recipe != Recipe::Opening && !editable);
     const bool wall = recipe == Recipe::Wall;

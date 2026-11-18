@@ -96,6 +96,7 @@ private:
 
     QPushButton* m_remove = nullptr;
     QPushButton* m_makeEditable = nullptr;
+    QPushButton* m_revertEditable = nullptr;
     QPushButton* m_addStorey = nullptr;
     QPushButton* m_addStairs = nullptr;
     QPushButton* m_flatRoof = nullptr;

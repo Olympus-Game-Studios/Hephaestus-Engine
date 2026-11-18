@@ -1857,6 +1857,160 @@ void TestBalconiesJoin()
           "a balcony at another height does not join: the railing comes back");
 }
 
+// Volume enclosed by the drawn triangles: right only when the surface is closed and every triangle faces out.
+float EnclosedVolume(const EvaluatedGeometry& geometry)
+{
+    const MeshData& mesh = geometry.mesh;
+    float volume = 0.0f;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const Vertex& a = mesh.vertices[mesh.indices[i]];
+        const Vertex& b = mesh.vertices[mesh.indices[i + 1]];
+        const Vertex& c = mesh.vertices[mesh.indices[i + 2]];
+        volume += vdot(Vec3(a.pos[0], a.pos[1], a.pos[2]),
+                       vcross(Vec3(b.pos[0], b.pos[1], b.pos[2]), Vec3(c.pos[0], c.pos[1], c.pos[2]))) / 6.0f;
+    }
+    return volume;
+}
+
+// Every edge of every face is used once each way, so the mesh has no holes or cracks.
+bool MeshClosed(const EditableMesh& mesh)
+{
+    std::vector<std::pair<int, int>> edges;
+    for (const std::vector<int>& loop : mesh.faces) {
+        for (size_t k = 0; k < loop.size(); ++k) edges.push_back({loop[k], loop[(k + 1) % loop.size()]});
+    }
+    for (const auto& [a, b] : edges) {
+        if (std::count(edges.begin(), edges.end(), std::make_pair(a, b)) != 1 ||
+            std::count(edges.begin(), edges.end(), std::make_pair(b, a)) != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void TestMeshTools()
+{
+    ConstructionShapeComponent block;
+    block.box.width = 2.0f;
+    block.box.height = 2.0f;
+    block.box.depth = 2.0f;
+    MakeEditable(block);
+    EditableMesh& mesh = block.mesh;
+
+    Check(SplitFace(mesh, 0) && mesh.faces.size() == 7 && mesh.vertices.size() == 10 && MeshClosed(mesh),
+          "splitting the top face makes two faces and keeps the mesh closed");
+    EvaluatedGeometry split;
+    Check(EvaluateShape(block, {}, split) && std::fabs(EnclosedVolume(split) - 8.0f) < 1e-3f,
+          "a split face changes no volume");
+
+    const Vec3 normal = FaceNormal(mesh, 0);
+    Check(std::fabs(normal.y - 1.0f) < 1e-5f, "the top half still faces up");
+    Check(ExtrudeFace(mesh, 0) && MeshClosed(mesh) && mesh.cells.size() == 2, "extruding a face keeps the mesh closed");
+    for (int index : mesh.faces[0]) mesh.vertices[static_cast<size_t>(index)].y += 1.0f;
+    EvaluatedGeometry extruded;
+    Check(EvaluateShape(block, {}, extruded) && std::fabs(EnclosedVolume(extruded) - 10.0f) < 1e-3f,
+          "pulling the half face up 1 m adds half a cubic metre per metre of face (volume " +
+              std::to_string(EnclosedVolume(extruded)) + ")");
+    Check(extruded.hulls.size() == 2 && extruded.hulls[0].size() == 10 && extruded.hulls[1].size() == 8,
+          "the L shape collides as the block and the pulled-out part, not one hull around both");
+    float partMaxY = 0.0f;
+    float partMinY = 10.0f;
+    for (const Vec3& p : extruded.hulls[1]) {
+        partMaxY = std::max(partMaxY, p.y);
+        partMinY = std::min(partMinY, p.y);
+    }
+    Check(std::fabs(partMaxY - 3.0f) < 1e-4f && std::fabs(partMinY - 2.0f) < 1e-4f,
+          "the pulled-out part's collision spans only what was pulled out");
+
+    {
+        Scene saved("Saved Mesh");
+        Entity savedEntity = saved.CreateEntity("Mesh");
+        savedEntity.AddComponent<ConstructionShapeComponent>(block);
+        Scene reopened("Reopened");
+        SceneSerializer::DeserializeFromString(reopened, SceneSerializer(saved).SerializeToString());
+        Entity reloaded = reopened.FindEntityByName("Mesh");
+        const auto* reloadedShape = reloaded ? reopened.GetRegistry().try_get<ConstructionShapeComponent>(reloaded) : nullptr;
+        Check(reloadedShape && reloadedShape->mesh.cells == mesh.cells && reloadedShape->mesh.faces == mesh.faces,
+              "collision pieces are saved with the scene and read back");
+    }
+
+    Vec3 shift;
+    Check(RevertToRecipe(block, shift) && block.source == SourceKind::Recipe && block.recipe == Recipe::Box &&
+              std::fabs(block.box.height - 3.0f) < 1e-4f && std::fabs(block.box.width - 2.0f) < 1e-4f &&
+              std::fabs(shift.y) < 1e-4f && block.mesh.vertices.empty(),
+          "turning it back gives a block that fits around the mesh");
+
+    Scene scene("Mesh Tools");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size;
+    size.width = 2.0f;
+    size.height = 2.0f;
+    size.depth = 2.0f;
+    Entity entity = AddBox(scene, "Block", size);
+    auto& shape = entity.GetComponent<ConstructionShapeComponent>();
+    MakeEditable(shape);
+    system.Update(scene);
+    ConstructionTool tool;
+    entt::entity selected = entity;
+    int undoSteps = 0;
+    int discarded = 0;
+    ToolHost host;
+    host.pushUndo = [&](const std::string&) { ++undoSteps; };
+    host.discardUndo = [&] { ++discarded; };
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    tool.SetMode(ToolMode::Select);
+    const ToolCamera camera;
+
+    // The +Z face's handle sits at its centre, facing the camera.
+    const Vec3 front(0.0f, 1.0f, 1.0f);
+    Check(tool.OnPress(scene, system, camera.At(front)) && tool.StatusText().find("face") != std::string::npos,
+          "pressing the middle of a face grabs that face");
+    tool.OnMove(scene, system, camera.At(Vec3(0.0f, 1.0f, 1.5f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(0.0f, 1.0f, 1.5f)));
+    bool pushed = true;
+    for (int index : shape.mesh.faces[3]) pushed = pushed && std::fabs(shape.mesh.vertices[static_cast<size_t>(index)].z - 1.5f) < 1e-4f;
+    Check(pushed && shape.mesh.vertices.size() == 8, "dragging a face moves all its corners along its normal");
+
+    ToolInput press = camera.At(Vec3(0.0f, 1.0f, 1.5f));
+    press.shift = true;
+    tool.OnPress(scene, system, press);
+    tool.OnRelease(scene, system, press);
+    Check(shape.mesh.vertices.size() == 8 && discarded == 1, "a Shift-click that pulls nothing out leaves the mesh as it was (" +
+          std::to_string(shape.mesh.vertices.size()) + " corners, " + std::to_string(discarded) + " discarded, " + tool.StatusText() + ")");
+
+    tool.OnPress(scene, system, press);
+    ToolInput pull = camera.At(Vec3(0.0f, 1.0f, 2.5f));
+    pull.shift = true;
+    tool.OnMove(scene, system, pull);
+    tool.OnRelease(scene, system, pull);
+    Check(shape.mesh.vertices.size() == 12 && shape.mesh.faces.size() == 10 && MeshClosed(shape.mesh) &&
+              std::fabs(FaceCentre(shape.mesh, 3).z - 2.5f) < 1e-4f,
+          "Shift-dragging a face pulls out a new part");
+
+    const size_t facesBefore = shape.mesh.faces.size();
+    ToolInput alt = camera.At(Vec3(0.0f, 1.0f, 2.5f));
+    alt.alt = true;
+    const int stepsBefore = undoSteps;
+    Check(tool.OnPress(scene, system, alt) && !tool.IsBusy() && shape.mesh.faces.size() == facesBefore + 1 &&
+              undoSteps == stepsBefore + 1 && MeshClosed(shape.mesh),
+          "Alt-clicking a face splits it as one undo step");
+
+    // The edge along the top of the +X face (from z -1 to 1.5 since the +Z face moved), moved out 0.5 m.
+    const Vec3 edge(1.0f, 2.0f, 0.25f);
+    tool.OnPress(scene, system, camera.At(edge));
+    tool.OnMove(scene, system, camera.At(Vec3(1.5f, 2.0f, 0.25f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(1.5f, 2.0f, 0.25f)));
+    Check(std::fabs(shape.mesh.vertices[5].x - 1.5f) < 1e-4f && std::fabs(shape.mesh.vertices[6].x - 1.5f) < 1e-4f &&
+              std::fabs(shape.mesh.vertices[1].x - 1.0f) < 1e-4f,
+          "dragging an edge moves both of its corners and nothing else");
+    Check(system.Update(scene) == 1 && WindingMatchesNormals(*system.Geometry(entity)), "the edited mesh evaluates");
+}
+
 void TestEditableMesh()
 {
     ConstructionShapeComponent room;
@@ -2131,6 +2285,7 @@ int main()
     TestWallsLineUp();
     TestCopyPaste();
     TestResizeSnapsToNeighbours();
+    TestMeshTools();
     TestRampsAndTurns();
     TestFaceMaterials();
     TestKits();

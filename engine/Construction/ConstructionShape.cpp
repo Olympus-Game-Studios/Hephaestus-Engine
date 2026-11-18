@@ -308,7 +308,17 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
             for (size_t k = 0; k < shape.mesh.faces[n].size(); ++k) oss << (k ? ", " : "") << shape.mesh.faces[n][k];
             oss << "]";
         }
-        oss << "]}";
+        oss << "]";
+        if (!shape.mesh.cells.empty()) {
+            oss << ", \"cells\": [";
+            for (size_t n = 0; n < shape.mesh.cells.size(); ++n) {
+                oss << (n ? ", " : "") << "[";
+                for (size_t k = 0; k < shape.mesh.cells[n].size(); ++k) oss << (k ? ", " : "") << shape.mesh.cells[n][k];
+                oss << "]";
+            }
+            oss << "]";
+        }
+        oss << "}";
     }
     if (!shape.kitSwaps.empty()) {
         oss << ",\n" << in << "\"kitSwaps\": [";
@@ -446,6 +456,17 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
         }
         mesh.objectValue["vertices"] = std::move(vertices);
         mesh.objectValue["faces"] = std::move(faces);
+        if (!shape.mesh.cells.empty()) {
+            JsonValue cells;
+            cells.type = JsonValue::Type::Array;
+            for (const std::vector<int>& cell : shape.mesh.cells) {
+                JsonValue loop;
+                loop.type = JsonValue::Type::Array;
+                for (int index : cell) loop.arrayValue.push_back(number(index));
+                cells.arrayValue.push_back(std::move(loop));
+            }
+            mesh.objectValue["cells"] = std::move(cells);
+        }
         out.objectValue["mesh"] = std::move(mesh);
     }
     if (!shape.kitSwaps.empty()) {
@@ -530,6 +551,24 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
                 return false;
             }
             read.faces.push_back(std::move(face));
+        }
+        if (const JsonValue* cells = mesh->Find("cells"); cells && cells->IsArray()) {
+            for (const JsonValue& loop : cells->AsArray()) {
+                std::vector<int> cell;
+                for (const JsonValue& index : loop.IsArray() ? loop.AsArray() : std::vector<JsonValue>{}) {
+                    const int i = index.IsNumber() ? static_cast<int>(index.AsNumber()) : -1;
+                    if (i < 0 || i >= static_cast<int>(read.vertices.size())) {
+                        outError = "ConstructionShape mesh cells index vertices that do not exist.";
+                        return false;
+                    }
+                    cell.push_back(i);
+                }
+                if (cell.size() < 4) {
+                    outError = "ConstructionShape mesh cells need at least four vertices.";
+                    return false;
+                }
+                read.cells.push_back(std::move(cell));
+            }
         }
         shape.mesh = std::move(read);
     }
@@ -773,6 +812,133 @@ bool MakeEditable(ConstructionShapeComponent& shape)
     shape.mesh = std::move(mesh);
     shape.source = SourceKind::EditableMesh;
     shape.faceMaterials.clear();
+    return true;
+}
+
+bool RevertToRecipe(ConstructionShapeComponent& shape, Vec3& outShift)
+{
+    if (shape.source != SourceKind::EditableMesh || shape.mesh.vertices.empty()) {
+        return false;
+    }
+    Vec3 lo = shape.mesh.vertices.front();
+    Vec3 hi = lo;
+    for (const Vec3& p : shape.mesh.vertices) {
+        lo = Vec3(std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z));
+        hi = Vec3(std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z));
+    }
+    shape.box.width = hi.x - lo.x;
+    shape.box.height = hi.y - lo.y;
+    shape.box.depth = hi.z - lo.z;
+    outShift = Vec3((lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f);
+    shape.source = SourceKind::Recipe;
+    shape.mesh = EditableMesh{};
+    shape.faceMaterials.clear();
+    Sanitize(shape);
+    return true;
+}
+
+Vec3 FaceNormal(const EditableMesh& mesh, int face)
+{
+    const std::vector<int>& loop = mesh.faces[static_cast<size_t>(face)];
+    Vec3 normal(0.0f, 0.0f, 0.0f);
+    for (size_t k = 0; k < loop.size(); ++k) {
+        const Vec3& a = mesh.vertices[static_cast<size_t>(loop[k])];
+        const Vec3& b = mesh.vertices[static_cast<size_t>(loop[(k + 1) % loop.size()])];
+        normal = vadd(normal, Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)));
+    }
+    return vlen(normal) > 1e-12f ? vnorm(normal) : Vec3(0.0f, 1.0f, 0.0f);
+}
+
+Vec3 FaceCentre(const EditableMesh& mesh, int face)
+{
+    const std::vector<int>& loop = mesh.faces[static_cast<size_t>(face)];
+    Vec3 centre(0.0f, 0.0f, 0.0f);
+    for (int index : loop) centre = vadd(centre, mesh.vertices[static_cast<size_t>(index)]);
+    return vscale(centre, 1.0f / static_cast<float>(loop.size()));
+}
+
+bool ExtrudeFace(EditableMesh& mesh, int face)
+{
+    if (face < 0 || face >= static_cast<int>(mesh.faces.size())) {
+        return false;
+    }
+    if (mesh.cells.empty()) {
+        std::vector<int> all(mesh.vertices.size());
+        for (size_t n = 0; n < all.size(); ++n) all[n] = static_cast<int>(n);
+        mesh.cells.push_back(std::move(all));
+    }
+    const std::vector<int> base = mesh.faces[static_cast<size_t>(face)];
+    std::vector<int> top;
+    for (int index : base) {
+        top.push_back(static_cast<int>(mesh.vertices.size()));
+        mesh.vertices.push_back(mesh.vertices[static_cast<size_t>(index)]);
+    }
+    mesh.faces[static_cast<size_t>(face)] = top;
+    const size_t n = base.size();
+    for (size_t k = 0; k < n; ++k) {
+        // Anticlockwise from outside: the base edge runs the other way round the side face.
+        mesh.faces.push_back({base[(k + 1) % n], top[(k + 1) % n], top[k], base[k]});
+    }
+    std::vector<int> cell = base;
+    cell.insert(cell.end(), top.begin(), top.end());
+    mesh.cells.push_back(std::move(cell));
+    return true;
+}
+
+bool SplitFace(EditableMesh& mesh, int face)
+{
+    if (face < 0 || face >= static_cast<int>(mesh.faces.size()) || mesh.faces[static_cast<size_t>(face)].size() < 3) {
+        return false;
+    }
+    const std::vector<int> loop = mesh.faces[static_cast<size_t>(face)];
+    const size_t n = loop.size();
+    auto edgeLength = [&](size_t k) {
+        return vlen(vsub(mesh.vertices[static_cast<size_t>(loop[(k + 1) % n])],
+                         mesh.vertices[static_cast<size_t>(loop[k])]));
+    };
+    size_t i = 0;
+    for (size_t k = 1; k < n; ++k) {
+        if (edgeLength(k) > edgeLength(i) + 1e-6f) i = k;
+    }
+    const size_t j = (i + n / 2) % n;
+    auto pointOnEdge = [&](int a, int b) {
+        const int middle = static_cast<int>(mesh.vertices.size());
+        mesh.vertices.push_back(
+            vscale(vadd(mesh.vertices[static_cast<size_t>(a)], mesh.vertices[static_cast<size_t>(b)]), 0.5f));
+        for (size_t g = 0; g < mesh.faces.size(); ++g) {
+            std::vector<int>& other = mesh.faces[g];
+            if (static_cast<int>(g) == face) continue;
+            for (size_t k = 0; k < other.size(); ++k) {
+                if (other[k] == b && other[(k + 1) % other.size()] == a) {
+                    other.insert(other.begin() + static_cast<std::ptrdiff_t>(k + 1), middle);
+                    break;
+                }
+            }
+        }
+        for (std::vector<int>& cell : mesh.cells) {
+            if (std::find(cell.begin(), cell.end(), a) != cell.end() &&
+                std::find(cell.begin(), cell.end(), b) != cell.end()) {
+                cell.push_back(middle);
+            }
+        }
+        return middle;
+    };
+    const int m1 = pointOnEdge(loop[i], loop[(i + 1) % n]);
+    const int m2 = pointOnEdge(loop[j], loop[(j + 1) % n]);
+    std::vector<int> first{m1};
+    for (size_t k = (i + 1) % n;; k = (k + 1) % n) {
+        first.push_back(loop[k]);
+        if (k == j) break;
+    }
+    first.push_back(m2);
+    std::vector<int> second{m2};
+    for (size_t k = (j + 1) % n;; k = (k + 1) % n) {
+        second.push_back(loop[k]);
+        if (k == i) break;
+    }
+    second.push_back(m1);
+    mesh.faces[static_cast<size_t>(face)] = std::move(first);
+    mesh.faces.push_back(std::move(second));
     return true;
 }
 

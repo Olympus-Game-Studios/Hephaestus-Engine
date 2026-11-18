@@ -443,6 +443,60 @@ void RegisterConstructionAutomation(AutomationService& service)
         }, true));
 
     RegisterOrThrow(service, Definition(
+        "construction.edit_mesh",
+        "Edit an editable mesh. op 'extrude' pulls face (an index into mesh.faces) out along its normal by distance "
+        "metres, adding side faces; the new part collides as its own convex piece. op 'split' cuts face in two between "
+        "the middle of its longest edge and the edge opposite. op 'revert' turns the mesh back into the block or ramp "
+        "it was made from, sized to its bounds, keeping it where it is.",
+        ObjectSchema({{"entity", {{"type", "string"}}},
+                      {"op", {{"type", "string"}, {"enum", Json::array({"extrude", "split", "revert"})}}},
+                      {"face", {{"type", "integer"}}},
+                      {"distance", {{"type", "number"}}}},
+                     Json::array({"entity", "op"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = ResolveEntity(context, arguments, failure);
+            if (!resolved) return failure;
+            auto& registry = resolved->scene->GetRegistry();
+            auto* shape = registry.try_get<ConstructionShapeComponent>(resolved->handle);
+            if (!shape || shape->source != Construction::SourceKind::EditableMesh) {
+                return Failure(ErrorCode::InvalidArguments, "the entity is not an editable mesh");
+            }
+            const std::string op = arguments.value("op", std::string());
+            const int face = arguments.value("face", -1);
+            if (op != "revert" && (face < 0 || face >= static_cast<int>(shape->mesh.faces.size()))) {
+                return Failure(ErrorCode::InvalidArguments, "face must index mesh.faces");
+            }
+            const float distance = arguments.value("distance", 0.0f);
+            if (op == "extrude" && !(distance > 0.0f)) {
+                return Failure(ErrorCode::InvalidArguments, "extrude needs a distance above 0");
+            }
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, op == "extrude" ? "Extrude face" : op == "split" ? "Split face"
+                                        : "Turn back into block", mutationFailure)) {
+                return mutationFailure;
+            }
+            if (op == "extrude") {
+                const Vec3 normal = Construction::FaceNormal(shape->mesh, face);
+                Construction::ExtrudeFace(shape->mesh, face);
+                for (int index : shape->mesh.faces[static_cast<size_t>(face)]) {
+                    Vec3& p = shape->mesh.vertices[static_cast<size_t>(index)];
+                    p = vadd(p, vscale(normal, distance));
+                }
+            } else if (op == "split") {
+                Construction::SplitFace(shape->mesh, face);
+            } else {
+                Vec3 shift;
+                Construction::RevertToRecipe(*shape, shift);
+                auto& transform = registry.get<TransformComponent>(resolved->handle);
+                transform.position = vadd(transform.position, Mat4::TransformDirection(transform.GetLocalMatrix(), shift));
+            }
+            context.Backend().CompleteEditorMutation(false);
+            UpToDate(context, *resolved->scene);
+            return ToolResult::Success(ShapeJson(context, *resolved->scene, resolved->handle));
+        }, true));
+
+    RegisterOrThrow(service, Definition(
         "level.playtest_begin",
         "Start recording a bot playtest. Then start Play, turn realtime off and step frames: game scripts that check "
         "Playtest.isRunning() (the FPS team deathmatch) play it as an all-bot match and record kills, deaths and "

@@ -206,10 +206,30 @@ std::vector<ConstructionTool::Handle> ConstructionTool::HandlesFor(const Constru
     const float hw = b.width * 0.5f;
     const float hd = b.depth * 0.5f;
     if (shape.source == SourceKind::EditableMesh) {
+        const EditableMesh& mesh = shape.mesh;
         std::vector<Handle> handles;
-        for (size_t n = 0; n < shape.mesh.vertices.size(); ++n) {
-            Handle handle{1, 1, shape.mesh.vertices[n], -1};
+        for (size_t n = 0; n < mesh.vertices.size(); ++n) {
+            Handle handle{1, 1, mesh.vertices[n], -1};
             handle.vertex = static_cast<int>(n);
+            handles.push_back(handle);
+        }
+        std::vector<std::pair<int, int>> edges;
+        for (const std::vector<int>& loop : mesh.faces) {
+            for (size_t k = 0; k < loop.size(); ++k) {
+                const std::pair<int, int> edge = std::minmax(loop[k], loop[(k + 1) % loop.size()]);
+                if (std::find(edges.begin(), edges.end(), edge) != edges.end()) continue;
+                edges.push_back(edge);
+                Handle handle{1, 1, vscale(vadd(mesh.vertices[static_cast<size_t>(edge.first)],
+                                                mesh.vertices[static_cast<size_t>(edge.second)]), 0.5f), -1};
+                handle.vertex = edge.first;
+                handle.edgeTo = edge.second;
+                handles.push_back(handle);
+            }
+        }
+        for (size_t f = 0; f < mesh.faces.size(); ++f) {
+            Handle handle{1, 1, FaceCentre(mesh, static_cast<int>(f)), -1};
+            handle.face = static_cast<int>(f);
+            handle.normal = FaceNormal(mesh, static_cast<int>(f));
             handles.push_back(handle);
         }
         return handles;
@@ -248,16 +268,22 @@ bool ConstructionTool::PickHandle(Scene& scene, const ToolInput& input, entt::en
     }
     const Mat4 world = scene.GetWorldTransform(Entity(selected, &scene));
     float best = kHandlePickPixels;
+    float bestDepth = 0.0f;
     bool found = false;
     for (const Handle& handle : HandlesFor(scene.GetRegistry().get<ConstructionShapeComponent>(selected))) {
         float x = 0.0f;
         float y = 0.0f;
-        if (!ToScreen(input, Mat4::TransformPoint(world, handle.local), x, y)) {
+        const Vec3 point = Mat4::TransformPoint(world, handle.local);
+        if (!ToScreen(input, point, x, y)) {
             continue;
         }
         const float d = std::hypot(x - input.screenX, y - input.screenY);
-        if (d < best) {
-            best = d;
+        const float depth = vlen(vsub(point, input.ray.origin));
+        // Handles drawn on top of each other go to the one nearer the camera.
+        constexpr float kOverlapPixels = 2.0f;
+        if (d < kHandlePickPixels && (d < best - kOverlapPixels || (d < best + kOverlapPixels && (!found || depth < bestDepth)))) {
+            best = std::min(best, d);
+            bestDepth = depth;
             outHandle = handle;
             found = true;
         }
@@ -382,19 +408,31 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
     }
     m_target = entity;
     m_handle = handle;
-    const auto& shape = scene.GetRegistry().get<ConstructionShapeComponent>(entity);
+    auto& shape = scene.GetRegistry().get<ConstructionShapeComponent>(entity);
+    if (handle.face >= 0 && input.alt) {
+        if (m_host.pushUndo) m_host.pushUndo("Split face");
+        SplitFace(shape.mesh, handle.face);
+        if (m_host.changed) m_host.changed();
+        return true;
+    }
     m_startBox = shape.box;
     m_startWall = shape.wall;
     m_startMesh = shape.mesh;
     m_startPosition = scene.GetRegistry().get<TransformComponent>(entity).position;
     const Mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
     m_handleWorldOrigin = Mat4::TransformPoint(world, handle.local);
-    const Vec3 outward = vscale(Axis(handle.axis), static_cast<float>(handle.dir));
+    const Vec3 outward = handle.face >= 0 ? handle.normal : vscale(Axis(handle.axis), static_cast<float>(handle.dir));
     m_handleWorldAxis = Mat4::TransformDirection(world, outward);
     if (!ClosestOnLine(m_handleWorldOrigin, m_handleWorldAxis, input.ray, m_handleStartT)) {
         return false;
     }
-    if (m_host.pushUndo) m_host.pushUndo(handle.vertex >= 0 ? "Move corner" : "Resize shape");
+    m_extruding = handle.face >= 0 && input.shift;
+    if (m_host.pushUndo) {
+        m_host.pushUndo(m_extruding ? "Extrude face" : handle.face >= 0 ? "Move face" : handle.edgeTo >= 0 ? "Move edge"
+                        : handle.vertex >= 0 ? "Move corner" : "Resize shape");
+    }
+    if (m_extruding) ExtrudeFace(shape.mesh, handle.face);
+    m_dragMesh = shape.mesh;
     m_phase = Phase::Handle;
     return true;
 }
@@ -460,6 +498,23 @@ bool ConstructionTool::OnRelease(Scene& scene, ConstructionSystem&, const ToolIn
         return true;
     }
     case Phase::Handle:
+        if (m_extruding && scene.GetRegistry().valid(m_target) &&
+            scene.GetRegistry().all_of<ConstructionShapeComponent>(m_target)) {
+            auto& mesh = scene.GetRegistry().get<ConstructionShapeComponent>(m_target).mesh;
+            bool moved = false;
+            for (size_t n = 0; n < mesh.vertices.size() && n < m_dragMesh.vertices.size(); ++n) {
+                moved = moved || vlen(vsub(mesh.vertices[n], m_dragMesh.vertices[n])) > 1e-5f;
+            }
+            if (!moved) {
+                // A Shift-click that pulled nothing out leaves no flat extrusion behind.
+                mesh = m_startMesh;
+                if (m_host.discardUndo) m_host.discardUndo();
+            }
+        }
+        m_extruding = false;
+        m_phase = Phase::Idle;
+        if (m_host.changed) m_host.changed();
+        return true;
     case Phase::OpeningMove:
         m_phase = Phase::Idle;
         if (m_host.changed) m_host.changed();
@@ -702,25 +757,45 @@ void ConstructionTool::UpdateHandleDrag(Scene& scene, const ToolInput& input)
     if (!ClosestOnLine(m_handleWorldOrigin, m_handleWorldAxis, input.ray, t)) {
         return;
     }
-    if (m_handle.vertex >= 0) {
+    if (m_handle.vertex >= 0 || m_handle.face >= 0) {
         auto& shape = registry.get<ConstructionShapeComponent>(m_target);
-        if (m_handle.vertex >= static_cast<int>(shape.mesh.vertices.size()) ||
-            m_handle.vertex >= static_cast<int>(m_startMesh.vertices.size())) {
-            return;
+        std::vector<int> moving;
+        if (m_handle.face >= 0) {
+            if (m_handle.face >= static_cast<int>(m_dragMesh.faces.size())) return;
+            moving = m_dragMesh.faces[static_cast<size_t>(m_handle.face)];
+        } else {
+            moving = {m_handle.vertex};
+            if (m_handle.edgeTo >= 0) moving.push_back(m_handle.edgeTo);
         }
-        const Vec3 start = m_startMesh.vertices[static_cast<size_t>(m_handle.vertex)];
-        Vec3& vertex = shape.mesh.vertices[static_cast<size_t>(m_handle.vertex)];
-        if (input.shift) {
-            vertex = Vec3(start.x, Snap(start.y + (t - m_handleStartT), input), start.z);
-            return;
+        for (int index : moving) {
+            if (index >= static_cast<int>(shape.mesh.vertices.size()) ||
+                index >= static_cast<int>(m_dragMesh.vertices.size())) {
+                return;
+            }
         }
-        Vec3 world;
-        if (!IntersectPlane(input.ray, m_handleWorldOrigin, Mat4::TransformDirection(
-                scene.GetWorldTransform(Entity(m_target, &scene)), Vec3(0, 1, 0)), world)) {
-            return;
+        // A single corner snaps where it lands; an edge or face snaps how far it moves, so it keeps its shape.
+        const bool corner = moving.size() == 1;
+        const Vec3 start = corner ? m_dragMesh.vertices[static_cast<size_t>(moving[0])] : m_handle.local;
+        Vec3 shift;
+        if (m_handle.face >= 0) {
+            const float distance = Snap(t - m_handleStartT, input);
+            shift = vscale(m_handle.normal, m_extruding ? std::max(0.0f, distance) : distance);
+        } else if (input.shift) {
+            const float rise = t - m_handleStartT;
+            shift = Vec3(0.0f, corner ? Snap(start.y + rise, input) - start.y : Snap(rise, input), 0.0f);
+        } else {
+            Vec3 world;
+            if (!IntersectPlane(input.ray, m_handleWorldOrigin, Mat4::TransformDirection(
+                    scene.GetWorldTransform(Entity(m_target, &scene)), Vec3(0, 1, 0)), world)) {
+                return;
+            }
+            const Vec3 local = Mat4::TransformPoint(Mat4::Invert(scene.GetWorldTransform(Entity(m_target, &scene))), world);
+            shift = corner ? Vec3(Snap(local.x, input) - start.x, 0.0f, Snap(local.z, input) - start.z)
+                           : Vec3(Snap(local.x - start.x, input), 0.0f, Snap(local.z - start.z, input));
         }
-        const Vec3 local = Mat4::TransformPoint(Mat4::Invert(scene.GetWorldTransform(Entity(m_target, &scene))), world);
-        vertex = Vec3(Snap(local.x, input), start.y, Snap(local.z, input));
+        for (int index : moving) {
+            shape.mesh.vertices[static_cast<size_t>(index)] = vadd(m_dragMesh.vertices[static_cast<size_t>(index)], shift);
+        }
         return;
     }
     if (m_handle.point >= 0) {
@@ -1032,6 +1107,7 @@ void ConstructionTool::Cancel(Scene& scene)
         if (m_host.discardUndo) m_host.discardUndo();
     }
     m_phase = Phase::Idle;
+    m_extruding = false;
     m_typed.clear();
     m_path.clear();
     m_extendWall = entt::null;
@@ -1087,8 +1163,12 @@ std::string ConstructionTool::StatusText() const
     case Phase::Base: text = PhaseHint(1); break;
     case Phase::Height: text = PhaseHint(2); break;
     case Phase::Handle:
-        text = m_handle.vertex >= 0 ? "Drag the corner across. Hold Shift to move it up and down. Ctrl turns snapping off. Esc cancels."
-                                    : PhaseHint(3);
+        text = m_handle.face >= 0
+            ? (m_extruding ? "Pull the new part out along the face. Ctrl turns snapping off. Esc cancels."
+                           : "Drag the face in or out. Shift-drag pulls out a new part; Alt-click splits the face. Ctrl turns snapping off. Esc cancels.")
+            : m_handle.edgeTo >= 0 ? "Drag the edge across. Hold Shift to move it up and down. Ctrl turns snapping off. Esc cancels."
+            : m_handle.vertex >= 0 ? "Drag the corner across. Hold Shift to move it up and down. Ctrl turns snapping off. Esc cancels."
+                                   : PhaseHint(3);
         break;
     case Phase::OpeningDraw: text = PhaseHint(4); break;
     case Phase::OpeningMove: text = PhaseHint(5); break;
@@ -1225,13 +1305,15 @@ void ConstructionTool::AppendOverlay(Scene& scene, const ConstructionSystem&, st
             const float distance = vlen(vsub(p, m_lastInput.ray.origin));
             const float s = std::max(0.04f, distance * 0.012f);
             const bool active = m_phase == Phase::Handle && m_handle.axis == handle.axis && m_handle.dir == handle.dir &&
-                                m_handle.point == handle.point && m_handle.vertex == handle.vertex;
+                                m_handle.point == handle.point && m_handle.vertex == handle.vertex &&
+                                m_handle.edgeTo == handle.edgeTo && m_handle.face == handle.face;
             const Vec3 a = vscale(Axis((handle.axis + 1) % 3), s);
             const Vec3 b = vscale(Axis((handle.axis + 2) % 3), s);
             Vec3 corners[4] = {vadd(p, vadd(a, b)), vadd(p, vsub(a, b)), vsub(p, vadd(a, b)), vsub(p, vsub(a, b))};
             AddRectLines(lines, corners, active ? kPreviewColor : kHandleColor);
             if (handle.point >= 0 || handle.vertex >= 0) continue;
-            lines.push_back({p, vadd(p, vscale(Mat4::TransformDirection(world, vscale(Axis(handle.axis), float(handle.dir))), s * 3.0f)),
+            const Vec3 outward = handle.face >= 0 ? handle.normal : vscale(Axis(handle.axis), float(handle.dir));
+            lines.push_back({p, vadd(p, vscale(Mat4::TransformDirection(world, outward), s * 3.0f)),
                              active ? kPreviewColor : kHandleColor});
         }
     }

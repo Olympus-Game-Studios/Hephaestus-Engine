@@ -93,6 +93,8 @@ struct FaceMaterial {
 struct EditableMesh {
     std::vector<Vec3> vertices;
     std::vector<std::vector<int>> faces;
+    // Convex pieces it collides as, each a list of vertex indices; empty means one piece around every vertex.
+    std::vector<std::vector<int>> cells;
 };
 
 // A kit piece picked by hand for one spot of a dressed shape, in place of the kit's own choice.
@@ -171,6 +173,19 @@ int WallSegmentCount(const ConstructionShapeComponent& shape);
 // shapes, which keep their recipe.
 bool MakeEditable(ConstructionShapeComponent& shape);
 bool CanMakeEditable(const ConstructionShapeComponent& shape);
+// Back to the block or ramp it was made from, sized to the mesh's bounds. outShift is where the new shape's origin
+// (centre of its base) is in the old local frame, so the caller can move the entity there.
+bool RevertToRecipe(ConstructionShapeComponent& shape, Vec3& outShift);
+
+// Outward unit normal and centre of a face of an editable mesh.
+Vec3 FaceNormal(const EditableMesh& mesh, int face);
+Vec3 FaceCentre(const EditableMesh& mesh, int face);
+// Adds a copy of a face joined to it by side faces. The face itself becomes the copy (same index), so moving its
+// points along its normal pulls the extrusion out; the new part collides as a piece of its own.
+bool ExtrudeFace(EditableMesh& mesh, int face);
+// Cuts a face in two between the middle of its longest edge and the middle of the edge opposite. The faces either
+// side of those edges get the new points too, so the mesh stays closed.
+bool SplitFace(EditableMesh& mesh, int face);
 
 // Clamps parameters to values the evaluator accepts (positive sizes, walls thinner than the box).
 void Sanitize(ConstructionShapeComponent& shape);

@@ -142,7 +142,16 @@ Select a room (a hollow block, or walls drawn with **Draw Wall** and closed into
 
 To finish the building, select the top storey and press **Flat Roof** or **Pitched Roof**. A flat roof is a slab over the walls (30 cm past them on a room made as a block); a pitched roof is two 30 degree slopes meeting in a ridge along the room's longer side, and is for rooms made as blocks. Either replaces the room's ceiling. For a balcony, cut a doorway in an upper storey, select the doorway and press **Add Balcony**: a slab 1.5 m deep and a metre wider than the door on each side is built outside it, level with the floor, with railings along its three open edges. The balcony is one shape: drag its handles to make it wider or deeper and the railings follow, drag the top handle to change the railing height, and set its floor thickness in its Construction settings. Balconies at the same height join up: where one balcony's floor runs into another's, such as two balconies stretched to meet round a corner of the building, the railing between them goes so you can walk from one to the other, and the outer edges keep theirs. Roofs and balconies are ordinary shapes under the room, so you can resize, move or delete them.
 
-For shapes a recipe can't make, such as a wedge with a slanted top, a tapered pillar or a skewed platform, select a block or ramp and press **Make Editable** in its Construction settings. It keeps its shape, but instead of size handles it gets a handle on every corner: drag one to move that corner across at its own height, or hold `Shift` to move it straight up or down. Corners snap to the grid like everything else (`Ctrl` turns snapping off), each drag is one undo step, and `Esc` puts the corner back. Every face of an editable mesh can be painted on its own. It collides as the smallest convex shape around its corners, so a corner pulled inwards still collides as if it were not. Ctrl+Z after Make Editable turns it back into a block.
+For shapes a recipe can't make, such as a wedge with a slanted top, a tapered pillar or a skewed platform, select a block or ramp and press **Make Editable** in its Construction settings. It keeps its shape, but instead of size handles it gets a handle on every corner: drag one to move that corner across at its own height, or hold `Shift` to move it straight up or down. Corners snap to the grid like everything else (`Ctrl` turns snapping off), each drag is one undo step, and `Esc` puts the corner back. Every face of an editable mesh can be painted on its own.
+
+An editable mesh also has a handle in the middle of every edge and every face:
+
+- Drag an edge handle to move both ends of that edge together (`Shift` for up and down).
+- Drag a face handle to push or pull the whole face along the way it faces.
+- `Shift`-drag a face handle to pull out a new part from that face, with sides joining it to the rest, such as a step on a platform or a buttress on a wall.
+- `Alt`-click a face handle to split the face in two across its middle. Split the top of a block, then pull out one half, to make an L shape.
+
+Handles snap to the grid, each edit is one undo step and `Esc` cancels a drag. The shape collides as the smallest convex shape around its corners, and every part pulled out of it collides as a piece of its own, so an L shape collides as an L. A corner pulled inwards still collides as if it were not. To start again, press **Turn Back Into Block** (or **Turn Back Into Ramp**): the mesh becomes a plain block that fits around it, in the same place.
 
 ### Dressing walls with a kit
 

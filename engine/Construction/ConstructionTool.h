@@ -80,6 +80,9 @@ private:
         Vec3 local;
         int point = -1;  // a wall path point, dragged on the ground plane
         int vertex = -1;  // an editable mesh corner, dragged across (Shift: up and down)
+        int edgeTo = -1;  // with vertex, the edge between them, dragged like a corner
+        int face = -1;    // an editable mesh face, dragged along normal (Shift: extrude, Alt-click: split)
+        Vec3 normal;
     };
 
     std::vector<Handle> HandlesFor(const ConstructionShapeComponent& shape) const;
@@ -141,6 +144,8 @@ private:
     BoxParams m_startBox;
     WallParams m_startWall;
     EditableMesh m_startMesh;
+    EditableMesh m_dragMesh;  // the mesh when the drag began, after an extrusion made on press
+    bool m_extruding = false;
     Vec3 m_startPosition;
     Vec3 m_handleWorldOrigin;
     Vec3 m_handleWorldAxis;
