@@ -8633,12 +8633,14 @@ void EditorMainWindow::handleViewportKitDrop(const QString& portablePath, const 
         statusBar()->showMessage(tr("Drop a kit onto a wall or a room to dress it"), 4000);
         return;
     }
-    EditorUndoManager::PushSnapshot(ctx, "Apply kit");
-    shape->kit = portablePath.toStdString();
+    auto& construction = m_engine->GetConstruction();
+    construction.SetKitPreview(face.entity, shape->kit == portablePath.toStdString() ? std::string()
+                                                                                    : portablePath.toStdString());
+    construction.Update(*ctx->GetActiveScene());
     ctx->SelectEntity(face.entity);
-    ctx->MarkDirty();
     refreshDetailsPanel();
-    statusBar()->showMessage(tr("Dressed with %1").arg(QFileInfo(portablePath).completeBaseName()), 4000);
+    statusBar()->showMessage(tr("Previewing %1: Accept or Cancel it in the Inspector's Kit section")
+                                 .arg(QFileInfo(portablePath).completeBaseName()), 6000);
 }
 
 void EditorMainWindow::reimportAssetPack(const QString& portableFolder)

@@ -1443,6 +1443,44 @@ void TestKits()
     }
     Check(left == 0 && fake.lastIndices == bareIndices, "removing the kit brings the blockout walls back");
 
+    // A preview dresses the room see-through without changing it, until it is accepted or cleared.
+    system.SetKitPreview(dressed, "assets/kit/Test.hpkit");
+    system.Update(scene);
+    int ghosts = 0;
+    int previewEntities = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        ++previewEntities;
+        const auto* renderer = scene.GetRegistry().try_get<MeshRendererComponent>(handle);
+        ghosts += renderer && renderer->previewGhost ? 1 : 0;
+    }
+    KitSummary previewSummary;
+    Check(previewEntities == pieceEntities && ghosts == pieceRoots && system.Kit(dressed, previewSummary) &&
+              previewSummary.pieces == summary.pieces && dressed.GetComponent<ConstructionShapeComponent>().kit.empty() &&
+              fake.lastIndices == bareIndices,
+          "a kit preview shows every piece see-through over the blockout, and leaves the room's kit unset");
+    system.SetKitPreview(dressed, std::string());
+    system.Update(scene);
+    int afterCancel = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, PrefabNodeComponent>()) {
+        (void)handle;
+        ++afterCancel;
+    }
+    Check(afterCancel == 0 && system.KitPreview(dressed).empty(), "cancelling a preview removes its pieces");
+    system.SetKitPreview(dressed, "assets/kit/Test.hpkit");
+    system.Update(scene);
+    dressed.GetComponent<ConstructionShapeComponent>().kit = "assets/kit/Test.hpkit";
+    system.SetKitPreview(dressed, std::string());
+    system.Update(scene);
+    int solidPieces = 0;
+    for (auto handle : scene.GetRegistry().view<ConstructionGeneratedComponent, MeshRendererComponent>()) {
+        solidPieces += scene.GetRegistry().all_of<PrefabNodeComponent>(handle) &&
+                               !scene.GetRegistry().get<MeshRendererComponent>(handle).previewGhost ? 1 : 0;
+    }
+    Check(solidPieces == pieceRoots && fake.lastIndices == dressedIndices,
+          "accepting a preview dresses the room for real");
+    dressed.GetComponent<ConstructionShapeComponent>().kit.clear();
+    system.Update(scene);
+
     auto& dressedShape = dressed.GetComponent<ConstructionShapeComponent>();
     dressedShape.kit = "assets/kit/Test.hpkit";
     dressedShape.kitSwaps = {{panelSlot, "assets/kit/Wall2Vent.hpprefab"}};

@@ -106,6 +106,11 @@ public:
     void SetPickedPiece(entt::entity owner, std::string slot);
     std::string PickedPiece(entt::entity owner) const;
 
+    // Dresses a shape with a kit it does not have yet, drawn see-through, until the preview is cleared (empty kit).
+    // The shape itself is not changed; accepting a preview means setting its kit.
+    void SetKitPreview(entt::entity owner, std::string kit);
+    std::string KitPreview(entt::entity owner) const;
+
     // Nearest construction surface hit by a world-space ray, ignoring `ignore`.
     bool Raycast(Scene& scene, const Ray& ray, ConstructionHit& out, entt::entity ignore = entt::null) const;
 
@@ -143,6 +148,7 @@ private:
     ConstructionStats m_stats;
     entt::entity m_pickedOwner = entt::null;
     std::string m_pickedSlot;
+    std::unordered_map<entt::entity, std::string> m_kitPreviews;
 };
 
 } // namespace Hephaestus::Construction

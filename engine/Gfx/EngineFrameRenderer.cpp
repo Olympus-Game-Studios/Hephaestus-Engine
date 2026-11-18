@@ -4278,6 +4278,15 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& ent
                                                                     const MeshRendererComponent& renderer,
                                                                     int slot)
 {
+    if (renderer.previewGhost) {
+        static const MaterialComponent ghost = [] {
+            MaterialComponent material(Vec3(0.45f, 0.7f, 1.0f));
+            material.blendMode = MaterialBlendMode::AlphaBlend;
+            material.opacity = 0.35f;
+            return material;
+        }();
+        return &ghost;
+    }
     if (slot < 0) slot = 0;
     // 1) Check per-slot material path assignment (from ImGUI editor)
     if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {

@@ -137,6 +137,7 @@ struct MeshRendererComponent {
     // Editor-only: when not visible, still draw a selection-style outline and allow viewport picking.
     bool showHiddenOutline = false;
     bool backfaceCulling = false;
+    bool previewGhost = false;  // drawn as a plain see-through tint, for editor previews (never saved)
     static constexpr size_t InvalidMesh = std::numeric_limits<size_t>::max();
     size_t meshHandle = InvalidMesh;
     std::string meshAssetPath;

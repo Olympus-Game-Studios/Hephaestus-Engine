@@ -282,6 +282,7 @@ int ConstructionSystem::Update(Scene& scene)
         }
         DestroyColliders(scene, *it->second);
         DestroyPieces(scene, *it->second);
+        m_kitPreviews.erase(it->first);
         const std::uint64_t key = it->second->inputHash;
         spares.emplace(key, std::move(it->second));
         it = m_shapes.erase(it);
@@ -316,10 +317,15 @@ int ConstructionSystem::Update(Scene& scene)
             : shape.recipe == Recipe::Balcony ? BalconyNeighbours(scene, entity, shape, balconies)
                                               : std::vector<LocalBox>{};
         std::uint64_t hash = HashInputs(shape, CollectOpenings(scene, entity), cuts);
-        if (!shape.kit.empty()) {
+        const std::string preview = KitPreview(entity);
+        const std::string& kitPath = preview.empty() ? shape.kit : preview;
+        if (!preview.empty()) {
+            hash ^= std::hash<std::string>{}("preview:" + preview) * 0xC2B2AE3D27D4EB4Full;
+        }
+        if (!kitPath.empty()) {
             // A kit file saved since the last fill dresses the shape again.
             std::error_code ec;
-            const auto file = PrefabOverrideSystem::ResolveAssetFilePath(shape.kit, false);
+            const auto file = PrefabOverrideSystem::ResolveAssetFilePath(kitPath, false);
             const auto stamp = std::filesystem::last_write_time(file, ec).time_since_epoch().count();
             hash ^= static_cast<std::uint64_t>(ec ? 0 : stamp) * 0x9E3779B97F4A7C15ull;
         }
@@ -429,7 +435,8 @@ void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState&
     RebuildPieces(scene, entity, state);
 
     auto& renderer = registry.get<MeshRendererComponent>(entity);
-    const bool dressed = !state.pieces.empty() && state.kit.error.empty() &&
+    // A previewed kit's pieces are drawn see-through over the shape as it is.
+    const bool dressed = KitPreview(entity).empty() && !state.pieces.empty() && state.kit.error.empty() &&
         state.geometry.triangleTags.size() * 3 == state.geometry.mesh.indices.size();
     const MeshData shown = dressed ? UndressedFaces(state.geometry) : MeshData();
     // A dressed open wall has nothing left to draw: hide it but keep its outline selectable.
@@ -488,7 +495,13 @@ void ConstructionSystem::RebuildPieces(Scene& scene, entt::entity owner, ShapeSt
     state.kit = KitSummary{};
     state.slots.clear();
     entt::registry& registry = scene.GetRegistry();
-    const auto& shape = registry.get<ConstructionShapeComponent>(owner);
+    const std::string preview = KitPreview(owner);
+    ConstructionShapeComponent shape = registry.get<ConstructionShapeComponent>(owner);
+    if (!preview.empty() && preview != shape.kit) {
+        // Swaps belong to the kit the shape has; the previewed kit shows its own choices.
+        shape.kit = preview;
+        shape.kitSwaps.clear();
+    }
     if (shape.kit.empty()) {
         return;
     }
@@ -570,8 +583,9 @@ void ConstructionSystem::RebuildPieces(Scene& scene, entt::entity owner, ShapeSt
             // The construction shell keeps the collision, so kit art never changes how the level plays.
             registry.remove<RigidBodyComponent, PhysicsShapeComponent, MeshColliderComponent>(member);
             adopt(entity, placement.slot);
-            if (auto* renderer = registry.try_get<MeshRendererComponent>(member); renderer && m_sink.loadMesh) {
-                m_sink.loadMesh(*renderer);
+            if (auto* renderer = registry.try_get<MeshRendererComponent>(member)) {
+                renderer->previewGhost = !preview.empty();
+                if (m_sink.loadMesh) m_sink.loadMesh(*renderer);
             }
         }
     }
@@ -614,6 +628,21 @@ void ConstructionSystem::SetPickedPiece(entt::entity owner, std::string slot)
 std::string ConstructionSystem::PickedPiece(entt::entity owner) const
 {
     return owner == m_pickedOwner ? m_pickedSlot : std::string();
+}
+
+void ConstructionSystem::SetKitPreview(entt::entity owner, std::string kit)
+{
+    if (kit.empty()) {
+        m_kitPreviews.erase(owner);
+    } else {
+        m_kitPreviews[owner] = std::move(kit);
+    }
+}
+
+std::string ConstructionSystem::KitPreview(entt::entity owner) const
+{
+    auto found = m_kitPreviews.find(owner);
+    return found != m_kitPreviews.end() ? found->second : std::string();
 }
 
 void ConstructionSystem::ApplySlots(MeshRendererComponent& renderer, const ShapeState& state)
@@ -770,6 +799,7 @@ void ConstructionSystem::Reset()
         Release(*entry.second);
     }
     m_shapes.clear();
+    m_kitPreviews.clear();
 }
 
 const EvaluatedGeometry* ConstructionSystem::Geometry(entt::entity entity) const

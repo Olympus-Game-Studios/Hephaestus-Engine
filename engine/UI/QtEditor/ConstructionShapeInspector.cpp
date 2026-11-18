@@ -214,6 +214,14 @@ void ConstructionShapeInspector::buildUI()
     m_kitInfo = new QLabel();
     m_kitInfo->setWordWrap(true);
     kitLayout->addWidget(m_kitInfo);
+    auto* previewRow = new QHBoxLayout();
+    m_kitAccept = new QPushButton(tr("Accept"));
+    m_kitAccept->setToolTip(tr("Dress the shape with the previewed kit."));
+    m_kitCancel = new QPushButton(tr("Cancel"));
+    m_kitCancel->setToolTip(tr("Remove the preview and keep the shape as it was."));
+    previewRow->addWidget(m_kitAccept);
+    previewRow->addWidget(m_kitCancel);
+    kitLayout->addLayout(previewRow);
     m_piece = new QLabel();
     m_piece->setWordWrap(true);
     kitLayout->addWidget(m_piece);
@@ -290,13 +298,30 @@ void ConstructionShapeInspector::connectSignals()
     connect(m_kit, qOverload<int>(&QComboBox::activated), this, [this](int index) {
         if (m_updating) return;
         const std::string kit = m_kit->itemData(index).toString().toStdString();
-        BeginEdit(kit.empty() ? "Remove kit" : "Apply kit");
+        if (!kit.empty() && m_system) {
+            previewKit(kit);
+            return;
+        }
+        previewKit(std::string());
+        BeginEdit("Remove kit");
         ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& shape, entt::entity) {
-            if (shape.recipe == Recipe::Wall || (shape.recipe == Recipe::Box && shape.box.hollow)) shape.kit = kit;
+            if (shape.recipe == Recipe::Wall || (shape.recipe == Recipe::Box && shape.box.hollow)) shape.kit.clear();
         });
         EndEdit();
         Refresh();
     });
+    connect(m_kitAccept, &QPushButton::clicked, this, [this]() {
+        if (!m_system) return;
+        BeginEdit("Apply kit");
+        ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& shape, entt::entity entity) {
+            const std::string preview = m_system->KitPreview(entity);
+            if (!preview.empty()) shape.kit = preview;
+        });
+        previewKit(std::string());
+        EndEdit();
+        Refresh();
+    });
+    connect(m_kitCancel, &QPushButton::clicked, this, [this]() { previewKit(std::string()); });
     connect(m_pieceSwap, qOverload<int>(&QComboBox::activated), this, [this](int index) { swapPickedPiece(index); });
     connect(m_clearSwaps, &QPushButton::clicked, this, [this]() {
         BeginEdit("Clear kit swaps");
@@ -608,6 +633,18 @@ void ConstructionShapeInspector::Refresh()
     refreshKit(recipe, !hollow.mixed && hollow.value);
 }
 
+void ConstructionShapeInspector::previewKit(const std::string& kit)
+{
+    if (!m_system || !m_ctx || !m_ctx->HasActiveScene()) return;
+    Scene& scene = *m_ctx->GetActiveScene();
+    ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& shape, entt::entity entity) {
+        const bool dressable = shape.recipe == Recipe::Wall || (shape.recipe == Recipe::Box && shape.box.hollow);
+        m_system->SetKitPreview(entity, dressable && kit != shape.kit ? kit : std::string());
+    });
+    m_system->Update(scene);
+    Refresh();
+}
+
 void ConstructionShapeInspector::refreshKit(Recipe recipe, bool hollow)
 {
     const auto* shape = m_ctx && m_ctx->HasActiveScene()
@@ -619,7 +656,8 @@ void ConstructionShapeInspector::refreshKit(Recipe recipe, bool hollow)
     m_updating = true;
     m_kit->clear();
     m_kit->addItem(tr("None"), QString());
-    const QString current = QString::fromStdString(shape->kit);
+    const QString preview = m_system ? QString::fromStdString(m_system->KitPreview(GetEntity())) : QString();
+    const QString current = preview.isEmpty() ? QString::fromStdString(shape->kit) : preview;
     QStringList kits = ProjectKits();
     if (!current.isEmpty() && !kits.contains(current)) kits.prepend(current);
     for (const QString& kit : kits) {
@@ -629,6 +667,8 @@ void ConstructionShapeInspector::refreshKit(Recipe recipe, bool hollow)
     m_kit->setCurrentIndex(std::max(0, m_kit->findData(current)));
     m_updating = false;
 
+    m_kitAccept->setVisible(!preview.isEmpty());
+    m_kitCancel->setVisible(!preview.isEmpty());
     Construction::KitSummary summary;
     if (current.isEmpty()) {
         m_kitInfo->setText(kits.isEmpty() ? tr("No kits in this project yet. Kits are .hpkit files in assets.")
@@ -644,6 +684,9 @@ void ConstructionShapeInspector::refreshKit(Recipe recipe, bool hollow)
         if (summary.gaps > 0) text += tr(". %n gap(s) the kit can't fill, shown in red.", nullptr, summary.gaps);
         if (summary.staleSwaps > 0) {
             text += tr(". %n swap(s) no longer match a piece in their spot.", nullptr, summary.staleSwaps);
+        }
+        if (!preview.isEmpty()) {
+            text = tr("Preview, shown see-through: %1. Accept to dress the shape with it.").arg(text);
         }
         m_kitInfo->setText(text);
     }

@@ -99,6 +99,10 @@ private:
     QGroupBox* m_kitGroup = nullptr;
     QComboBox* m_kit = nullptr;
     QLabel* m_kitInfo = nullptr;
+    QPushButton* m_kitAccept = nullptr;
+    QPushButton* m_kitCancel = nullptr;
+    // Shows or clears a kit preview on every selected shape a kit can dress, and updates the shapes now.
+    void previewKit(const std::string& kit);
     QLabel* m_piece = nullptr;
     QComboBox* m_pieceSwap = nullptr;
     QPushButton* m_clearSwaps = nullptr;
