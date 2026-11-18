@@ -7,6 +7,7 @@
 #include "Assets/AssetManager.h"
 #include "Scene/Scene.h"
 
+#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -98,6 +99,16 @@ int main()
     ok &= Check(created.Ok() && created.value["properties"]["metallic"] == 0.0,
                 "material.create returns default PBR properties");
 
+    auto textured = Call(service, "material.create",
+                         {{"folder", "materials/nested"},
+                          {"name", "TexturedMat"},
+                          {"properties", {{"albedo", {1.0, 1.0, 1.0}},
+                                          {"useAlbedoTexture", true},
+                                          {"albedoTexturePath", "assets/textures/missing.png"}}}});
+    ok &= Check(textured.Ok() &&
+                    fs::exists(project / "assets" / "materials" / "nested" / "TexturedMat.hematerial"),
+                "material.create writes a textured material into a new folder");
+
     auto duplicate = Call(service, "material.create", {{"name", "AutomationMat"}});
     ok &= Check(!duplicate.Ok() &&
                     duplicate.error->code == Hephaestus::Automation::ErrorCode::InvalidArguments,
@@ -132,6 +143,24 @@ int main()
     ok &= Check(reread.Ok() &&
                     std::abs(reread.value["properties"]["roughness"].get<double>() - 0.1) < 1e-5,
                 "material.set persists through the serializer");
+
+    {
+        fs::create_directories(project / "assets" / "materials" / "legacy");
+        std::ofstream legacy(project / "assets" / "materials" / "legacy" / "Old.hematerial");
+        legacy << R"({"name":"Old","albedo":[0.5,0.25,1.0],"roughness":0.3,"opacity":0.4,"blendMode":"alphaBlend",)"
+               << R"("useAlbedoTexture":true,"albedoTexturePath":"assets/textures/smoke.png"})";
+    }
+    auto convertedFolder = Call(service, "material.convert_to_graph", {{"path", "materials/legacy"}});
+    ok &= Check(convertedFolder.Ok() && convertedFolder.value["converted"].size() == 1 &&
+                    convertedFolder.value["converted"][0] == "assets/materials/legacy/Old.hematerial",
+                "material.convert_to_graph converts a material without a graph");
+    const nlohmann::json convertedJson = nlohmann::json::parse(std::ifstream(project / "assets" / "materials" / "legacy" / "Old.hematerial"));
+    ok &= Check(convertedJson.contains("graph") && convertedJson.value("blendMode", "") == "alphaBlend" &&
+                    std::abs(convertedJson.value("opacity", 0.0) - 0.4) < 1e-5,
+                "the converted material keeps its values and gains a graph");
+    auto again = Call(service, "material.convert_to_graph", {{"path", "assets/materials/legacy/Old.hematerial"}});
+    ok &= Check(again.Ok() && again.value["converted"].empty() && again.value["skipped"].size() == 1,
+                "a material that already has a graph is left alone");
 
     auto unknown = Call(service, "material.set",
                         {{"path", "assets/materials/AutomationMat.hematerial"},

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "apiVersion": 1,
+  "id": "com.hephaestus.storebrowser",
+  "name": "Asset Store Browser",
+  "description": "Browse asset stores such as Fab inside the editor; downloaded packs are imported with their materials and credits. Carries its own Qt WebEngine browser.",
+  "author": "Hephaestus Engine",
+  "pluginVersion": "1.0.0",
+  "engineVersion": ">=2026.11.12",
+  "type": "editor",
+  "entry": "bin/HephaestusStoreBrowser.dll",
+  "icon": "Resources/store-browser.svg"
+}

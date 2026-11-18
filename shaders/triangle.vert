@@ -42,6 +42,7 @@ layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragColor;
 layout(location = 3) out vec2 fragTexCoord;
 layout(location = 4) out vec4 fragLightSpacePos;
+layout(location = 5) flat out vec3 fragObjectPos;
 
 void main() {
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
@@ -49,6 +50,7 @@ void main() {
     
     fragWorldPos = worldPos.xyz;
     fragLightSpacePos = lighting.dirLightViewProj * worldPos;
+    fragObjectPos = pc.model[3].xyz;
     
     // Transform normal to world space
     mat3 normalMatrix = mat3(transpose(inverse(mat3(pc.model))));

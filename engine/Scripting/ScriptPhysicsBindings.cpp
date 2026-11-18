@@ -112,7 +112,7 @@ PhysicsBinding MakeScriptPhysicsBinding(ScriptPhysicsAccessor access)
         return true;
     };
 
-    binding.raycast = [access](uint32_t entityId, const Vec3& origin, const Vec3& direction,
+    binding.raycast = [access](const std::vector<uint32_t>& ignoreEntityIds, const Vec3& origin, const Vec3& direction,
                                float maxDistance, PhysicsRaycastHit& outHit, const char* layerName,
                                std::string& outError, bool ignoreSensors) -> bool {
         const ScriptPhysicsAccess a = access();
@@ -127,11 +127,17 @@ PhysicsBinding MakeScriptPhysicsBinding(ScriptPhysicsAccessor access)
             }
             layer = &resolved;
         }
+        std::vector<entt::entity> ignored;
+        ignored.reserve(ignoreEntityIds.size());
+        for (uint32_t id : ignoreEntityIds) {
+            ignored.push_back(static_cast<entt::entity>(id));
+        }
         Physics::RaycastHit hit{};
-        if (!a.physicsSystem->Raycast(static_cast<entt::entity>(entityId), origin, direction, maxDistance,
-                                      hit, layer, ignoreSensors)) {
+        if (!a.physicsSystem->Raycast(entt::null, origin, direction, maxDistance,
+                                      hit, layer, ignoreSensors, &ignored)) {
             return false;
         }
+        outHit.sensor = hit.sensor;
         outHit.hit = hit.hit;
         outHit.distance = hit.distance;
         outHit.point = hit.point;
@@ -228,6 +234,15 @@ CharacterBinding MakeScriptCharacterBinding(ScriptPhysicsAccessor access)
         Physics::CharacterControllerState state;
         return GetCharacterState(access(), entityId, state) && state.crouched;
     };
+    binding.setProne = [access](uint32_t entityId, bool prone) {
+        return WithCharacterRuntime(access, entityId, [&](CharacterControllerSystem& c, entt::entity e) {
+            c.SetProne(e, prone);
+        });
+    };
+    binding.isProne = [access](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return GetCharacterState(access(), entityId, state) && state.prone;
+    };
     binding.isStandBlocked = [access](uint32_t entityId) {
         Physics::CharacterControllerState state;
         return GetCharacterState(access(), entityId, state) && state.standBlocked;
@@ -259,6 +274,24 @@ CharacterBinding MakeScriptCharacterBinding(ScriptPhysicsAccessor access)
         if (!GetCharacterState(access(), entityId, state)) return false;
         out = Physics::CharacterGroundStateName(state.groundState);
         return true;
+    };
+    binding.ragdoll = [access](uint32_t entityId, const Vec3& impulse, const Vec3* point, std::string& outError) {
+        const ScriptPhysicsAccess a = access();
+        if (!a.scene || !a.physicsSystem) {
+            outError = "Physics is not running.";
+            return false;
+        }
+        Physics::RagdollStart start;
+        start.impulse = impulse;
+        if (point) {
+            start.impulsePoint = *point;
+            start.hasImpulsePoint = true;
+        }
+        return a.physicsSystem->Ragdolls().Start(*a.scene, static_cast<entt::entity>(entityId), start, outError);
+    };
+    binding.isRagdoll = [access](uint32_t entityId) {
+        const ScriptPhysicsAccess a = access();
+        return a.physicsSystem && a.physicsSystem->Ragdolls().IsActive(static_cast<entt::entity>(entityId));
     };
 
     return binding;

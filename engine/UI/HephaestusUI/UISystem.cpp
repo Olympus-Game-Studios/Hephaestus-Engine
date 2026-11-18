@@ -39,16 +39,18 @@ std::shared_ptr<UIScreen> UISystem::FindScreenByName(const std::string& name) co
 
 void UISystem::Update(UIContext& context) {
     const std::vector<UIMouseEvent> mouseEvents = context.ConsumeMouseEvents();
+    m_Scale = context.GetScale();
     for (const std::shared_ptr<UIScreen>& screen : m_Screens) {
         if (!screen || !screen->IsActive()) {
             continue;
         }
-        screen->SetViewportSize(context.GetViewportSize());
+        screen->SetViewportSize(context.GetLayoutSize());
         screen->Update(context, mouseEvents);
     }
 }
 
 void UISystem::Render(UIRenderer& renderer) const {
+    renderer.SetScale(m_Scale);
     for (const std::shared_ptr<UIScreen>& screen : m_Screens) {
         if (!screen || !screen->IsVisible()) {
             continue;

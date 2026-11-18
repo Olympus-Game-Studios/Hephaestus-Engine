@@ -11,12 +11,16 @@
 #include "Scene/CharacterComponent.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
+#include "Scene/PrefabAsset.h"
+#include "Scene/PrefabOverrideSystem.h"
+#include "Scene/PrefabSerializer.h"
 #include "Scene/Scene.h"
 #include "Scripting/LuaScriptComponent.h"
 #include "Scripting/LuaScriptEngine.h"
 #include "UI/HephaestusUI/UIContext.h"
 #include "UI/HephaestusUI/UISystem.h"
 #include "UI/HephaestusUI/UIRenderer.h"
+#include "UI/HephaestusUI/UIScreen.h"
 
 #include <cmath>
 #include <filesystem>
@@ -100,6 +104,75 @@ bool WriteFile(const fs::path& path, const std::string& contents) {
     }
     out << contents;
     return static_cast<bool>(out);
+}
+
+bool TestLayerPhase(const fs::path& root) {
+    bool ok = true;
+    ok &= Check(WriteFile(root / "assets" / "scripts" / "LayerPhase.lua", R"(
+function onUpdate(dt)
+    local animator = this:GetAnimator()
+    _G.setOk = animator:SetLayer("Legs", { clips = { "Idle" }, mask = "Child", rate = 0, phase = _G.phase or 0.25 })
+end
+)"), "write LayerPhase script");
+    Scene scene("LayerPhase");
+    Entity entity = scene.CreateEntity("Soldier");
+    auto& character = entity.AddComponent<CharacterComponent>();
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, skeleton, {MakeClip(skeleton, "Idle", true, 1.0f)},
+                                                      error),
+                "bind runtime");
+    entity.AddComponent<LuaScriptComponent>().scriptPath = "assets/scripts/LayerPhase.lua";
+    LuaScriptEngine engine;
+    engine.Initialize(&scene, nullptr);
+    engine.SetProjectRoot(root);
+    engine.OnSimulationStarted();
+    engine.Update(scene, 0.016f);
+    CharacterAnimationSystem::Tick(scene, 0.5f);
+    ok &= Check(engine.ExecuteString("assert(_G.setOk == true)"), "SetLayer with a phase succeeds");
+    ok &= Check(character.layers.size() == 1 && std::fabs(character.layers[0].phase - 0.25f) < 1e-5f,
+                "a layer set to a phase with rate 0 stays there");
+    ok &= Check(engine.ExecuteString("_G.phase = 1"), "set phase 1");
+    engine.Update(scene, 0.016f);
+    CharacterAnimationSystem::Tick(scene, 0.5f);
+    ok &= Check(character.layers.size() == 1 && character.layers[0].phase > 0.99f,
+                "phase 1 holds the clip's last pose instead of wrapping to the start");
+    return ok;
+}
+
+bool TestAnimatorSetTime(const fs::path& root) {
+    bool ok = true;
+    ok &= Check(WriteFile(root / "assets" / "scripts" / "SetTime.lua", R"(
+function onUpdate(dt)
+    local animator = this:GetAnimator()
+    if animator:GetCurrentAnimation() == "Idle" and not _G.timeSet then
+        animator:SetTime(1.3)
+        _G.timeSet = true
+    end
+end
+)"), "write SetTime script");
+    Scene scene("SetTime");
+    Entity entity = scene.CreateEntity("Soldier");
+    auto& character = entity.AddComponent<CharacterComponent>();
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, skeleton, {MakeClip(skeleton, "Idle", true, 1.0f)},
+                                                      error),
+                "bind runtime");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Idle", error), "play Idle");
+    CharacterAnimationSystem::Tick(scene, 0.0f);
+    entity.AddComponent<LuaScriptComponent>().scriptPath = "assets/scripts/SetTime.lua";
+    LuaScriptEngine engine;
+    engine.Initialize(&scene, nullptr);
+    engine.SetProjectRoot(root);
+    engine.OnSimulationStarted();
+    engine.Update(scene, 0.016f);
+    ok &= Check(std::fabs(character.player.time - 1.3f) < 1.0e-4f, "SetTime moves playback");
+    CharacterAnimationSystem::Tick(scene, 0.0f);
+    ok &= Check(std::fabs(character.player.time - 0.3f) < 1.0e-4f, "a looping clip wraps a time past its end");
+    return ok;
 }
 
 bool TestSlotsAndAnimator(const fs::path& root) {
@@ -316,8 +389,10 @@ end
     Hephaestus::HephaestusUI::UIRenderer uiRenderer;
     engine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
     int acceptedRequests = 0;
-    engine.SetSceneReloadCallback([&acceptedRequests]() {
+    std::string requestedScene = "unset";
+    engine.SetSceneReloadCallback([&acceptedRequests, &requestedScene](const std::string& scenePath) {
         ++acceptedRequests;
+        requestedScene = scenePath;
         return true;
     });
     engine.OnSimulationStarted();
@@ -329,8 +404,40 @@ end
     engine.Update(scene, 1.0f / 60.0f);
     ok &= Check(acceptedRequests == 1 && engine.ExecuteString("assert(_G.reloadAccepted == true)"),
                 "Scene.reload accepts a gameplay-originated deferred request");
+    ok &= Check(requestedScene.empty(), "Scene.reload asks for the current scene");
+    ok &= Check(engine.ExecuteString("assert(Scene.load('assets/scenes/Other.hpscene') == true)") &&
+                    requestedScene == "assets/scenes/Other.hpscene" && acceptedRequests == 2,
+                "Scene.load asks the host for the named scene");
+
+    ok &= Check(engine.ExecuteString("Time.setScale(0.25); assert(Time.getScale() == 0.25)") &&
+                    engine.GetTimeScale() == 0.25f,
+                "Time.setScale sets the gameplay time scale");
+    ok &= Check(engine.ExecuteString("Time.setScale(-3); assert(Time.getScale() == 0)") &&
+                    engine.ExecuteString("Time.setScale(99); assert(Time.getScale() == 10)"),
+                "the time scale is clamped to 0..10");
+
+    {
+        const std::filesystem::path storage = std::filesystem::temp_directory_path() / "hephaestus_lua_storage_tests";
+        std::error_code ec;
+        std::filesystem::remove_all(storage, ec);
+        engine.SetStorageRoot(storage);
+        ok &= Check(engine.ExecuteString(R"lua(
+assert(Storage.load("settings") == nil)
+assert(Storage.save("settings", { sensitivity = 0.5, volumes = { master = 1, sfx = 0.25 }, name = "Andrew",
+                                  bindings = { "W", "A" }, fullscreen = true }))
+local s = Storage.load("settings")
+assert(s.sensitivity == 0.5 and s.volumes.sfx == 0.25 and s.name == "Andrew" and s.bindings[2] == "A"
+       and s.fullscreen == true)
+local ok, err = Storage.save("../escape", { x = 1 })
+assert(ok == false and err ~= nil)
+assert(Storage.save("bad", { f = print }) == false)
+)lua") && std::filesystem::exists(storage / "settings.json") && !std::filesystem::exists(storage.parent_path() / "escape.json"),
+                    "Storage saves and loads tables per name and refuses unsafe names and values");
+        std::filesystem::remove_all(storage, ec);
+    }
 
     engine.OnSimulationStopped();
+    ok &= Check(engine.GetTimeScale() == 1.0f, "stopping the simulation resets the time scale");
     ok &= Check(engine.ExecuteString("assert(_G.reloadDestroyCount == 1)"),
                 "old entity script onDestroy runs before scene teardown");
     uiSystem.ClearScreens();
@@ -363,6 +470,13 @@ end
     ok &= Check(uiSystem.GetScreens().size() == 1 && engine.ExecuteString(
                     "assert(_G.newReloadScreen ~= _G.oldReloadScreen)"),
                 "reloaded scene mounts one new screen with a non-recycled handle");
+    ok &= Check(engine.ExecuteString("assert(UI.setScreenVisible(_G.newReloadScreen, false) == true)") &&
+                    !uiSystem.GetScreens().front()->IsVisible() &&
+                    engine.ExecuteString("assert(UI.setScreenVisible('ReloadProbeHUD', true) == true)") &&
+                    uiSystem.GetScreens().front()->IsVisible() &&
+                    engine.ExecuteString("assert(UI.setScreenActive(_G.newReloadScreen, false) == true)") &&
+                    !uiSystem.GetScreens().front()->IsActive(),
+                "UI.setScreenVisible and setScreenActive take the handle UI.createScreen returns, or a name");
     ok &= Check(engine.ExecuteString("assert(package.loaded.__runtimeSceneReload.oldEntity:IsValid() == false and package.loaded.__runtimeSceneReload.newEntity:IsValid() == true)"),
                 "Lua entity userdata from the prior scene generation expires");
     engine.OnSimulationStopped();
@@ -371,6 +485,53 @@ end
 }
 
 } // namespace
+
+bool TestInstantiateWithParent(const fs::path& root) {
+    bool ok = true;
+    {
+        Scene source("PrefabSource");
+        Entity part = source.CreateEntity("SpawnedPart");
+        PrefabAsset asset;
+        std::string error;
+        const fs::path prefabPath = root / "assets" / "prefabs" / "Part.hpprefab";
+        fs::create_directories(prefabPath.parent_path());
+        ok &= Check(PrefabOverrideSystem::CaptureHierarchy(source, part, asset), "capture part prefab");
+        ok &= Check(PrefabSerializer::Serialize(asset, prefabPath, error), "save part prefab: " + error);
+        PrefabOverrideSystem::InvalidateAssetCache(prefabPath.generic_string());
+    }
+    ok &= Check(WriteFile(root / "assets" / "scripts" / "SpawnChild.lua", R"(
+function onUpdate(dt)
+    if _G.spawned then
+        return
+    end
+    _G.spawned = Scene.instantiate("assets/prefabs/Part.hpprefab", { parent = this, position = { x = 1, y = 2, z = 3 } })
+    _G.badParent = pcall(Scene.instantiate, "assets/prefabs/Part.hpprefab", { parent = 5 })
+end
+)"), "write SpawnChild script");
+    Scene scene("InstantiateParent");
+    Entity player = scene.CreateEntity("Player");
+    player.GetComponent<TransformComponent>().position = Vec3(10.0f, 0.0f, -4.0f);
+    player.AddComponent<LuaScriptComponent>().scriptPath = "assets/scripts/SpawnChild.lua";
+    LuaScriptEngine engine;
+    engine.Initialize(&scene, nullptr);
+    engine.SetProjectRoot(root);
+    engine.OnSimulationStarted();
+    engine.Update(scene, 0.016f);
+    ok &= Check(engine.ExecuteString("assert(_G.spawned ~= nil)"), "Scene.instantiate with a parent returns the entity");
+    ok &= Check(engine.ExecuteString("assert(_G.badParent == false)"), "a parent that is not an entity is an error");
+    Entity child = scene.FindEntityByName("SpawnedPart");
+    ok &= Check(static_cast<bool>(child) && scene.GetParent(child) == player, "the spawned root is a child of parent");
+    if (child) {
+        const Mat4 world = scene.GetWorldTransform(child);
+        ok &= Check(std::fabs(world.m[12] - 11.0f) < 1.0e-4f && std::fabs(world.m[13] - 2.0f) < 1.0e-4f
+                        && std::fabs(world.m[14] + 1.0f) < 1.0e-4f,
+                    "position is local to the parent");
+        player.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 0.0f);
+        const Mat4 moved = scene.GetWorldTransform(child);
+        ok &= Check(std::fabs(moved.m[12] - 1.0f) < 1.0e-4f, "the child follows the parent when it moves");
+    }
+    return ok;
+}
 
 int main() {
 #if !LUA_AVAILABLE
@@ -382,9 +543,12 @@ int main() {
     fs::remove_all(root);
     fs::create_directories(root / "assets" / "scripts");
     ok &= TestSlotsAndAnimator(root);
+    ok &= TestAnimatorSetTime(root);
+    ok &= TestLayerPhase(root);
     ok &= TestControllerDisabled(root);
     ok &= TestBrokenControllerIsolation(root);
     ok &= TestSceneReloadRequestLifecycle();
+    ok &= TestInstantiateWithParent(root);
     if (ok) {
         std::cout << "CharacterLuaTests passed\n";
         return 0;

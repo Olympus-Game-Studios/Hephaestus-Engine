@@ -1,6 +1,7 @@
 #include "PrefabComponentIO.h"
 
 #include "Scene.h"
+#include "../Assets/AssetPathPolicy.h"
 #include "../Scripting/LuaScriptComponent.h"
 #include "../Scripting/ScriptComponent.h"
 
@@ -63,9 +64,19 @@ void CaptureMeshRenderer(const MeshRendererComponent& mesh, JsonValue& data) {
     data = MakeObject();
     data.objectValue["visible"] = MakeBool(mesh.visible);
     data.objectValue["hideInGame"] = MakeBool(mesh.hideInGame);
+    if (mesh.viewModel) {
+        data.objectValue["viewModel"] = MakeBool(true);
+    }
+    if (mesh.drawOverWorld) {
+        data.objectValue["drawOverWorld"] = MakeBool(true);
+    }
+    if (!mesh.castShadows) {
+        data.objectValue["castShadows"] = MakeBool(false);
+    }
     data.objectValue["showHiddenOutline"] = MakeBool(mesh.showHiddenOutline);
     if (!mesh.meshAssetPath.empty()) {
-        data.objectValue["meshSource"] = MakeString(mesh.meshAssetPath);
+        data.objectValue["meshSource"] =
+            MakeString(Hephaestus::AssetPathPolicy::ToPortableKey(std::filesystem::path{}, mesh.meshAssetPath));
     }
     data.objectValue["meshImported"] = MakeBool(mesh.meshImported);
     data.objectValue["backfaceCulling"] = MakeBool(mesh.backfaceCulling);
@@ -90,6 +101,15 @@ void ApplyMeshRenderer(MeshRendererComponent& mesh, const JsonValue& data) {
     }
     if (const JsonValue* hideInGameValue = data.Find("hideInGame")) {
         mesh.hideInGame = ParseBoolLike(*hideInGameValue, mesh.hideInGame);
+    }
+    if (const JsonValue* viewModelValue = data.Find("viewModel")) {
+        mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
+    }
+    if (const JsonValue* drawOverWorldValue = data.Find("drawOverWorld")) {
+        mesh.drawOverWorld = ParseBoolLike(*drawOverWorldValue, mesh.drawOverWorld);
+    }
+    if (const JsonValue* castShadowsValue = data.Find("castShadows")) {
+        mesh.castShadows = ParseBoolLike(*castShadowsValue, mesh.castShadows);
     }
     if (const JsonValue* showHiddenOutlineValue = data.Find("showHiddenOutline")) {
         mesh.showHiddenOutline = ParseBoolLike(*showHiddenOutlineValue, mesh.showHiddenOutline);
@@ -311,6 +331,9 @@ void CaptureMaterial(const MaterialComponent& material, JsonValue& data) {
     data.objectValue["useMetallicTexture"] = MakeBool(material.useMetallicTexture);
     data.objectValue["aoTexturePath"] = MakeString(material.aoTexturePath);
     data.objectValue["useAoTexture"] = MakeBool(material.useAoTexture);
+    if (material.roughnessChannel != 0) data.objectValue["roughnessChannel"] = MakeNumber(material.roughnessChannel);
+    if (material.metallicChannel != 0) data.objectValue["metallicChannel"] = MakeNumber(material.metallicChannel);
+    if (material.aoChannel != 0) data.objectValue["aoChannel"] = MakeNumber(material.aoChannel);
     data.objectValue["useWorldAlignedTexture"] = MakeBool(material.useWorldAlignedTexture);
     data.objectValue["worldTextureScale"] = MakeNumber(material.worldTextureScale);
 }
@@ -399,6 +422,13 @@ void ApplyMaterial(MaterialComponent& material, const JsonValue& data) {
     }
     if (const JsonValue* useAoValue = data.Find("useAoTexture")) {
         material.useAoTexture = ParseBoolLike(*useAoValue, material.useAoTexture);
+    }
+    for (auto [key, channel] : {std::pair{"roughnessChannel", &material.roughnessChannel},
+                                std::pair{"metallicChannel", &material.metallicChannel},
+                                std::pair{"aoChannel", &material.aoChannel}}) {
+        if (const JsonValue* value = data.Find(key); value && value->IsNumber()) {
+            *channel = static_cast<uint32_t>(value->AsNumber()) & 3u;
+        }
     }
     if (const JsonValue* worldAlignedValue = data.Find("useWorldAlignedTexture")) {
         material.useWorldAlignedTexture = ParseBoolLike(*worldAlignedValue, material.useWorldAlignedTexture);
@@ -521,6 +551,9 @@ void CaptureCamera(const CameraComponent& camera, JsonValue& data) {
     data.objectValue["fov"] = MakeNumber(camera.fov);
     data.objectValue["nearPlane"] = MakeNumber(camera.nearPlane);
     data.objectValue["farPlane"] = MakeNumber(camera.farPlane);
+    if (camera.viewModelFov > 0.0f) {
+        data.objectValue["viewModelFov"] = MakeNumber(camera.viewModelFov);
+    }
     data.objectValue["projection"] = MakeString(CameraProjectionToString(camera.projection));
     data.objectValue["isActive"] = MakeBool(camera.isActive);
     data.objectValue["isPrimary"] = MakeBool(camera.isPrimary || camera.isActive);
@@ -544,6 +577,11 @@ void ApplyCamera(CameraComponent& camera, const JsonValue& data) {
     if (const JsonValue* farValue = data.Find("farPlane")) {
         if (farValue->IsNumber()) {
             camera.farPlane = static_cast<float>(farValue->AsNumber());
+        }
+    }
+    if (const JsonValue* viewModelFovValue = data.Find("viewModelFov")) {
+        if (viewModelFovValue->IsNumber()) {
+            camera.viewModelFov = static_cast<float>(viewModelFovValue->AsNumber());
         }
     }
     if (const JsonValue* projectionValue = data.Find("projection")) {
@@ -636,6 +674,10 @@ void CaptureAudioSource(const AudioSourceComponent& audio, JsonValue& data) {
     data.objectValue["playOnStart"] = MakeBool(audio.playOnStart);
     data.objectValue["loop"] = MakeBool(audio.loop);
     data.objectValue["volume"] = MakeNumber(audio.volume);
+    data.objectValue["bus"] = MakeString(audio.bus);
+    data.objectValue["spatial"] = MakeBool(audio.spatial);
+    data.objectValue["minDistance"] = MakeNumber(audio.minDistance);
+    data.objectValue["maxDistance"] = MakeNumber(audio.maxDistance);
 }
 
 void ApplyAudioSource(AudioSourceComponent& audio, const JsonValue& data, bool enabled) {
@@ -661,6 +703,96 @@ void ApplyAudioSource(AudioSourceComponent& audio, const JsonValue& data, bool e
         if (volumeValue->IsNumber()) {
             audio.volume = static_cast<float>(volumeValue->AsNumber());
         }
+    }
+    if (const JsonValue* busValue = data.Find("bus")) {
+        if (busValue->IsString()) {
+            audio.bus = busValue->AsString();
+        }
+    }
+    if (const JsonValue* spatialValue = data.Find("spatial")) {
+        audio.spatial = ParseBoolLike(*spatialValue, audio.spatial);
+    }
+    if (const JsonValue* minValue = data.Find("minDistance")) {
+        if (minValue->IsNumber()) {
+            audio.minDistance = static_cast<float>(minValue->AsNumber());
+        }
+    }
+    if (const JsonValue* maxValue = data.Find("maxDistance")) {
+        if (maxValue->IsNumber()) {
+            audio.maxDistance = static_cast<float>(maxValue->AsNumber());
+        }
+    }
+}
+
+void CaptureParticleEmitter(const ParticleEmitterComponent& emitter, JsonValue& data) {
+    data = MakeObject();
+    data.objectValue["materialPath"] = MakeString(emitter.materialPath);
+    data.objectValue["playOnStart"] = MakeBool(emitter.playOnStart);
+    data.objectValue["loop"] = MakeBool(emitter.loop);
+    data.objectValue["destroyWhenDone"] = MakeBool(emitter.destroyWhenDone);
+    data.objectValue["duration"] = MakeNumber(emitter.duration);
+    data.objectValue["rate"] = MakeNumber(emitter.rate);
+    data.objectValue["lifetimeMin"] = MakeNumber(emitter.lifetimeMin);
+    data.objectValue["lifetimeMax"] = MakeNumber(emitter.lifetimeMax);
+    data.objectValue["speedMin"] = MakeNumber(emitter.speedMin);
+    data.objectValue["speedMax"] = MakeNumber(emitter.speedMax);
+    data.objectValue["spreadDegrees"] = MakeNumber(emitter.spreadDegrees);
+    data.objectValue["gravity"] = MakeNumber(emitter.gravity);
+    data.objectValue["drag"] = MakeNumber(emitter.drag);
+    data.objectValue["sizeStart"] = MakeNumber(emitter.sizeStart);
+    data.objectValue["sizeEnd"] = MakeNumber(emitter.sizeEnd);
+    data.objectValue["sizeJitter"] = MakeNumber(emitter.sizeJitter);
+    data.objectValue["spinMin"] = MakeNumber(emitter.spinMin);
+    data.objectValue["spinMax"] = MakeNumber(emitter.spinMax);
+    data.objectValue["burst"] = MakeNumber(emitter.burst);
+    data.objectValue["maxParticles"] = MakeNumber(emitter.maxParticles);
+    data.objectValue["seed"] = MakeNumber(emitter.seed);
+    {
+        JsonValue color = MakeArray();
+        for (float c : {emitter.colorStart.x, emitter.colorStart.y, emitter.colorStart.z, emitter.colorStart.w}) color.arrayValue.push_back(MakeNumber(c));
+        data.objectValue["colorStart"] = std::move(color);
+    }
+    {
+        JsonValue color = MakeArray();
+        for (float c : {emitter.colorEnd.x, emitter.colorEnd.y, emitter.colorEnd.z, emitter.colorEnd.w}) color.arrayValue.push_back(MakeNumber(c));
+        data.objectValue["colorEnd"] = std::move(color);
+    }
+}
+
+void ApplyParticleEmitter(ParticleEmitterComponent& emitter, const JsonValue& data) {
+    if (!data.IsObject()) {
+        return;
+    }
+    if (const JsonValue* value = data.Find("materialPath"); value && value->IsString()) emitter.materialPath = value->AsString();
+    if (const JsonValue* value = data.Find("playOnStart")) emitter.playOnStart = ParseBoolLike(*value, emitter.playOnStart);
+    if (const JsonValue* value = data.Find("loop")) emitter.loop = ParseBoolLike(*value, emitter.loop);
+    if (const JsonValue* value = data.Find("destroyWhenDone")) emitter.destroyWhenDone = ParseBoolLike(*value, emitter.destroyWhenDone);
+    if (const JsonValue* value = data.Find("duration"); value && value->IsNumber()) emitter.duration = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("rate"); value && value->IsNumber()) emitter.rate = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("lifetimeMin"); value && value->IsNumber()) emitter.lifetimeMin = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("lifetimeMax"); value && value->IsNumber()) emitter.lifetimeMax = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("speedMin"); value && value->IsNumber()) emitter.speedMin = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("speedMax"); value && value->IsNumber()) emitter.speedMax = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("spreadDegrees"); value && value->IsNumber()) emitter.spreadDegrees = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("gravity"); value && value->IsNumber()) emitter.gravity = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("drag"); value && value->IsNumber()) emitter.drag = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("sizeStart"); value && value->IsNumber()) emitter.sizeStart = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("sizeEnd"); value && value->IsNumber()) emitter.sizeEnd = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("sizeJitter"); value && value->IsNumber()) emitter.sizeJitter = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("spinMin"); value && value->IsNumber()) emitter.spinMin = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("spinMax"); value && value->IsNumber()) emitter.spinMax = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("burst"); value && value->IsNumber()) emitter.burst = static_cast<int>(value->AsNumber());
+    if (const JsonValue* value = data.Find("maxParticles"); value && value->IsNumber()) emitter.maxParticles = static_cast<int>(value->AsNumber());
+    if (const JsonValue* value = data.Find("seed"); value && value->IsNumber()) emitter.seed = static_cast<uint32_t>(value->AsNumber());
+    if (const JsonValue* value = data.Find("colorStart"); value && value->IsArray() && value->AsArray().size() >= 4) {
+        const auto& c = value->AsArray();
+        emitter.colorStart = Vec4(static_cast<float>(c[0].AsNumber()), static_cast<float>(c[1].AsNumber()),
+                          static_cast<float>(c[2].AsNumber()), static_cast<float>(c[3].AsNumber()));
+    }
+    if (const JsonValue* value = data.Find("colorEnd"); value && value->IsArray() && value->AsArray().size() >= 4) {
+        const auto& c = value->AsArray();
+        emitter.colorEnd = Vec4(static_cast<float>(c[0].AsNumber()), static_cast<float>(c[1].AsNumber()),
+                          static_cast<float>(c[2].AsNumber()), static_cast<float>(c[3].AsNumber()));
     }
 }
 
@@ -695,6 +827,7 @@ void CaptureCharacterController(const CharacterControllerComponent& component, J
     data.objectValue["height"] = MakeNumber(component.height);
     data.objectValue["radius"] = MakeNumber(component.radius);
     data.objectValue["crouchedHeight"] = MakeNumber(component.crouchedHeight);
+    data.objectValue["proneHeight"] = MakeNumber(component.proneHeight);
     data.objectValue["maxSlopeAngleDegrees"] = MakeNumber(component.maxSlopeAngleDegrees);
     data.objectValue["stepHeight"] = MakeNumber(component.stepHeight);
     data.objectValue["groundSnapDistance"] = MakeNumber(component.groundSnapDistance);
@@ -704,6 +837,8 @@ void CaptureCharacterController(const CharacterControllerComponent& component, J
     data.objectValue["airAcceleration"] = MakeNumber(component.airAcceleration);
     data.objectValue["airControl"] = MakeNumber(component.airControl);
     data.objectValue["jumpSpeed"] = MakeNumber(component.jumpSpeed);
+    data.objectValue["coyoteTime"] = MakeNumber(component.coyoteTime);
+    data.objectValue["jumpBufferTime"] = MakeNumber(component.jumpBufferTime);
     data.objectValue["gravityScale"] = MakeNumber(component.gravityScale);
     data.objectValue["maxFallSpeed"] = MakeNumber(component.maxFallSpeed);
     data.objectValue["collisionLayer"] = MakeNumber(component.collisionLayer);
@@ -728,6 +863,7 @@ void ApplyCharacterController(CharacterControllerComponent& component, const Jso
     readFloat("height", component.height);
     readFloat("radius", component.radius);
     readFloat("crouchedHeight", component.crouchedHeight);
+    readFloat("proneHeight", component.proneHeight);
     readFloat("maxSlopeAngleDegrees", component.maxSlopeAngleDegrees);
     readFloat("stepHeight", component.stepHeight);
     readFloat("groundSnapDistance", component.groundSnapDistance);
@@ -737,6 +873,8 @@ void ApplyCharacterController(CharacterControllerComponent& component, const Jso
     readFloat("airAcceleration", component.airAcceleration);
     readFloat("airControl", component.airControl);
     readFloat("jumpSpeed", component.jumpSpeed);
+    readFloat("coyoteTime", component.coyoteTime);
+    readFloat("jumpBufferTime", component.jumpBufferTime);
     readFloat("gravityScale", component.gravityScale);
     readFloat("maxFallSpeed", component.maxFallSpeed);
     readFloat("mass", component.mass);
@@ -1160,6 +1298,10 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         CaptureScriptComponent(entity.GetComponent<ScriptComponent>(), out.data);
         return true;
     }
+    if (type == "ParticleEmitter" && entity.HasComponent<ParticleEmitterComponent>()) {
+        CaptureParticleEmitter(entity.GetComponent<ParticleEmitterComponent>(), out.data);
+        return true;
+    }
     if (type == "AudioSource" && entity.HasComponent<AudioSourceComponent>()) {
         const auto& audio = entity.GetComponent<AudioSourceComponent>();
         out.enabled = audio.enabled;
@@ -1177,6 +1319,18 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         return true;
     }
     return false;
+}
+
+JsonValue MeshRendererToJson(const MeshRendererComponent& mesh) {
+    JsonValue data;
+    CaptureMeshRenderer(mesh, data);
+    return data;
+}
+
+JsonValue MeshColliderToJson(const MeshColliderComponent& collider) {
+    JsonValue data;
+    CaptureMeshCollider(collider, data);
+    return data;
 }
 
 bool CaptureFromEntity(Entity entity, std::vector<PrefabComponentEntry>& out) {
@@ -1287,6 +1441,13 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
         ApplyScriptComponent(script, data);
         return true;
     }
+    if (type == "ParticleEmitter") {
+        auto& emitter = entity.HasComponent<ParticleEmitterComponent>()
+            ? entity.GetComponent<ParticleEmitterComponent>()
+            : entity.AddComponent<ParticleEmitterComponent>();
+        ApplyParticleEmitter(emitter, data);
+        return true;
+    }
     if (type == "AudioSource") {
         auto& audio = entity.HasComponent<AudioSourceComponent>()
             ? entity.GetComponent<AudioSourceComponent>()
@@ -1336,6 +1497,7 @@ bool HasComponent(Entity entity, const std::string& type) {
     if (type == "LuaScript") return entity.HasComponent<LuaScriptComponent>();
     if (type == "ScriptComponent") return entity.HasComponent<ScriptComponent>();
     if (type == "AudioSource") return entity.HasComponent<AudioSourceComponent>();
+    if (type == "ParticleEmitter") return entity.HasComponent<ParticleEmitterComponent>();
     if (type == "Character") return entity.HasComponent<CharacterComponent>();
     if (type == "CharacterController") return entity.HasComponent<CharacterControllerComponent>();
     return false;
@@ -1366,6 +1528,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
     else if (type == "LuaScript") entity.RemoveComponent<LuaScriptComponent>();
     else if (type == "ScriptComponent") entity.RemoveComponent<ScriptComponent>();
     else if (type == "AudioSource") entity.RemoveComponent<AudioSourceComponent>();
+    else if (type == "ParticleEmitter") entity.RemoveComponent<ParticleEmitterComponent>();
     else if (type == "Character") entity.RemoveComponent<CharacterComponent>();
     else if (type == "CharacterController") entity.RemoveComponent<CharacterControllerComponent>();
     else return false;
@@ -1376,7 +1539,7 @@ const std::vector<std::string>& SupportedTypes() {
     static const std::vector<std::string> kTypes = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
         "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character",
-        "CharacterController"
+        "CharacterController", "ParticleEmitter"
     };
     return kTypes;
 }

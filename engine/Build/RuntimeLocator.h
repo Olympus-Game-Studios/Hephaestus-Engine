@@ -51,6 +51,10 @@ struct RuntimeLocationResult {
     bool success() const { return artifacts.complete(); }
 };
 
+// The CMake build tree a runtime is built in. Automation-enabled runtimes get their own tree so the shared
+// build never has HEPHAESTUS_RUNTIME_AUTOMATION switched on.
+std::filesystem::path RuntimeBuildDirectory(const std::filesystem::path& engineRoot, bool enableRuntimeAutomation);
+
 class RuntimeLocator {
 public:
     RuntimeLocationResult locate(const std::filesystem::path& engineRoot,

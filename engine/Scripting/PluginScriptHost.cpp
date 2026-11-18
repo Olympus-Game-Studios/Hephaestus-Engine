@@ -458,7 +458,9 @@ struct PluginScriptHost::HostApi {
         }
         PhysicsRaycastHit hit{};
         std::string message;
-        const bool ok = physics->raycast(ignore == 0 ? kNoEntity : ToEntityId(ignore),
+        std::vector<uint32_t> ignored;
+        if (ignore != 0) ignored.push_back(ToEntityId(ignore));
+        const bool ok = physics->raycast(ignored,
                                          Vec3(origin.x, origin.y, origin.z),
                                          Vec3(direction.x, direction.y, direction.z), maxDistance, hit,
                                          layer && *layer ? layer : nullptr, message, ignoreSensors != 0);

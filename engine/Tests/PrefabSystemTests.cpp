@@ -78,6 +78,8 @@ bool BuildLampHierarchy(Scene& scene, Entity& outRoot, Entity& outShade) {
     auto& mesh = outShade.AddComponent<MeshRendererComponent>();
     mesh.meshAssetPath = "assets/meshes/cube.mesh";
     mesh.appliedMaterialPaths = { "assets/materials/Lamp.hematerial" };
+    mesh.castShadows = false;
+    mesh.drawOverWorld = true;
     auto& material = outShade.AddComponent<MaterialComponent>();
     material.albedo = Vec3(0.8f, 0.6f, 0.2f);
     auto& collider = outShade.AddComponent<MeshColliderComponent>();
@@ -219,6 +221,12 @@ bool TestSceneRoundtripAndTransforms(const fs::path& outDir) {
     ok &= Check(PrefabOverrideSystem::IsPropertyOverridden(inst, inst.rootNodeId, "Light", "intensity"),
                 "light intensity override recorded");
 
+    Entity plain = scene.CreateEntity("PlainNoShadow");
+    plain.AddComponent<MeshRendererComponent>().castShadows = false;
+    plain.GetComponent<MeshRendererComponent>().drawOverWorld = true;
+    Entity plainDefault = scene.CreateEntity("PlainShadow");
+    plainDefault.AddComponent<MeshRendererComponent>();
+
     PrefabOverrideSystem::SyncAllInstances(scene);
     const fs::path scenePath = outDir / "LampScene.hpscene";
     SceneSerializer serializer(scene);
@@ -254,12 +262,26 @@ bool TestSceneRoundtripAndTransforms(const fs::path& outDir) {
         if (loadedShade) {
             ok &= Check(Near(loadedShade.GetComponent<TransformComponent>().position.y, 3.5f),
                         "child transform override survived reload");
+            ok &= Check(!loadedShade.GetComponent<MeshRendererComponent>().castShadows,
+                        "prefab mesh castShadows off survived reload");
+            ok &= Check(loadedShade.GetComponent<MeshRendererComponent>().drawOverWorld,
+                        "prefab mesh drawOverWorld survived reload");
             auto glow = loadedShade.GetComponent<LuaScriptComponent>().variables.find("glow");
             ok &= Check(glow != loadedShade.GetComponent<LuaScriptComponent>().variables.end() &&
                         glow->second.IsNumber() && Near(static_cast<float>(*glow->second.AsNumber()), 4.0f),
                         "lua override survived reload");
         }
     }
+    Entity loadedPlain = FindByTag(loaded, "PlainNoShadow");
+    Entity loadedPlainDefault = FindByTag(loaded, "PlainShadow");
+    ok &= Check(loadedPlain && !loadedPlain.GetComponent<MeshRendererComponent>().castShadows,
+                "scene mesh castShadows off survived reload");
+    ok &= Check(loadedPlainDefault && loadedPlainDefault.GetComponent<MeshRendererComponent>().castShadows,
+                "scene mesh castShadows defaults on");
+    ok &= Check(loadedPlain && loadedPlain.GetComponent<MeshRendererComponent>().drawOverWorld,
+                "scene mesh drawOverWorld survived reload");
+    ok &= Check(loadedPlainDefault && !loadedPlainDefault.GetComponent<MeshRendererComponent>().drawOverWorld,
+                "scene mesh drawOverWorld defaults off");
     return ok;
 }
 
@@ -570,6 +592,53 @@ bool TestCreateFromSelectionAndUnpack(const fs::path& outDir) {
         }
     }
     ok &= Check(foundLua, "created prefab contains lua data");
+    return ok;
+}
+
+bool TestCreatedPrefabPathsArePortable(const fs::path& outDir) {
+    const fs::path project = outDir / "PortableProject";
+    fs::create_directories(project / "assets" / "prefabs");
+    PrefabOverrideSystem::SetProjectRoot(project);
+
+    Scene scene("Portable");
+    Entity root = scene.CreateEntity("Gun");
+    Entity body = scene.CreateEntity("Body");
+    scene.SetParent(body, root);
+    const std::string absoluteMesh = (project / "assets" / "models" / "Gun.fbx").generic_string();
+    body.AddComponent<MeshRendererComponent>().meshAssetPath = absoluteMesh;
+
+    const fs::path prefabPath = project / "assets" / "prefabs" / "Gun.hpprefab";
+    Entity instance;
+    std::string error;
+    bool ok = Check(PrefabOverrideSystem::CreateFromSelection(scene, root, prefabPath, &instance, error),
+                    "create prefab inside a project: " + error);
+    auto readText = [](const fs::path& path) {
+        std::ifstream in(path);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const std::string prefabText = readText(prefabPath);
+    ok &= Check(prefabText.find("\"assets/models/Gun.fbx\"") != std::string::npos &&
+                    prefabText.find(project.generic_string()) == std::string::npos,
+                "prefab stores mesh sources as project keys, not absolute paths");
+    const auto* data = instance ? PrefabOverrideSystem::TryGetInstance(scene, instance) : nullptr;
+    ok &= Check(data && PrefabOverrideSystem::ListOverrides(*data).empty(),
+                "absolute live mesh path is not an override of its portable prefab key");
+
+    const fs::path scenePath = project / "assets" / "Portable.hpscene";
+    ok &= Check(SceneSerializer(scene).Serialize(scenePath, error), "save scene: " + error);
+    const std::string sceneText = readText(scenePath);
+    ok &= Check(sceneText.find("\"prefabPath\": \"assets/prefabs/Gun.hpprefab\"") != std::string::npos &&
+                    sceneText.find(project.generic_string()) == std::string::npos,
+                "scene stores the prefab instance path as a project key");
+
+    PrefabOverrideSystem::InvalidateAssetCache();
+    Scene loaded("Loaded");
+    ok &= Check(SceneSerializer::Deserialize(loaded, scenePath, error), "load scene: " + error);
+    Entity loadedRoot = FindByTag(loaded, "Gun");
+    const auto* loadedData = loadedRoot ? PrefabOverrideSystem::TryGetInstance(loaded, loadedRoot) : nullptr;
+    ok &= Check(loadedData && !loadedData->missingPrefab, "portable prefab path resolves from the project root");
+
+    PrefabOverrideSystem::SetProjectRoot({});
     return ok;
 }
 
@@ -973,6 +1042,7 @@ int main(int argc, char** argv) {
     run("LuaScriptApplyAndRevert", TestLuaScriptApplyAndRevert, outDir);
     run("LuaAuthoredSceneRoundtrip", TestLuaAuthoredSceneRoundtrip, outDir);
     run("CreateFromSelectionAndUnpack", TestCreateFromSelectionAndUnpack, outDir);
+    run("CreatedPrefabPathsArePortable", TestCreatedPrefabPathsArePortable, outDir);
     run("MissingPrefab", TestMissingPrefab, outDir);
     run("LegacyBlueprint", TestLegacyBlueprint, repoRoot);
     run("InstantiatePoseAndVars", TestInstantiatePoseAndVars, outDir);

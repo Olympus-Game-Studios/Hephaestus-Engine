@@ -30,6 +30,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace HUI = Hephaestus::HephaestusUI;
@@ -233,6 +234,64 @@ bool TestHitTesting() {
     screen->Update(context, context.ConsumeMouseEvents());
     if (!Check(!clicked, "button does not fire for out-of-bounds click")) local = false;
 
+    return local;
+}
+
+// Game UI laid out for 1080p fills a 1440p viewport the same way: draw commands come out in viewport pixels and
+// mouse input in viewport pixels reaches the right widget.
+bool TestResolutionScale() {
+    bool local = true;
+    HUI::UIContext plain;
+    plain.SetViewportSize({1280, 720});
+    if (!Check(Near(plain.GetScale(), 1.0f) && Near(plain.GetLayoutSize().y, 720),
+               "without a reference height the UI is laid out in viewport pixels")) local = false;
+
+    HUI::UIContext context;
+    context.SetReferenceHeight(HUI::kGameUIReferenceHeight);
+    context.SetViewportSize({2560, 1440});
+    if (!Check(Near(context.GetScale(), 4.0f / 3.0f) && Near(context.GetLayoutSize().x, 1920) &&
+               Near(context.GetLayoutSize().y, 1080), "a 1440p viewport is 1080 layout units tall")) local = false;
+
+    HUI::UISystem system;
+    auto screen = MakeScreen(1, 1);
+    auto button = std::make_unique<HUI::UIButton>("Corner");
+    button->SetPosition({1800, 1000});
+    button->SetSize({100, 50});
+    HUI::UIStyle style;
+    style.fontSize = 30.0f;
+    button->SetNormalStyle(style);
+    button->SetHoveredStyle(style);
+    button->SetPressedStyle(style);
+    bool clicked = false;
+    button->SetOnClicked([&]() { clicked = true; });
+    screen->GetRootCanvas()->AddChild(std::move(button));
+    system.AddScreen(screen);
+    system.Update(context); // lays the screen out, as the frame before a click does
+
+    const HUI::UIVec2 inside{1850.0f * 4.0f / 3.0f, 1025.0f * 4.0f / 3.0f};
+    context.QueueMouseMove(inside);
+    context.QueueMousePress(inside, 0);
+    context.QueueMouseRelease(inside, 0);
+    system.Update(context);
+    if (!Check(clicked, "a click in viewport pixels reaches the widget laid out in layout units")) local = false;
+
+    HUI::UIRenderer renderer;
+    system.Render(renderer);
+    const HUI::UIDrawRectCommand* rect = nullptr;
+    const HUI::UIDrawTextCommand* text = nullptr;
+    for (const HUI::UIDrawCommand& command : renderer.GetDrawCommands()) {
+        if (!rect) rect = std::get_if<HUI::UIDrawRectCommand>(&command);
+        if (!text) text = std::get_if<HUI::UIDrawTextCommand>(&command);
+    }
+    if (!Check(rect && Near(rect->rect.x, 2400) && Near(rect->rect.y, 1333.33f) && Near(rect->rect.width, 133.33f) &&
+               Near(rect->rect.height, 66.67f), "rectangles are drawn in viewport pixels")) local = false;
+    if (!Check(text && Near(text->fontSize, 40.0f), "text is drawn at the scaled size")) local = false;
+
+    context.SetUserScale(1.25f);
+    if (!Check(Near(context.GetScale(), 5.0f / 3.0f) && Near(context.GetLayoutSize().y, 864),
+               "the player's UI size multiplies the resolution scale")) local = false;
+    context.SetUserScale(9.0f);
+    if (!Check(Near(context.GetUserScale(), 2.0f), "the player's UI size is kept within range")) local = false;
     return local;
 }
 
@@ -649,6 +708,27 @@ bool TestFontAtlas(const std::string& repoRoot) {
     return local;
 }
 
+bool TestMeasureText(const std::string& repoRoot) {
+    bool local = true;
+    HUI::UIFontKey key;
+    key.family = "Roboto";
+    key.size = 22.0f;
+    key.bold = true;
+    const HUI::UITextMeasure quit = HUI::MeasureHUIText(repoRoot, "QUIT", key);
+    const float short_ = quit.width;
+    const float long_ = HUI::MeasureHUIText(repoRoot, "QUIT TO MENU", key).width;
+    if (!Check(quit.inkLeft >= 0.0f && quit.inkRight > quit.inkLeft && quit.inkRight <= quit.width + 2.0f,
+               "ink bounds sit inside the advance width")) local = false;
+    if (!Check(short_ > 0.0f, "MeasureHUIText measures with a bundled font")) local = false;
+    if (!Check(long_ > short_ * 2.0f, "longer text measures wider")) local = false;
+    // The width is the game's own layout: the same atlas the renderer draws with.
+    HUI::UIFontAtlas atlas;
+    atlas.LoadFromFile(HUI::UIFontAtlas::ResolveFontFile("Roboto", true, false, HUI::HUIFontSearchPaths(repoRoot)), 22.0f);
+    const HUI::UITextLayoutResult layout = atlas.LayoutText("QUIT", 0.0f, false);
+    if (!Check(!layout.lines.empty() && Near(layout.lines[0].width, short_, 0.01f), "measure matches the renderer's layout")) local = false;
+    return local;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -657,6 +737,7 @@ int main(int argc, char* argv[]) {
     TestDrawCommandGeneration();
     TestLayoutAnchors();
     TestHitTesting();
+    TestResolutionScale();
     TestVisibility();
     TestOrdering();
     TestHuiAssetCompatibility(repoRoot);
@@ -664,6 +745,7 @@ int main(int argc, char* argv[]) {
     TestFixtureAnchors(repoRoot);
     TestGeometryConversion(repoRoot);
     TestFontAtlas(repoRoot);
+    TestMeasureText(repoRoot);
 
     if (g_Ok) {
         std::printf("HUIRendererTests: ALL PASSED\n");

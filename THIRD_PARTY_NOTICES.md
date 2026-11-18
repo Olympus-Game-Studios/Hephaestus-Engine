@@ -6,7 +6,7 @@ Hephaestus Engine is licensed under [`LICENSE.md`](LICENSE.md). It includes the 
 
 | Component | Version | Licence | Ships in |
 | --- | --- | --- | --- |
-| Qt (Core, Gui, Widgets, Svg and their plugins) | 6.10.2 | LGPL 3.0 | Editor |
+| Qt (Core, Gui, Widgets, Svg, Network and their plugins) | 6.10.2 | LGPL 3.0 | Editor |
 | Lua | 5.4.8 | MIT | Editor, Game |
 | Vulkan Memory Allocator | 3.3.0 | MIT | Editor, Game |
 | Jolt Physics | 5.4.0 | MIT | Editor, Game |
@@ -15,7 +15,10 @@ Hephaestus Engine is licensed under [`LICENSE.md`](LICENSE.md). It includes the 
 | JSON for Modern C++ (nlohmann/json) | 3.11.2 | MIT | Editor, Game |
 | cpp-httplib | 0.47.0 | MIT | Editor (Game only when built with `HEPHAESTUS_RUNTIME_AUTOMATION`) |
 | ufbx | 0.23.0 | MIT or public domain | Editor, Game |
+| tinyusdz (lightusd) and the libraries it bundles | 1.0.0-rc4 | Apache 2.0 (bundled: see its section) | Editor |
 | stb_image, stb_truetype | 2.30, 1.26 | MIT or public domain | Editor, Game |
+| miniaudio | 0.11.26 | MIT No Attribution (chosen from MIT-0 or public domain) | Editor, Game |
+| Recast & Detour | 1.6.0 | zlib | Editor, Game |
 | Inter | 4.001 | SIL OFL 1.1 | Editor |
 | JetBrains Mono | 2.211 | SIL OFL 1.1 | Editor |
 | Font Awesome Free (solid font) | 6.7.2 | SIL OFL 1.1 | Editor |
@@ -5190,6 +5193,53 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------------
 ```
 
+## miniaudio
+
+miniaudio 0.11.26 (`extern/miniaudio/miniaudio.h`). https://github.com/mackron/miniaudio. Offered as public domain or MIT No Attribution; Hephaestus uses it under MIT No Attribution.
+
+```text
+Copyright 2025 David Reid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Recast & Detour
+
+Recast & Detour 1.6.0 (`extern/recastnavigation/Recast`, `extern/recastnavigation/Detour`). https://github.com/recastnavigation/recastnavigation
+
+```text
+Copyright (c) 2009 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+```
+
 ## Inter
 
 https://rsms.me/inter
@@ -5594,9 +5644,105 @@ Copyright The Khronos Group Inc., Valve Corporation and LunarG, Inc. https://git
 
 macOS builds bundle `libvulkan.dylib` from the Vulkan SDK. Licensed under the Apache License, Version 2.0; see [Apache License 2.0](#apache-license-20) below.
 
+## tinyusdz
+
+Copyright (c) 2020-2023 Syoyo Fujita, (c) 2024-present Light Transport Entertainment Inc. https://github.com/lighttransport/tinyusdz
+
+The editor reads USD files with it. Licensed under the Apache License, Version 2.0; see [Apache License 2.0](#apache-license-20) below. It bundles the following components, under these terms:
+
+```text
+# Third-Party Notices
+
+This file summarizes third-party code and data redistributed in this repository.
+The authoritative license text is the license file or source header referenced
+in each entry.
+
+## Core And Runtime Dependencies
+
+| Component | License | Location |
+| --- | --- | --- |
+| nonstd optional-lite, expected-lite, span-lite, string-view-lite | Boost Software License 1.0 | `src/nonstd/*.hpp` |
+| LZ4 | BSD 2-Clause | `src/lz4/LICENSE` |
+| miniz | MIT | `src/external/LICENSE.miniz` |
+| Zstandard | BSD-style or GPLv2 | `src/external/zstd.h`, `src/external/zstd.c` |
+| yyjson | MIT | `src/external/yyjson.LICENSE` |
+| pugixml | MIT | `src/external/pugixml.LICENSE` |
+| nlohmann/json | MIT | `src/external/jsonhpp/LICENSE.MIT` |
+| fast_float | Apache 2.0, Boost Software License 1.0, or MIT | `src/external/fast_float/` |
+| Dragonbox | Boost Software License 1.0 or Apache 2.0 with LLVM exception | `src/external/dragonbox/` |
+| Mapbox earcut.hpp | ISC | `src/external/mapbox/earcut/LICENSE` |
+| Mapbox eternal | ISC | `src/external/mapbox/eternal/LICENSE.md` |
+| simple_match | Boost Software License 1.0 | `src/external/simple_match/LICENSE_1_0.txt` |
+| string_id | zlib | `src/external/string_id/LICENSE` |
+| ghc/filesystem | MIT | `src/external/filesystem/LICENSE` |
+| p-ranav/glob | MIT | `src/external/glob/LICENSE` |
+| nanoflann | BSD 2-Clause | `src/external/nanoflann.COPYING` |
+| linalg.h | Unlicense | `src/external/linalg.UNLICENSE` |
+| jeaiii_to_text | MIT | `src/external/jeaiii_to_text.LICENSE` |
+| xxHash | BSD 2-Clause | `src/external/xxhash.LICENSE` |
+| tinycolorio | MIT | `src/external/tinycolorio.LICENSE` |
+| stb_image, stb_image_resize, stb_image_write, stb_truetype | Public domain or MIT | `src/external/stb_*.h` |
+| TinyEXR and included OpenEXR code | BSD-style | `src/external/tinyexr.h` |
+| TinyDNG | MIT | `src/external/tiny_dng_loader.h`, `src/external/tiny_dng_writer.h` |
+| tinyobjloader | MIT | `src/external/tiny_obj_loader.h` |
+| tinygltf | MIT | `src/external/tiny_gltf.h` |
+| pystring | BSD 3-Clause | `src/external/pystring.LICENSE` |
+| fpng | Unlicense | `src/external/fpng.h`, `src/external/fpng.cpp` |
+| Wuffs unsupported snapshot | Apache 2.0 | `src/external/wuffs-unsupported-snapshot.c` |
+| MikkTSpace | zlib | `src/external/mikktspace/LICENSE` |
+| sRGB transform by Project Nayuki | MIT | `src/image-util.cc` |
+| OpenSubdiv | Modified Apache 2.0 | `src/osd/LICENSE.txt` |
+| MaterialX data | Apache 2.0 | `data/materialx/LICENSE` |
+
+## Optional Feature Dependencies
+
+| Component | License | Location |
+| --- | --- | --- |
+| meshoptimizer | MIT | `src/external/meshoptimizer/LICENSE.md` |
+| OpenFBX | MIT | `src/external/OpenFBX/LICENSE` |
+| ALAC | Apache 2.0 | `src/external/alac/LICENSE` |
+| dr_wav, dr_mp3 | Public domain or MIT-0 | `src/external/dr_wav.h`, `src/external/dr_mp3.h` |
+| ogt_vox | MIT | `src/external/LICENSE.ogt_vox.md` |
+| WebAssembly Micro Runtime (WAMR) | Apache 2.0 | `src/external/wamr/LICENSE` |
+| QuickJS-ng | MIT | `src/external/quickjs-ng/LICENSE` |
+| civetweb | MIT | `src/external/civetweb/LICENSE.md` |
+| Remotery | Apache 2.0 | `src/external/Remotery/Remotery.LICENSE` |
+| libsais | Apache 2.0 | `src/external/libsais/libsais.LICENSE` |
+| nanozlib | Apache 2.0 | `src/external/nanozlib.h` |
+| nanobind | BSD 3-Clause | `src/external/nanobind/LICENSE` |
+| pybind11 | BSD 3-Clause | `src/external/pybind11/LICENSE` |
+| tir image resizer (tinyexr tools) | BSD 3-Clause | `src/external/textools/resize/LICENSE` |
+| texcomp texture compressor (tinyexr tools) | Apache 2.0 | `src/external/textools/texcomp/LICENSE`, `NOTICE.md` |
+| texpipe texture pipeline (tinyexr tools) | Apache 2.0 | `src/external/textools/texpipe/LICENSE` |
+| envmap IBL library (tinyexr tools) | Apache 2.0 | `src/external/textools/envmap/LICENSE` |
+
+## Examples, Tools, And Development Assets
+
+| Component | License | Location |
+| --- | --- | --- |
+| SDL2-related viewer dependencies | zlib/MIT-style, see bundled notices | `examples/sdlviewer/README.md` |
+| GLFW | zlib/libpng | `examples/common/glfw-3.3.6/LICENSE.md` |
+| Dear ImGui | MIT | `examples/common/imgui/LICENSE.txt` |
+| imnodes | MIT | `examples/common/imnodes/LICENSE.md` |
+| nativefiledialog-extended | zlib | `examples/common/nativefiledialog-extended/LICENSE` |
+| virtualGizmo3D | BSD 2-Clause | `examples/common/virtualGizmo3D/license.txt` |
+| miniaudio | Public domain or MIT-0 | `examples/common/miniaudio.LICENSE` |
+| cuew | Apache 2.0 | `examples/common/cuew/LICENSE` |
+| volk | MIT | `examples/common/volk/LICENSE.md` |
+| Vulkan-Headers | Apache 2.0 | `examples/common/vulkan-headers/include/vulkan/vulkan_core.h` |
+| bvh | MIT | `examples/common/bvh/LICENSE.txt` |
+| Metal-cpp | Apache 2.0 | `examples/common/metalcpp/LICENSE.txt` |
+| Roboto Mono embedded assets | Apache 2.0 | `examples/common/LICENSE.roboto_mono_embed.md` |
+| Vulkan sample camera code by Sascha Willems | MIT | `examples/common/viewport_camera.hh` |
+| Silicon Graphics trackball code | SGI permissive notice | `examples/common/trackball.h`, `examples/common/trackball.cc` |
+| par_shapes | MIT | `examples/common/par_shapes.h` |
+| criterion benchmark helper | MIT | `benchmarks/criterion.LICENSE` |
+| acutest | MIT | `tests/unit/LICENSE.acutest` |
+```
+
 ## Apache License 2.0
 
-Applies to Roboto, MoltenVK and the Vulkan Loader.
+Applies to Roboto, MoltenVK, the Vulkan Loader and tinyusdz.
 
 ```text
                                  Apache License

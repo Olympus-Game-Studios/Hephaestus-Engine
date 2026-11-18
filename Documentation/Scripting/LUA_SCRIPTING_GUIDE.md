@@ -362,6 +362,11 @@ Camera.setRotation(math.rad(0.0), math.rad(180.0), 0.0)
 - `Camera.translate(dx, dy, dz)` → offsets camera in world space
 - `Camera.setRotation(rx, ry, rz)` / `Camera.getRotation()` (radians, pitch/yaw/roll)
 
+### Graphics
+
+- `Graphics.setMaxTextureSize(pixels)` / `Graphics.getMaxTextureSize()` → largest material texture side in pixels (0 = full size); loaded textures reload at the new size
+- `Graphics.setScopeLens({ radius, distortion, aberration, edgeDarkening, ringWidth, opacity, reticle })` → full-screen scope lens drawn over the view; `Graphics.setScopeLens(nil)` removes it
+
 ### Audio
 
 ```lua
@@ -408,6 +413,10 @@ local enemy = Scene.instantiate("assets/prefabs/Enemy.hpprefab", {
   rotation = { x = 0, y = 45, z = 0 }, -- degrees
   vars = { health = 40, moveSpeed = 3.5 }
 })
+
+-- Attach the spawned prefab to an entity: position/rotation are then local to it, and it moves with it
+-- (including the smoothed, physics-interpolated position a moving character is drawn at)
+local legs = Scene.instantiate("assets/prefabs/PlayerLegs.hpprefab", { parent = this, position = { x = 0, y = 0, z = 0 } })
 
 -- Destroy a prefab instance or entity (queued until end of script Update)
 Scene.destroy(enemy)

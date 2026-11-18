@@ -3,6 +3,8 @@
 #include "Physics/JoltPhysicsSystem.h"
 #include "Physics/PhysicsContactEvents.h"
 #include "Physics/PhysicsLayerConfig.h"
+#include "Physics/RagdollSystem.h"
+#include "Scene/CharacterComponent.h"
 #include "Scene/CharacterControllerComponent.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
@@ -98,6 +100,42 @@ bool ProxyActive(Session& session, entt::entity entity)
         return false;
     }
     return session.engine.GetBodyInterface().IsActive(JPH::BodyID(key));
+}
+
+// A standing humanoid (Mixamo bone names, metres) with an evaluated pose, as a bound Character has.
+void AddHumanoid(Entity entity, bool humanoid = true)
+{
+    struct BoneSpec { const char* name; int parent; Vec3 offset; };
+    const BoneSpec specs[] = {
+        {"Hips", -1, Vec3(0.0f, 1.0f, 0.0f)},        {"Spine", 0, Vec3(0.0f, 0.1f, 0.0f)},
+        {"Spine1", 1, Vec3(0.0f, 0.1f, 0.0f)},       {"Neck", 2, Vec3(0.0f, 0.3f, 0.0f)},
+        {"Head", 3, Vec3(0.0f, 0.1f, 0.0f)},         {"HeadTop_End", 4, Vec3(0.0f, 0.2f, 0.0f)},
+        {"LeftArm", 3, Vec3(0.2f, -0.05f, 0.0f)},    {"LeftForeArm", 6, Vec3(0.3f, 0.0f, 0.0f)},
+        {"LeftHand", 7, Vec3(0.25f, 0.0f, 0.0f)},    {"RightArm", 3, Vec3(-0.2f, -0.05f, 0.0f)},
+        {"RightForeArm", 9, Vec3(-0.3f, 0.0f, 0.0f)}, {"RightHand", 10, Vec3(-0.25f, 0.0f, 0.0f)},
+        {"LeftUpLeg", 0, Vec3(0.1f, -0.05f, 0.0f)},  {"LeftLeg", 12, Vec3(0.0f, -0.45f, 0.0f)},
+        {"LeftFoot", 13, Vec3(0.0f, -0.45f, 0.0f)},  {"RightUpLeg", 0, Vec3(-0.1f, -0.05f, 0.0f)},
+        {"RightLeg", 15, Vec3(0.0f, -0.45f, 0.0f)},  {"RightFoot", 16, Vec3(0.0f, -0.45f, 0.0f)},
+    };
+    auto& character = entity.AddComponent<CharacterComponent>();
+    for (int i = 0; i < static_cast<int>(sizeof(specs) / sizeof(specs[0])); ++i) {
+        Hephaestus::SkeletonBone bone;
+        bone.name = std::string(humanoid ? "mixamorig:" : "bone") + (humanoid ? specs[i].name : std::to_string(i));
+        bone.parentEval = specs[i].parent;
+        bone.evalIndex = i;
+        bone.localRest = Mat4::Translation(specs[i].offset);
+        character.skeleton.bones.push_back(bone);
+        character.localMatrices.push_back(bone.localRest);
+    }
+    Hephaestus::SkeletonBuilder::EvaluateWorld(character.skeleton, character.localMatrices, character.worldPose);
+    character.runtimeReady = true;
+}
+
+Vec3 BoneWorld(Session& session, Entity entity, int bone)
+{
+    const Mat4 world = Mat4::Multiply(session.scene.GetWorldTransform(entity),
+                                      entity.GetComponent<CharacterComponent>().worldPose[static_cast<size_t>(bone)]);
+    return Vec3(world.m[12], world.m[13], world.m[14]);
 }
 
 struct CrateMeasure {
@@ -808,6 +846,197 @@ int main()
         Check(session.system.Raycast(entt::null, origin, direction, 20.0f, skipped, &characterLayer, true)
                   && skipped.hit && skipped.entity == static_cast<entt::entity>(target),
               "ignoreSensors true skips the trigger");
+    }
+
+    {
+        Session session("OwnHitBoxes");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        // A kinematic hit box parented inside the character's own capsule, as an enemy's hit zones are.
+        Entity chest = session.scene.CreateEntity("Chest");
+        auto& body = chest.AddComponent<RigidBodyComponent>();
+        body.SetMotion(RigidBodyMotion::Kinematic);
+        body.mass = 1.0f;
+        body.useGravity = false;
+        chest.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.2f, 0.3f, 0.2f)));
+        session.scene.SetParent(chest, character);
+        chest.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.2f, 0.0f);
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(20);
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        session.Step(60);
+        const float x = character.GetComponent<TransformComponent>().position.x;
+        Check(x > 3.0f && std::fabs(character.GetComponent<TransformComponent>().position.y) < 0.2f,
+              "A character is not pushed or blocked by bodies parented under it (x=" + std::to_string(x) + ")");
+    }
+
+    {
+        Session session("Ragdoll");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        AddHumanoid(character);
+        Entity zone = session.scene.CreateEntity("Zone");
+        auto& zoneBody = zone.AddComponent<RigidBodyComponent>();
+        zoneBody.SetMotion(RigidBodyMotion::Kinematic);
+        zoneBody.mass = 1.0f;
+        zoneBody.useGravity = false;
+        zone.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.2f, 0.3f, 0.2f)));
+        session.scene.SetParent(zone, character);
+        zone.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.2f, 0.0f);
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(20);
+        Physics::RagdollSystem& ragdolls = session.system.Ragdolls();
+        std::string error;
+        Physics::RagdollStart start;
+        start.impulse = Vec3(60.0f, 0.0f, 0.0f);
+        start.impulsePoint = BoneWorld(session, character, 4);
+        start.hasImpulsePoint = true;
+        const bool started = ragdolls.Start(session.scene, id, start, error);
+        Check(started && ragdolls.PartBodies(id).size() == 11, "A humanoid Character becomes an 11-part ragdoll (" + error + ")");
+        Check(!session.controllers.HasRuntime(id) && !zone.HasComponent<RigidBodyComponent>()
+                  && character.GetComponent<CharacterComponent>().externalPose,
+              "The ragdoll replaces the character controller and its children's colliders and stops the animation");
+        const float headStartX = BoneWorld(session, character, 4).x;
+        session.Step(240);
+        const Vec3 hips = BoneWorld(session, character, 0);
+        const Vec3 head = BoneWorld(session, character, 4);
+        float lowest = 1e9f;
+        bool finite = true;
+        bool settled = true;
+        JPH::BodyInterface& bodies = session.engine.GetBodyInterface();
+        for (JPH::BodyID part : ragdolls.PartBodies(id)) {
+            const JPH::RVec3 position = bodies.GetCenterOfMassPosition(part);
+            lowest = std::min(lowest, static_cast<float>(position.GetY()));
+            finite = finite && std::isfinite(static_cast<float>(position.GetY()));
+            settled = settled && !bodies.IsActive(part);
+        }
+        Check(finite && settled && hips.y < 0.4f && head.y < 1.0f && lowest > -0.02f,
+              "The ragdoll collapses onto the floor and comes to rest without falling through it (hips y=" +
+                  std::to_string(hips.y) + ", head y=" + std::to_string(head.y) + ", lowest part=" +
+                  std::to_string(lowest) + ")");
+        Check(head.x > headStartX + 0.3f, "An impulse at the head pushes the body that way (head x=" + std::to_string(head.x) + ")");
+        Physics::RaycastHit hit;
+        session.system.Raycast(entt::null, Vec3(hips.x, 3.0f, hips.z), Vec3(0.0f, -1.0f, 0.0f), 5.0f, hit);
+        Check(hit.hit && hit.entity == id, "A ray that hits a ragdoll part reports the character");
+
+        // Another character walks straight across the body.
+        std::vector<JPH::RVec3> before;
+        for (JPH::BodyID part : ragdolls.PartBodies(id)) {
+            before.push_back(bodies.GetCenterOfMassPosition(part));
+        }
+        Entity walker = AddCharacter(session, Vec3(hips.x - 2.5f, 0.05f, hips.z), "Walker");
+        const entt::entity walkerId = static_cast<entt::entity>(walker);
+        session.Step(10);
+        session.controllers.SetMoveInput(walkerId, 1.0f, 0.0f);
+        float highest = 0.0f;
+        for (int i = 0; i < 90; ++i) {
+            session.Step(1);
+            highest = std::max(highest, walker.GetComponent<TransformComponent>().position.y);
+        }
+        const float walkedTo = walker.GetComponent<TransformComponent>().position.x;
+        float moved = 0.0f;
+        const auto parts = ragdolls.PartBodies(id);
+        for (size_t i = 0; i < parts.size(); ++i) {
+            moved = std::max(moved, static_cast<float>((bodies.GetCenterOfMassPosition(parts[i]) - before[i]).Length()));
+        }
+        Check(highest < 0.1f && walkedTo > hips.x + 2.0f && moved < 0.05f,
+              "A character walks through a ragdoll without being lifted or pushing it (highest y=" +
+                  std::to_string(highest) + ", reached x=" + std::to_string(walkedTo) + ", part moved " +
+                  std::to_string(moved) + " m)");
+        session.system.Raycast(entt::null, Vec3(hips.x, 3.0f, hips.z), Vec3(0.0f, -1.0f, 0.0f), 5.0f, hit);
+        Check(hit.hit && hit.entity == id, "Rays still hit the ragdoll after a character walks through it");
+        session.scene.DestroyEntity(character);
+        session.Step(1);
+        Check(ragdolls.ActiveCount() == 0, "Destroying the character removes its ragdoll");
+
+        Entity robot = AddCharacter(session, Vec3(5.0f, 0.05f, 0.0f), "Robot");
+        AddHumanoid(robot, false);
+        session.Step(2);
+        Check(!ragdolls.Start(session.scene, static_cast<entt::entity>(robot), Physics::RagdollStart{}, error)
+                  && session.controllers.HasRuntime(static_cast<entt::entity>(robot)),
+              "A skeleton without humanoid bones is refused and keeps its controller (" + error + ")");
+    }
+
+    {
+        Session session("Prone");
+        AddFloor(session);
+        // An overhang 1.0 m up: room to lie under, not to crouch or stand.
+        AddStatic(session, "Overhang", Vec3(3.0f, 1.25f, 0.0f), Vec3(1.5f, 0.25f, 2.0f));
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(20);
+        session.controllers.SetProne(id, true);
+        session.Step(2);
+        Check(StateOf(session, id).prone && !StateOf(session, id).crouched, "SetProne lies the character down");
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        session.Step(42);
+        session.controllers.SetMoveInput(id, 0.0f, 0.0f);
+        session.Step(10);
+        const float x = character.GetComponent<TransformComponent>().position.x;
+        Check(x > 2.0f && x < 4.0f, "A prone character fits under a 1 m overhang (x=" + std::to_string(x) + ")");
+        session.controllers.SetProne(id, false);
+        session.Step(2);
+        const auto underneath = StateOf(session, id);
+        Check(underneath.prone && underneath.standBlocked, "Getting up under the overhang is blocked");
+        session.controllers.SetMoveInput(id, -1.0f, 0.0f);
+        session.Step(120);
+        const auto clear = StateOf(session, id);
+        Check(!clear.prone && !clear.crouched && !clear.standBlocked, "Out from under it, the character stands up");
+    }
+
+    for (const float coyote : {0.0f, 0.12f}) {
+        Session session("CoyoteTime");
+        AddFloor(session);
+        AddStatic(session, "Ledge", Vec3(-1.0f, 0.5f, 0.0f), Vec3(1.0f, 0.5f, 2.0f));
+        Entity character = AddCharacter(session, Vec3(-1.5f, 1.05f, 0.0f));
+        character.GetComponent<CharacterControllerComponent>().coyoteTime = coyote;
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(30);
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        int steps = 0;
+        while (StateOf(session, id).grounded && steps < 120) {
+            session.Step(1);
+            ++steps;
+        }
+        session.Step(3);
+        session.controllers.Jump(id);
+        session.Step(1);
+        const float vy = StateOf(session, id).verticalSpeed;
+        if (coyote > 0.0f) {
+            Check(vy > 4.5f, "A jump just after walking off a ledge works with coyote time (vy=" + std::to_string(vy) + ")");
+        } else {
+            Check(vy < 0.0f, "Without coyote time a jump after walking off a ledge is ignored (vy=" +
+                                 std::to_string(vy) + ")");
+        }
+    }
+
+    for (const float buffer : {0.0f, 0.12f}) {
+        Session session("JumpBuffer");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        character.GetComponent<CharacterControllerComponent>().jumpBufferTime = buffer;
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(30);
+        session.controllers.Jump(id);
+        session.Step(1);
+        int steps = 0;
+        while (!(StateOf(session, id).verticalSpeed < 0.0f &&
+                 character.GetComponent<TransformComponent>().position.y < 0.15f) && steps < 120) {
+            session.Step(1);
+            ++steps;
+        }
+        session.controllers.Jump(id);
+        float highest = 0.0f;
+        for (int i = 0; i < 20; ++i) {
+            session.Step(1);
+            highest = std::max(highest, StateOf(session, id).verticalSpeed);
+        }
+        if (buffer > 0.0f) {
+            Check(highest > 4.5f, "A jump pressed just before landing happens on landing (vy=" + std::to_string(highest) + ")");
+        } else {
+            Check(highest < 1.0f, "Without a jump buffer a jump pressed in the air is dropped (vy=" +
+                                      std::to_string(highest) + ")");
+        }
     }
 
     if (!g_Pass) {

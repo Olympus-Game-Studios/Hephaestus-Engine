@@ -40,6 +40,7 @@ ControllerAuthoredValues AuthoredFrom(const CharacterControllerComponent& compon
     values.height = component.height;
     values.radius = component.radius;
     values.crouchedHeight = component.crouchedHeight;
+    values.proneHeight = component.proneHeight;
     values.maxSlopeAngleDegrees = component.maxSlopeAngleDegrees;
     values.stepHeight = component.stepHeight;
     values.groundSnapDistance = component.groundSnapDistance;
@@ -49,6 +50,8 @@ ControllerAuthoredValues AuthoredFrom(const CharacterControllerComponent& compon
     values.airAcceleration = component.airAcceleration;
     values.airControl = component.airControl;
     values.jumpSpeed = component.jumpSpeed;
+    values.coyoteTime = component.coyoteTime;
+    values.jumpBufferTime = component.jumpBufferTime;
     values.gravityScale = component.gravityScale;
     values.maxFallSpeed = component.maxFallSpeed;
     values.mass = component.mass;
@@ -60,11 +63,13 @@ bool SameAuthored(const ControllerAuthoredValues& a, const ControllerAuthoredVal
 {
     auto near = [](float lhs, float rhs) { return std::abs(lhs - rhs) <= 1.0e-4f; };
     return near(a.height, b.height) && near(a.radius, b.radius) && near(a.crouchedHeight, b.crouchedHeight)
+        && near(a.proneHeight, b.proneHeight)
         && near(a.maxSlopeAngleDegrees, b.maxSlopeAngleDegrees) && near(a.stepHeight, b.stepHeight)
         && near(a.groundSnapDistance, b.groundSnapDistance) && near(a.walkSpeed, b.walkSpeed)
         && near(a.acceleration, b.acceleration) && near(a.deceleration, b.deceleration)
         && near(a.airAcceleration, b.airAcceleration) && near(a.airControl, b.airControl)
-        && near(a.jumpSpeed, b.jumpSpeed) && near(a.gravityScale, b.gravityScale)
+        && near(a.jumpSpeed, b.jumpSpeed) && near(a.coyoteTime, b.coyoteTime)
+        && near(a.jumpBufferTime, b.jumpBufferTime) && near(a.gravityScale, b.gravityScale)
         && near(a.maxFallSpeed, b.maxFallSpeed) && near(a.mass, b.mass)
         && near(a.pushStrength, b.pushStrength);
 }
@@ -80,6 +85,46 @@ JPH::RefConst<JPH::Shape> MakeCapsule(float totalHeight, float radius, float fra
         capsule);
     return settings.Create().Get();
 }
+
+// Skips bodies on the character itself or parented under it (hit boxes, carried props), so they never block it.
+class OwnBodiesFilter final : public JPH::BodyFilter {
+public:
+    OwnBodiesFilter(const JoltPhysicsSystem& physics, const Scene* scene, entt::entity owner)
+        : m_physics(physics), m_scene(scene), m_owner(owner) {}
+
+    bool ShouldCollide(const JPH::BodyID& bodyId) const override
+    {
+        if (m_physics.Ragdolls().IsPart(bodyId)) {
+            return false;
+        }
+        if (!m_scene) {
+            return true;
+        }
+        const auto& registry = m_scene->GetRegistry();
+        entt::entity entity = m_physics.GetEntityForBody(bodyId);
+        for (int depth = 0; entity != entt::null && depth < 64; ++depth) {
+            if (entity == m_owner) {
+                return false;
+            }
+            if (!registry.valid(entity)) {
+                break;
+            }
+            const auto* transform = registry.try_get<TransformComponent>(entity);
+            entity = transform ? transform->parent : entt::null;
+        }
+        return true;
+    }
+
+    bool ShouldCollideLocked(const JPH::Body& body) const override
+    {
+        return ShouldCollide(body.GetID());
+    }
+
+private:
+    const JoltPhysicsSystem& m_physics;
+    const Scene* m_scene;
+    entt::entity m_owner;
+};
 
 CharacterGroundState MapGround(JPH::CharacterBase::EGroundState state)
 {
@@ -121,18 +166,23 @@ public:
 struct CharacterControllerSystem::Runtime {
     JPH::RefConst<JPH::Shape> standShape;
     JPH::RefConst<JPH::Shape> crouchShape;
+    JPH::RefConst<JPH::Shape> proneShape;
     JPH::RefConst<JPH::Shape> innerStand;
     JPH::RefConst<JPH::Shape> innerCrouch;
+    JPH::RefConst<JPH::Shape> innerProne;
     std::unique_ptr<CharacterVirtualAccess> character;
     ControllerAuthoredValues applied;
     std::uint16_t layer = kLayerCharacter;
     PlanarWish wish{};
     bool jumpRequested = false;
     std::optional<float> jumpSpeedOverride;
+    JumpGate jumpGate{};
     std::optional<float> legacySpeed;
     float speedMultiplier = 1.0f;
     bool crouchRequested = false;
     bool crouched = false;
+    bool proneRequested = false;
+    bool prone = false;
     bool standBlocked = false;
     bool loggedClamp = false;
     bool loggedMaxHits = false;
@@ -298,6 +348,18 @@ void CharacterControllerSystem::SetCrouched(entt::entity entity, bool crouched)
     }
 }
 
+void CharacterControllerSystem::SetProne(entt::entity entity, bool prone)
+{
+    Runtime* runtime = Find(entity);
+    if (!runtime) {
+        return;
+    }
+    runtime->proneRequested = prone;
+    if (prone) {
+        runtime->standBlocked = false;
+    }
+}
+
 void CharacterControllerSystem::SetFacingYaw(entt::entity entity, float radians)
 {
     if (!m_Scene || !std::isfinite(radians) || !HasRuntime(entity)) {
@@ -325,7 +387,7 @@ void CharacterControllerSystem::Teleport(entt::entity entity, const Vec3& worldF
         const JPH::ObjectLayer layer = m_Engine.ObjectLayerFor(runtime->layer, false);
         const auto broad = physics->GetDefaultBroadPhaseLayerFilter(layer);
         const auto objects = physics->GetDefaultLayerFilter(layer);
-        JPH::BodyFilter bodies;
+        const OwnBodiesFilter bodies(m_Physics, m_Scene, entity);
         JPH::ShapeFilter shapes;
         runtime->character->RefreshContacts(broad, objects, bodies, shapes, *allocator);
     }
@@ -353,6 +415,7 @@ bool CharacterControllerSystem::GetState(entt::entity entity, CharacterControlle
     out.groundVelocity = FromJolt(character.GetGroundVelocity());
     out.supportingEntity = m_Physics.GetEntityForBody(character.GetGroundBodyID());
     out.crouched = runtime->crouched;
+    out.prone = runtime->prone;
     out.standBlocked = runtime->standBlocked;
     out.onSteepSlope = out.groundState == CharacterGroundState::OnSteepGround;
     return true;
@@ -426,6 +489,8 @@ void CharacterControllerSystem::SyncLifecycle(Scene& scene)
             runtime.crouchShape = MakeCapsule(applied.crouchedHeight, applied.radius, 1.0f);
             runtime.innerStand = MakeCapsule(applied.height, applied.radius, kInnerShapeFraction);
             runtime.innerCrouch = MakeCapsule(applied.crouchedHeight, applied.radius, kInnerShapeFraction);
+            runtime.proneShape = MakeCapsule(applied.proneHeight, applied.radius, 1.0f);
+            runtime.innerProne = MakeCapsule(applied.proneHeight, applied.radius, kInnerShapeFraction);
 
             JPH::CharacterVirtualSettings settings;
             settings.mMass = applied.mass;
@@ -456,7 +521,7 @@ void CharacterControllerSystem::SyncLifecycle(Scene& scene)
                 const JPH::ObjectLayer objectLayer = m_Engine.ObjectLayerFor(layer, false);
                 const auto broad = physics->GetDefaultBroadPhaseLayerFilter(objectLayer);
                 const auto objects = physics->GetDefaultLayerFilter(objectLayer);
-                JPH::BodyFilter bodies;
+                const OwnBodiesFilter bodies(m_Physics, &scene, entity);
                 JPH::ShapeFilter shapes;
                 runtime.character->RefreshContacts(broad, objects, bodies, shapes, *allocator);
             }
@@ -530,7 +595,7 @@ void CharacterControllerSystem::FixedStep(Scene& scene, float fixedDt)
         const JPH::ObjectLayer objectLayer = m_Engine.ObjectLayerFor(runtime->layer, false);
         const auto broad = physics->GetDefaultBroadPhaseLayerFilter(objectLayer);
         const auto objects = physics->GetDefaultLayerFilter(objectLayer);
-        JPH::BodyFilter bodies;
+        const OwnBodiesFilter bodies(m_Physics, &scene, entity);
         JPH::ShapeFilter shapes;
 
         if (shapeChanged) {
@@ -538,27 +603,36 @@ void CharacterControllerSystem::FixedStep(Scene& scene, float fixedDt)
             runtime->crouchShape = MakeCapsule(applied.crouchedHeight, applied.radius, 1.0f);
             runtime->innerStand = MakeCapsule(applied.height, applied.radius, kInnerShapeFraction);
             runtime->innerCrouch = MakeCapsule(applied.crouchedHeight, applied.radius, kInnerShapeFraction);
+            runtime->proneShape = MakeCapsule(applied.proneHeight, applied.radius, 1.0f);
+            runtime->innerProne = MakeCapsule(applied.proneHeight, applied.radius, kInnerShapeFraction);
             runtime->applied = applied;
             character.SetMass(applied.mass);
             character.SetMaxStrength(applied.pushStrength);
             character.SetMaxSlopeAngle(JPH::DegreesToRadians(applied.maxSlopeAngleDegrees));
             runtime->character->SetSupportingPlane(JPH::Plane(JPH::Vec3::sAxisY(), -applied.radius));
-            const JPH::Shape* next = runtime->crouched ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
-            const JPH::Shape* inner = runtime->crouched ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
+            const JPH::Shape* next = runtime->prone ? runtime->proneShape.GetPtr()
+                : runtime->crouched ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
+            const JPH::Shape* inner = runtime->prone ? runtime->innerProne.GetPtr()
+                : runtime->crouched ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
             if (character.SetShape(next, penetration, broad, objects, bodies, shapes, allocator)) {
                 character.SetInnerBodyShape(inner);
             }
         }
 
-        const bool wantCrouch = runtime->crouchRequested;
-        if (wantCrouch != runtime->crouched) {
-            const JPH::Shape* next = wantCrouch ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
-            const JPH::Shape* inner = wantCrouch ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
+        // Stances from tallest to shortest: 0 standing, 1 crouched, 2 prone.
+        const int current = runtime->prone ? 2 : (runtime->crouched ? 1 : 0);
+        const int wanted = runtime->proneRequested ? 2 : (runtime->crouchRequested ? 1 : 0);
+        if (wanted != current) {
+            const JPH::Shape* next = wanted == 2 ? runtime->proneShape.GetPtr()
+                : wanted == 1 ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
+            const JPH::Shape* inner = wanted == 2 ? runtime->innerProne.GetPtr()
+                : wanted == 1 ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
             if (character.SetShape(next, penetration, broad, objects, bodies, shapes, allocator)) {
                 character.SetInnerBodyShape(inner);
-                runtime->crouched = wantCrouch;
+                runtime->crouched = wanted == 1;
+                runtime->prone = wanted == 2;
                 runtime->standBlocked = false;
-            } else if (!wantCrouch) {
+            } else if (wanted < current) {
                 runtime->standBlocked = true;
             }
         }
@@ -587,7 +661,10 @@ void CharacterControllerSystem::FixedStep(Scene& scene, float fixedDt)
         step.gravityScale = runtime->applied.gravityScale;
         step.fixedDt = fixedDt;
         step.maxFallSpeed = runtime->applied.maxFallSpeed;
-        step.jump = jumpRequested;
+        const JumpDecision jump = StepJumpGate(runtime->jumpGate, jumpRequested, ground, runtime->applied.coyoteTime,
+                                               runtime->applied.jumpBufferTime, fixedDt);
+        step.jump = jump.jump;
+        step.coyoteJump = jump.coyote;
         step.jumpSpeed = jumpSpeed;
         step.instantPlanarSpeed = runtime->legacySpeed.has_value();
         const VelocityStepResult integrated = IntegrateCharacterVelocity(step);

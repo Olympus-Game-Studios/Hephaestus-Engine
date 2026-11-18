@@ -125,6 +125,21 @@ _G.stepLog = {}
         pass &= Check(scene.GetWorldTransform(box).m[13] == yAfterFirstFrame,
                       "physics does not step after an early reload");
 
+        // Time.setScale(0) freezes gameplay: physics does not move while scripts still run with dt 0.
+        reloadAtFirstSafePoint = false;
+        lua.ExecuteString("Time.setScale(0); function _G.recordDt(dt) _G.lastDt = dt end");
+        const float yBeforePause = scene.GetWorldTransform(box).m[13];
+        for (int i = 0; i < 5; ++i) {
+            Hephaestus::RunSimulationStep(step, Physics::kPhysicsFixedDt);
+        }
+        pass &= Check(scene.GetWorldTransform(box).m[13] == yBeforePause, "a time scale of 0 freezes physics");
+        pass &= Check(lua.ExecuteString("assert(Time.deltaTime() == 0 and math.abs(Time.unscaledDeltaTime() - "
+                                        + std::to_string(Physics::kPhysicsFixedDt) + ") < 1e-6)"),
+                      "paused scripts see dt 0 and the real frame time through Time.unscaledDeltaTime");
+        lua.ExecuteString("Time.setScale(1)");
+        Hephaestus::RunSimulationStep(step, Physics::kPhysicsFixedDt);
+        pass &= Check(scene.GetWorldTransform(box).m[13] < yBeforePause, "physics resumes at a time scale of 1");
+
         cppScripts.Shutdown();
         lua.OnSimulationStopped();
         lua.Shutdown();

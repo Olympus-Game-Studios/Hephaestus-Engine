@@ -69,6 +69,8 @@ public:
 
     /** Rescan a single document (absolute or project-relative). */
     void ScanDocument(const std::filesystem::path& absoluteOrRelativeDocumentPath);
+    /** Drop a document that was moved or deleted outside a rewrite (its references go with it). */
+    void ForgetDocument(const std::filesystem::path& absoluteOrRelativeDocumentPath);
 
     /** Forward dependencies: references originating from this document. */
     std::vector<AssetReference> GetDependencies(const std::string& assetPath) const;

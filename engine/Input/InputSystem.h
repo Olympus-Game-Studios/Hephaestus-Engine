@@ -60,6 +60,14 @@ public:
     bool HasAction(const std::string& name) const;
     bool HasAxis(const std::string& name) const;
 
+    // Runtime rebinding, for a controls menu: an action's or axis's bindings, the ones the loaded map gave it,
+    // and a replacement list resolved like a loaded map (false with outError for an unknown name or control).
+    const std::vector<InputBinding>* GetBindings(const std::string& name) const;
+    const std::vector<InputBinding>* GetDefaultBindings(const std::string& name) const;
+    bool SetBindings(const std::string& name, std::vector<InputBinding> bindings, std::string& outError);
+    // The first key, mouse button or gamepad button that went down this frame.
+    bool GetPressedControl(InputBindingType& outType, int& outCode) const;
+
     void SetMap(InputMap map);
     const InputMap& GetMap() const { return m_Map; }
     bool LoadMap(const std::filesystem::path& path, std::string& outError);
@@ -89,6 +97,7 @@ private:
     void RebuildLookup();
 
     InputMap m_Map;
+    InputMap m_DefaultMap;
     std::filesystem::path m_MapPath;
     DeviceState m_Current;
     DeviceState m_Previous;

@@ -4,7 +4,10 @@
 #include "ScriptLanguageRegistry.h"
 #include "LuaDebugger.h"
 #include "../Audio/AudioEngine.h"
+#include "../Scene/ParticleSimulation.h"
+#include "../Navigation/NavMesh.h"
 #include "../UI/HephaestusUI/UIContext.h"
+#include "../UI/HephaestusUI/Rendering/HUIGeometryBuilder.h"
 #include "../UI/HephaestusUI/UICanvas.h"
 #include "../UI/HephaestusUI/UIElement.h"
 #include "../UI/HephaestusUI/UIGridLayout.h"
@@ -23,6 +26,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
+#include "../Scene/ActiveCameraSync.h"
 #include "../Scene/PrefabAsset.h"
 #include "../Scene/PrefabInstantiator.h"
 #include "../Scene/PrefabOverrideSystem.h"
@@ -30,13 +34,17 @@
 #include "../Assets/AssetMountRegistry.h"
 #include "../Assets/AssetPathPolicy.h"
 #include "../Assets/CharacterRuntime.h"
+#include "../Gfx/EngineFrameRenderer.h"
 #include "../Animation/CharacterPlayback.h"
 #include "../Scene/CharacterComponent.h"
 #include "../Core/EngineLog.h"
+#include "../Core/IniFile.h"
 #include "../Core/Math.h"
 #include "../Input/InputSystem.h"
 #include <iostream>
 #include <fstream>
+#include <nlohmann/json.hpp>
+#include <cstdio>
 #include <sstream>
 #include <algorithm>
 #include <unordered_set>
@@ -917,6 +925,9 @@ void LuaScriptEngine::DispatchContactEvents(Scene& scene, const std::vector<Phys
 }
 
 void LuaScriptEngine::OnSimulationStarted() {
+    m_NavMesh.reset();
+    m_NavBuildAttempted = false;
+    m_TimeScale = 1.0f;
 #if LUA_AVAILABLE
     m_SceneReloadRequested = false;
     for (auto& [_, instance] : m_ScriptInstances) {
@@ -929,6 +940,12 @@ void LuaScriptEngine::OnSimulationStarted() {
 }
 
 void LuaScriptEngine::OnSimulationStopped() {
+    m_NavMesh.reset();
+    if (m_FrameRenderer) {
+        m_FrameRenderer->SetScopeLens({});
+    }
+    m_NavBuildAttempted = false;
+    m_TimeScale = 1.0f;
 #if LUA_AVAILABLE
     m_SceneReloadRequested = false;
     if (!m_State) {
@@ -1030,6 +1047,10 @@ void LuaScriptEngine::SetPhysicsBinding(PhysicsBinding binding) {
 
 void LuaScriptEngine::SetCharacterBinding(CharacterBinding binding) {
     m_CharacterBinding = std::move(binding);
+}
+
+void LuaScriptEngine::SetSpawnedMeshLoader(SpawnedMeshLoader loader) {
+    m_SpawnedMeshLoader = std::move(loader);
 }
 
 void LuaScriptEngine::SetInputSystem(Hephaestus::InputSystem* inputSystem) {
@@ -1143,11 +1164,14 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterEntityBindings();
     RegisterTransformBindings();
     RegisterMeshBindings();
+    RegisterParticleBindings();
+    RegisterNavBindings();
     RegisterInputBindings();
     RegisterUtilityBindings();
     RegisterExposeBindings();
     RegisterApplicationBindings();
     RegisterCameraBindings();
+    RegisterGraphicsBindings();
     RegisterPhysicsBindings();
     RegisterCharacterBindings();
     RegisterAudioBindings();
@@ -1218,6 +1242,159 @@ void LuaScriptEngine::RegisterMeshBindings() {
 #endif
 }
 
+void LuaScriptEngine::RegisterParticleBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Particles_play);
+    lua_setfield(m_State, -2, "play");
+    lua_pushcfunction(m_State, Lua_Particles_stop);
+    lua_setfield(m_State, -2, "stop");
+    lua_pushcfunction(m_State, Lua_Particles_burst);
+    lua_setfield(m_State, -2, "burst");
+    lua_pushcfunction(m_State, Lua_Particles_setRate);
+    lua_setfield(m_State, -2, "setRate");
+    lua_pushcfunction(m_State, Lua_Particles_isPlaying);
+    lua_setfield(m_State, -2, "isPlaying");
+    lua_pushcfunction(m_State, Lua_Particles_count);
+    lua_setfield(m_State, -2, "count");
+    lua_setglobal(m_State, "Particles");
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_play(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
+    Hephaestus::Particles::Play(emitter, world);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_stop(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    Hephaestus::Particles::Stop(emitter);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_burst(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
+    Hephaestus::Particles::Burst(emitter, world, static_cast<int>(luaL_optinteger(L, 1, emitter.burst > 0 ? emitter.burst : 1)));
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_setRate(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const float rate = static_cast<float>(luaL_checknumber(L, 1));
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        return 0;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (registry.all_of<ParticleEmitterComponent>(handle)) {
+        registry.get<ParticleEmitterComponent>(handle).rate = std::max(0.0f, rate);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_isPlaying(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    lua_pushboolean(L, emitter.playing);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_count(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    lua_pushinteger(L, static_cast<lua_Integer>(emitter.particles.size()));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
 void LuaScriptEngine::RegisterInputBindings() {
 #if LUA_AVAILABLE
     lua_newtable(m_State);
@@ -1255,6 +1432,15 @@ void LuaScriptEngine::RegisterInputBindings() {
     lua_pushcfunction(m_State, Lua_Input_setCursorMode);
     lua_setfield(m_State, -2, "setCursorMode");
 
+    lua_pushcfunction(m_State, Lua_Input_getBindings);
+    lua_setfield(m_State, -2, "getBindings");
+
+    lua_pushcfunction(m_State, Lua_Input_setBindings);
+    lua_setfield(m_State, -2, "setBindings");
+
+    lua_pushcfunction(m_State, Lua_Input_getPressedControl);
+    lua_setfield(m_State, -2, "getPressedControl");
+
     lua_setglobal(m_State, "Input");
 #endif
 }
@@ -1271,7 +1457,29 @@ void LuaScriptEngine::RegisterUtilityBindings() {
     lua_newtable(m_State);
     lua_pushcfunction(m_State, Lua_Time_deltaTime);
     lua_setfield(m_State, -2, "deltaTime");
+    lua_pushcfunction(m_State, Lua_Time_unscaledDeltaTime);
+    lua_setfield(m_State, -2, "unscaledDeltaTime");
+    lua_pushcfunction(m_State, Lua_Time_setScale);
+    lua_setfield(m_State, -2, "setScale");
+    lua_pushcfunction(m_State, Lua_Time_getScale);
+    lua_setfield(m_State, -2, "getScale");
     lua_setglobal(m_State, "Time");
+
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Storage_save);
+    lua_setfield(m_State, -2, "save");
+    lua_pushcfunction(m_State, Lua_Storage_load);
+    lua_setfield(m_State, -2, "load");
+    lua_setglobal(m_State, "Storage");
+
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Config_load);
+    lua_setfield(m_State, -2, "load");
+    lua_pushcfunction(m_State, Lua_Config_save);
+    lua_setfield(m_State, -2, "save");
+    lua_pushcfunction(m_State, Lua_Config_path);
+    lua_setfield(m_State, -2, "path");
+    lua_setglobal(m_State, "Config");
 #endif
 }
 
@@ -1296,7 +1504,21 @@ void LuaScriptEngine::RegisterApplicationBindings() {
     lua_pushcfunction(m_State, Lua_Application_quit);
     lua_setfield(m_State, -2, "quit");
 
+    lua_pushcfunction(m_State, Lua_Application_isDevelopment);
+    lua_setfield(m_State, -2, "isDevelopment");
+
     lua_setglobal(m_State, "Application");
+#endif
+}
+
+int LuaScriptEngine::Lua_Application_isDevelopment(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushboolean(L, engine && engine->m_Development);
+    return 1;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 
@@ -1310,6 +1532,81 @@ int LuaScriptEngine::Lua_Application_quit(lua_State* L) {
     (void)L;
     return 0;
 #endif
+}
+
+void LuaScriptEngine::RegisterGraphicsBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Graphics_setMaxTextureSize);
+    lua_setfield(m_State, -2, "setMaxTextureSize");
+    lua_pushcfunction(m_State, Lua_Graphics_getMaxTextureSize);
+    lua_setfield(m_State, -2, "getMaxTextureSize");
+    lua_pushcfunction(m_State, Lua_Graphics_setScopeLens);
+    lua_setfield(m_State, -2, "setScopeLens");
+    lua_setglobal(m_State, "Graphics");
+#endif
+}
+
+int LuaScriptEngine::Lua_Graphics_setMaxTextureSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const lua_Integer pixels = luaL_checkinteger(L, 1);
+    if (pixels < 0) {
+        return luaL_error(L, "Graphics.setMaxTextureSize: size must be 0 (no limit) or more");
+    }
+    if (engine && engine->m_FrameRenderer) {
+        engine->m_FrameRenderer->SetMaxMaterialTextureSize(static_cast<uint32_t>(pixels));
+    }
+#else
+    (void)L;
+#endif
+    return 0;
+}
+
+int LuaScriptEngine::Lua_Graphics_getMaxTextureSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushinteger(L, engine && engine->m_FrameRenderer ? engine->m_FrameRenderer->GetMaxMaterialTextureSize() : 0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Graphics_setScopeLens(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Hephaestus::EngineFrameRenderer::ScopeLens lens;
+    if (!lua_isnoneornil(L, 1)) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        auto number = [L](const char* key, float& out) {
+            lua_getfield(L, 1, key);
+            if (lua_isnumber(L, -1)) {
+                out = static_cast<float>(lua_tonumber(L, -1));
+            }
+            lua_pop(L, 1);
+        };
+        lens.radius = 0.45f;
+        number("radius", lens.radius);
+        number("distortion", lens.distortion);
+        number("aberration", lens.aberration);
+        number("edgeDarkening", lens.edgeDarkening);
+        number("ringWidth", lens.ringWidth);
+        number("opacity", lens.opacity);
+        lua_getfield(L, 1, "reticle");
+        if (!lua_isnil(L, -1)) {
+            lens.reticle = lua_toboolean(L, -1) != 0;
+        }
+        lua_pop(L, 1);
+    }
+    if (engine && engine->m_FrameRenderer) {
+        engine->m_FrameRenderer->SetScopeLens(lens);
+    }
+#else
+    (void)L;
+#endif
+    return 0;
 }
 
 void LuaScriptEngine::RegisterCameraBindings() {
@@ -1336,6 +1633,9 @@ void LuaScriptEngine::RegisterCameraBindings() {
 
     lua_pushcfunction(m_State, Lua_Camera_translate);
     lua_setfield(m_State, -2, "translate");
+
+    lua_pushcfunction(m_State, Lua_Camera_worldToScreen);
+    lua_setfield(m_State, -2, "worldToScreen");
 
     lua_setglobal(m_State, "Camera");
 #endif
@@ -1398,6 +1698,16 @@ void LuaScriptEngine::RegisterCharacterBindings() {
     lua_setfield(m_State, -2, "isCrouched");
     lua_pushcfunction(m_State, Lua_Character_isStandBlocked);
     lua_setfield(m_State, -2, "isStandBlocked");
+
+    lua_pushcfunction(m_State, Lua_Character_setProne);
+    lua_setfield(m_State, -2, "setProne");
+
+    lua_pushcfunction(m_State, Lua_Character_isProne);
+    lua_setfield(m_State, -2, "isProne");
+    lua_pushcfunction(m_State, Lua_Character_ragdoll);
+    lua_setfield(m_State, -2, "ragdoll");
+    lua_pushcfunction(m_State, Lua_Character_isRagdoll);
+    lua_setfield(m_State, -2, "isRagdoll");
     lua_pushcfunction(m_State, Lua_Character_getVelocity);
     lua_setfield(m_State, -2, "getVelocity");
     lua_pushcfunction(m_State, Lua_Character_getGroundNormal);
@@ -1572,19 +1882,35 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     if (lua_gettop(L) >= 9 && !lua_isnoneornil(L, 9)) {
         ignoreSensors = lua_toboolean(L, 9) != 0;
     }
-    uint32_t ignoreEntityId = engine->m_CurrentEntityId;
+    std::vector<uint32_t> ignoreEntityIds;
     if (lua_gettop(L) >= 10 && !lua_isnoneornil(L, 10)) {
-        LuaEntityReference* explicitId = static_cast<LuaEntityReference*>(luaL_testudata(L, 10, "HephaestusEntity"));
-        if (!explicitId) {
-            return luaL_error(L, "Physics.raycast expected an entity userdata as argument 10");
+        if (lua_istable(L, 10)) {
+            const lua_Integer count = luaL_len(L, 10);
+            for (lua_Integer i = 1; i <= count; ++i) {
+                lua_rawgeti(L, 10, i);
+                LuaEntityReference* listed = static_cast<LuaEntityReference*>(luaL_testudata(L, -1, "HephaestusEntity"));
+                if (!listed) {
+                    return luaL_error(L, "Physics.raycast argument 10 must hold only entities (item %d)",
+                                      static_cast<int>(i));
+                }
+                ignoreEntityIds.push_back(*listed);
+                lua_pop(L, 1);
+            }
+        } else {
+            LuaEntityReference* explicitId = static_cast<LuaEntityReference*>(luaL_testudata(L, 10, "HephaestusEntity"));
+            if (!explicitId) {
+                return luaL_error(L, "Physics.raycast expected an entity or a list of entities as argument 10");
+            }
+            ignoreEntityIds.push_back(*explicitId);
         }
-        ignoreEntityId = *explicitId;
+    } else {
+        ignoreEntityIds.push_back(engine->m_CurrentEntityId);
     }
 
     PhysicsRaycastHit hit{};
     std::string error;
     bool ok = engine->m_PhysicsBinding.raycast(
-        ignoreEntityId,
+        ignoreEntityIds,
         Vec3(ox, oy, oz),
         Vec3(dx, dy, dz),
         maxDistance,
@@ -1607,6 +1933,8 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     lua_setfield(L, -2, "hit");
     lua_pushnumber(L, hit.distance);
     lua_setfield(L, -2, "distance");
+    lua_pushboolean(L, hit.sensor);
+    lua_setfield(L, -2, "sensor");
 
     lua_newtable(L);
     lua_pushnumber(L, hit.point.x);
@@ -1812,6 +2140,81 @@ int LuaScriptEngine::Lua_Character_isStandBlocked(lua_State* L) {
         return 1;
     }
     lua_pushboolean(L, engine->m_CharacterBinding.isStandBlocked(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_setProne(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.setProne) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const bool prone = lua_toboolean(L, 1) != 0;
+    lua_pushboolean(L, engine->m_CharacterBinding.setProne(engine->m_CurrentEntityId, prone));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_isProne(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.isProne) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.isProne(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_ragdoll(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.ragdoll) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const Vec3 impulse(static_cast<float>(luaL_optnumber(L, 1, 0.0)), static_cast<float>(luaL_optnumber(L, 2, 0.0)),
+                       static_cast<float>(luaL_optnumber(L, 3, 0.0)));
+    Vec3 point;
+    const bool hasPoint = lua_isnumber(L, 4) && lua_isnumber(L, 5) && lua_isnumber(L, 6);
+    if (hasPoint) {
+        point = Vec3(static_cast<float>(lua_tonumber(L, 4)), static_cast<float>(lua_tonumber(L, 5)),
+                     static_cast<float>(lua_tonumber(L, 6)));
+    }
+    std::string error;
+    const bool ok = engine->m_CharacterBinding.ragdoll(engine->m_CurrentEntityId, impulse, hasPoint ? &point : nullptr,
+                                                       error);
+    if (!ok && !error.empty()) {
+        engine->LogBindingErrorForEntity(engine->m_CurrentEntityId, "Character.ragdoll: " + error);
+    }
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_isRagdoll(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.isRagdoll) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.isRagdoll(engine->m_CurrentEntityId));
     return 1;
 #else
     (void)L;
@@ -2033,6 +2436,13 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
         return nullptr;
     }
 
+    // Script files are checked for edits twice a second, not on every frame for every instance.
+    const auto now = std::chrono::steady_clock::now();
+    if (component.scriptSource.empty() && instance.valid && !instance.forceReload &&
+        instance.userPath == component.scriptPath && now - instance.lastFileCheck < kScriptRecheckInterval) {
+        return &instance;
+    }
+
     bool hasEmbeddedSource = !component.scriptSource.empty();
     size_t sourceHash = hasEmbeddedSource ? std::hash<std::string>{}(component.scriptSource) : 0;
 
@@ -2085,6 +2495,7 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
     auto timestamp = std::filesystem::exists(resolved, fileError)
         ? std::filesystem::last_write_time(resolved, fileError)
         : std::filesystem::file_time_type{};
+    instance.lastFileCheck = now;
 
     if (fileError) {
         if (!instance.errorLogged) {
@@ -3088,6 +3499,124 @@ int LuaScriptEngine::Lua_Input_isGamepadConnected(lua_State* L) {
 #endif
 }
 
+#if LUA_AVAILABLE
+namespace {
+
+void PushInputBinding(lua_State* L, const Hephaestus::InputBinding& binding)
+{
+    lua_newtable(L);
+    lua_pushstring(L, Hephaestus::ToString(binding.type));
+    lua_setfield(L, -2, "type");
+    lua_pushstring(L, binding.control.c_str());
+    lua_setfield(L, -2, "control");
+    lua_pushnumber(L, binding.scale);
+    lua_setfield(L, -2, "scale");
+    lua_pushnumber(L, binding.deadzone);
+    lua_setfield(L, -2, "deadzone");
+}
+
+} // namespace
+#endif
+
+int LuaScriptEngine::Lua_Input_getBindings(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* name = luaL_checkstring(L, 1);
+    const bool defaults = lua_toboolean(L, 2) != 0;
+    const std::vector<Hephaestus::InputBinding>* bindings = nullptr;
+    if (engine && engine->m_InputSystem) {
+        bindings = defaults ? engine->m_InputSystem->GetDefaultBindings(name)
+                            : engine->m_InputSystem->GetBindings(name);
+    }
+    if (!bindings) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, static_cast<int>(bindings->size()), 0);
+    for (std::size_t i = 0; i < bindings->size(); ++i) {
+        PushInputBinding(L, (*bindings)[i]);
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_setBindings(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* name = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    std::vector<Hephaestus::InputBinding> bindings;
+    std::string error;
+    const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(L, 2));
+    for (lua_Integer i = 1; i <= count && error.empty(); ++i) {
+        lua_rawgeti(L, 2, i);
+        if (!lua_istable(L, -1)) {
+            error = "Each binding must be a table";
+        } else {
+            Hephaestus::InputBinding binding;
+            lua_getfield(L, -1, "type");
+            const char* type = lua_tostring(L, -1);
+            if (!type || !Hephaestus::InputBindingTypeFromString(type, binding.type)) {
+                error = std::string("Unknown input binding type: ") + (type ? type : "");
+            }
+            lua_pop(L, 1);
+            lua_getfield(L, -1, "control");
+            binding.control = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+            lua_pop(L, 1);
+            lua_getfield(L, -1, "scale");
+            if (lua_isnumber(L, -1)) binding.scale = static_cast<float>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+            lua_getfield(L, -1, "deadzone");
+            if (lua_isnumber(L, -1)) binding.deadzone = static_cast<float>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+            bindings.push_back(std::move(binding));
+        }
+        lua_pop(L, 1);
+    }
+    if (error.empty() && !(engine && engine->m_InputSystem)) {
+        error = "Input is not available";
+    }
+    if (error.empty() && engine->m_InputSystem->SetBindings(name, std::move(bindings), error)) {
+        lua_pushboolean(L, true);
+        return 1;
+    }
+    lua_pushboolean(L, false);
+    lua_pushstring(L, error.c_str());
+    return 2;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_getPressedControl(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Hephaestus::InputBindingType type = Hephaestus::InputBindingType::Keyboard;
+    int code = -1;
+    const std::string control = engine && engine->m_InputSystem &&
+                                        engine->m_InputSystem->GetPressedControl(type, code)
+        ? Hephaestus::InputControlName(type, code) : std::string();
+    if (control.empty()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_newtable(L);
+    lua_pushstring(L, Hephaestus::ToString(type));
+    lua_setfield(L, -2, "type");
+    lua_pushstring(L, control.c_str());
+    lua_setfield(L, -2, "control");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
 int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -3111,6 +3640,399 @@ int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
 
     engine->ApplyCursorMode(newMode);
     return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Time_unscaledDeltaTime(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushnumber(L, engine ? static_cast<double>(engine->m_UnscaledDeltaTime) : 0.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Time_setScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const double scale = luaL_checknumber(L, 1);
+    if (engine && std::isfinite(scale)) {
+        engine->m_TimeScale = static_cast<float>(std::clamp(scale, 0.0, 10.0));
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Time_getScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushnumber(L, engine ? static_cast<double>(engine->m_TimeScale) : 1.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+#if LUA_AVAILABLE
+namespace {
+
+// Storage names become file names, so only plain names are accepted.
+bool IsValidStorageName(const std::string& name) {
+    if (name.empty() || name.size() > 64) {
+        return false;
+    }
+    return std::all_of(name.begin(), name.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '-';
+    });
+}
+
+bool LuaToJson(lua_State* L, int index, int depth, nlohmann::json& out, std::string& outError) {
+    index = lua_absindex(L, index);
+    switch (lua_type(L, index)) {
+    case LUA_TBOOLEAN:
+        out = lua_toboolean(L, index) != 0;
+        return true;
+    case LUA_TNUMBER:
+        if (lua_isinteger(L, index)) {
+            out = static_cast<std::int64_t>(lua_tointeger(L, index));
+        } else {
+            const double value = lua_tonumber(L, index);
+            if (!std::isfinite(value)) {
+                outError = "numbers must be finite";
+                return false;
+            }
+            out = value;
+        }
+        return true;
+    case LUA_TSTRING: {
+        std::size_t length = 0;
+        const char* text = lua_tolstring(L, index, &length);
+        out = std::string(text, length);
+        return true;
+    }
+    case LUA_TTABLE: {
+        if (depth > 32) {
+            outError = "tables are nested too deeply";
+            return false;
+        }
+        const lua_Integer length = static_cast<lua_Integer>(lua_rawlen(L, index));
+        bool isArray = length > 0;
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0) {
+            const bool arrayKey = lua_isinteger(L, -2) && lua_tointeger(L, -2) >= 1 && lua_tointeger(L, -2) <= length;
+            if (!arrayKey) {
+                isArray = false;
+            }
+            lua_pop(L, 1);
+        }
+        if (isArray) {
+            out = nlohmann::json::array();
+            for (lua_Integer i = 1; i <= length; ++i) {
+                lua_rawgeti(L, index, i);
+                nlohmann::json element;
+                const bool ok = LuaToJson(L, -1, depth + 1, element, outError);
+                lua_pop(L, 1);
+                if (!ok) {
+                    return false;
+                }
+                out.push_back(std::move(element));
+            }
+            return true;
+        }
+        out = nlohmann::json::object();
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0) {
+            if (lua_type(L, -2) != LUA_TSTRING) {
+                lua_pop(L, 2);
+                outError = "table keys must be strings, or 1..n for a list";
+                return false;
+            }
+            const std::string key = lua_tostring(L, -2);
+            nlohmann::json element;
+            if (!LuaToJson(L, -1, depth + 1, element, outError)) {
+                lua_pop(L, 2);
+                return false;
+            }
+            out[key] = std::move(element);
+            lua_pop(L, 1);
+        }
+        return true;
+    }
+    default:
+        outError = std::string("cannot save a ") + luaL_typename(L, index);
+        return false;
+    }
+}
+
+void PushJson(lua_State* L, const nlohmann::json& value) {
+    if (value.is_boolean()) {
+        lua_pushboolean(L, value.get<bool>() ? 1 : 0);
+    } else if (value.is_number_integer()) {
+        lua_pushinteger(L, static_cast<lua_Integer>(value.get<std::int64_t>()));
+    } else if (value.is_number()) {
+        lua_pushnumber(L, value.get<double>());
+    } else if (value.is_string()) {
+        const std::string& text = value.get_ref<const std::string&>();
+        lua_pushlstring(L, text.data(), text.size());
+    } else if (value.is_array()) {
+        lua_createtable(L, static_cast<int>(value.size()), 0);
+        lua_Integer i = 1;
+        for (const auto& element : value) {
+            PushJson(L, element);
+            lua_rawseti(L, -2, i++);
+        }
+    } else if (value.is_object()) {
+        lua_createtable(L, 0, static_cast<int>(value.size()));
+        for (const auto& [key, element] : value.items()) {
+            PushJson(L, element);
+            lua_setfield(L, -2, key.c_str());
+        }
+    } else {
+        lua_pushnil(L);
+    }
+}
+
+} // namespace
+#endif
+
+int LuaScriptEngine::Lua_Storage_save(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string name = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    std::string error;
+    nlohmann::json data;
+    if (!engine || engine->m_StorageRoot.empty()) {
+        error = "storage is not available here";
+    } else if (!IsValidStorageName(name)) {
+        error = "names may only use letters, digits, '_' and '-'";
+    } else if (LuaToJson(L, 2, 0, data, error)) {
+        std::error_code ec;
+        std::filesystem::create_directories(engine->m_StorageRoot, ec);
+        const auto target = engine->m_StorageRoot / (name + ".json");
+        const auto temp = engine->m_StorageRoot / (name + ".json.tmp");
+        {
+            std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+            out << data.dump(2);
+            if (!out.good()) {
+                error = "could not write " + temp.string();
+            }
+        }
+        if (error.empty()) {
+            std::filesystem::rename(temp, target, ec);
+            if (ec) {
+                error = "could not replace " + target.string() + ": " + ec.message();
+            }
+        }
+    }
+    if (!error.empty()) {
+        engine->LogBindingError(nullptr, "Storage.save('" + name + "') failed: " + error);
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, error.c_str());
+        return 2;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+#if LUA_AVAILABLE
+namespace {
+
+std::filesystem::path ConfigFile(const std::filesystem::path& root, const std::string& prefix, const std::string& name)
+{
+    return root / (prefix + name + ".ini");
+}
+
+std::string LuaValueText(lua_State* L, int index)
+{
+    if (lua_type(L, index) == LUA_TBOOLEAN) {
+        return lua_toboolean(L, index) ? "true" : "false";
+    }
+    if (lua_type(L, index) == LUA_TNUMBER) {
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%.6g", lua_tonumber(L, index));
+        return buffer;
+    }
+    const char* text = lua_tostring(L, index);
+    return text ? text : "";
+}
+
+void LogConfigProblem(const std::string& message)
+{
+    Hephaestus::EngineLog::RecordOnly(Hephaestus::EngineLogLevel::Warning, message, "Lua");
+    std::cerr << "[Lua] " << message << std::endl;
+}
+
+std::string LuaFieldText(lua_State* L, int table, const char* field)
+{
+    lua_getfield(L, table, field);
+    std::string text = lua_isnil(L, -1) ? std::string() : LuaValueText(L, -1);
+    lua_pop(L, 1);
+    return text;
+}
+
+} // namespace
+#endif
+
+int LuaScriptEngine::Lua_Config_path(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string name = luaL_checkstring(L, 1);
+    if (!engine || engine->m_ConfigRoot.empty() || !IsValidStorageName(name)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, ConfigFile(engine->m_ConfigRoot, engine->m_ConfigPrefix, name).string().c_str());
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Config_load(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string name = luaL_checkstring(L, 1);
+    if (!engine || engine->m_ConfigRoot.empty() || !IsValidStorageName(name)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto path = ConfigFile(engine->m_ConfigRoot, engine->m_ConfigPrefix, name);
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    std::vector<std::string> warnings;
+    const Hephaestus::IniDocument document = Hephaestus::ParseIni(text.str(), warnings);
+    for (const auto& warning : warnings) {
+        LogConfigProblem(path.filename().string() + " " + warning + " (ignored)");
+    }
+    lua_newtable(L);
+    for (const auto& section : document.sections) {
+        lua_newtable(L);
+        for (const auto& entry : section.entries) {
+            lua_pushstring(L, entry.value.c_str());
+            lua_setfield(L, -2, entry.key.c_str());
+        }
+        lua_setfield(L, -2, section.name.c_str());
+    }
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Config_save(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string name = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    const char* header = luaL_optstring(L, 3, "");
+    std::string error;
+    if (!engine || engine->m_ConfigRoot.empty()) {
+        error = "config files are not available here";
+    } else if (!IsValidStorageName(name)) {
+        error = "names may only use letters, digits, '_' and '-'";
+    }
+    Hephaestus::IniDocument document;
+    document.header = header ? header : "";
+    const lua_Integer sectionCount = static_cast<lua_Integer>(lua_rawlen(L, 2));
+    for (lua_Integer s = 1; s <= sectionCount && error.empty(); ++s) {
+        lua_rawgeti(L, 2, s);
+        const int section = lua_gettop(L);
+        if (!lua_istable(L, section)) {
+            error = "each section must be a table";
+        } else {
+            Hephaestus::IniSection out{LuaFieldText(L, section, "name"), LuaFieldText(L, section, "comment"), {}};
+            lua_getfield(L, section, "keys");
+            const int keys = lua_gettop(L);
+            const lua_Integer keyCount = lua_istable(L, keys) ? static_cast<lua_Integer>(lua_rawlen(L, keys)) : 0;
+            for (lua_Integer k = 1; k <= keyCount; ++k) {
+                lua_rawgeti(L, keys, k);
+                if (lua_istable(L, -1)) {
+                    const int entry = lua_gettop(L);
+                    out.entries.push_back({LuaFieldText(L, entry, "key"), LuaFieldText(L, entry, "value"),
+                                           LuaFieldText(L, entry, "comment")});
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+            document.sections.push_back(std::move(out));
+        }
+        lua_pop(L, 1);
+    }
+    if (error.empty()) {
+        const auto target = ConfigFile(engine->m_ConfigRoot, engine->m_ConfigPrefix, name);
+        const auto temp = target.string() + ".tmp";
+        std::error_code ec;
+        std::filesystem::create_directories(engine->m_ConfigRoot, ec);
+        {
+            std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+            out << Hephaestus::WriteIni(document);
+            if (!out.good()) {
+                error = "could not write " + temp;
+            }
+        }
+        if (error.empty()) {
+            std::filesystem::rename(temp, target, ec);
+            if (ec) {
+                error = "could not replace " + target.string() + ": " + ec.message();
+            }
+        }
+    }
+    if (!error.empty()) {
+        LogConfigProblem("Config.save('" + name + "') failed: " + error);
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, error.c_str());
+        return 2;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Storage_load(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string name = luaL_checkstring(L, 1);
+    if (!engine || engine->m_StorageRoot.empty() || !IsValidStorageName(name)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    std::ifstream in(engine->m_StorageRoot / (name + ".json"), std::ios::binary);
+    if (!in.is_open()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const nlohmann::json data = nlohmann::json::parse(in, nullptr, false);
+    if (data.is_discarded()) {
+        engine->LogBindingError(nullptr, "Storage.load('" + name + "'): the saved file is not valid JSON");
+        lua_pushnil(L);
+        return 1;
+    }
+    PushJson(L, data);
+    return 1;
 #else
     (void)L;
     return 0;
@@ -3239,6 +4161,55 @@ int LuaScriptEngine::Lua_Camera_getRotation(lua_State* L) {
 #endif
 }
 
+int LuaScriptEngine::Lua_Camera_worldToScreen(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 point;
+    if (lua_istable(L, 1)) {
+        float* parts[3] = {&point.x, &point.y, &point.z};
+        const char* names[3] = {"x", "y", "z"};
+        for (int i = 0; i < 3; ++i) {
+            lua_getfield(L, 1, names[i]);
+            *parts[i] = static_cast<float>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        point = Vec3(static_cast<float>(luaL_checknumber(L, 1)), static_cast<float>(luaL_checknumber(L, 2)),
+                     static_cast<float>(luaL_checknumber(L, 3)));
+    }
+    const auto view = engine && engine->m_Scene ? Hephaestus::TryReadActiveCameraView(*engine->m_Scene)
+                                                : std::optional<Hephaestus::ActiveCameraView>{};
+    const Hephaestus::HephaestusUI::UIVec2 layout =
+        engine && engine->m_UIContext ? engine->m_UIContext->GetLayoutSize() : Hephaestus::HephaestusUI::UIVec2{};
+    if (!view || layout.x <= 0.0f || layout.y <= 0.0f) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const Mat4 frame = Hephaestus::MakeCameraViewFrame(view->position, view->yawRadians, view->pitchRadians,
+                                                       view->rollRadians);
+    const Vec3 forward(frame.m[0], frame.m[1], frame.m[2]);
+    const Vec3 up(frame.m[4], frame.m[5], frame.m[6]);
+    const Vec3 right(frame.m[8], frame.m[9], frame.m[10]);
+    const Vec3 offset(point.x - view->position.x, point.y - view->position.y, point.z - view->position.z);
+    const auto dot = [](const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
+    const float depth = dot(offset, forward);
+    const float tanHalf = std::tan(std::max(view->fovDegrees, 1.0f) * 0.5f * 3.14159265f / 180.0f);
+    const float aspect = layout.x / layout.y;
+    const float safeDepth = std::max(std::abs(depth), 1e-4f);
+    const float ndcX = dot(offset, right) / (safeDepth * tanHalf * aspect);
+    const float ndcY = dot(offset, up) / (safeDepth * tanHalf);
+    const bool onScreen = depth > view->nearPlane && std::abs(ndcX) <= 1.0f && std::abs(ndcY) <= 1.0f;
+    lua_pushnumber(L, (ndcX + 1.0f) * 0.5f * layout.x);
+    lua_pushnumber(L, (1.0f - ndcY) * 0.5f * layout.y);
+    lua_pushboolean(L, onScreen);
+    lua_pushnumber(L, depth);
+    return 4;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
 int LuaScriptEngine::Lua_Camera_translate(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -3283,7 +4254,13 @@ void LuaScriptEngine::RegisterThisBindings() {
     
     lua_pushcfunction(m_State, Lua_This_IsValid);
     lua_setfield(m_State, -2, "IsValid");
-    
+
+    lua_pushcfunction(m_State, Lua_This_GetParent);
+    lua_setfield(m_State, -2, "GetParent");
+
+    lua_pushcfunction(m_State, Lua_This_GetId);
+    lua_setfield(m_State, -2, "GetId");
+
     lua_pushcfunction(m_State, Lua_This_GetCamera);
     lua_setfield(m_State, -2, "GetCamera");
 
@@ -3310,6 +4287,9 @@ void LuaScriptEngine::RegisterThisBindings() {
     
     lua_pushcfunction(m_State, Lua_TransformObj_GetPosition);
     lua_setfield(m_State, -2, "GetPosition");
+
+    lua_pushcfunction(m_State, Lua_TransformObj_GetWorldPosition);
+    lua_setfield(m_State, -2, "GetWorldPosition");
     
     lua_pushcfunction(m_State, Lua_TransformObj_SetPosition);
     lua_setfield(m_State, -2, "SetPosition");
@@ -3357,6 +4337,12 @@ void LuaScriptEngine::RegisterThisBindings() {
     lua_setfield(m_State, -2, "GetCurrentAnimation");
     lua_pushcfunction(m_State, Lua_Animator_GetTime);
     lua_setfield(m_State, -2, "GetTime");
+    lua_pushcfunction(m_State, Lua_Animator_SetTime);
+    lua_setfield(m_State, -2, "SetTime");
+    lua_pushcfunction(m_State, Lua_Animator_SetLayer);
+    lua_setfield(m_State, -2, "SetLayer");
+    lua_pushcfunction(m_State, Lua_Animator_ClearLayer);
+    lua_setfield(m_State, -2, "ClearLayer");
     lua_pushcfunction(m_State, Lua_Animator_GetDuration);
     lua_setfield(m_State, -2, "GetDuration");
     lua_pushvalue(m_State, -1);
@@ -3549,6 +4535,11 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
         std::cerr << "[Lua] Scene.instantiate: prefab not found: " << spawn.prefabPath << "\n";
         return {};
     }
+    Entity parent = spawn.hasParent ? MakeEntity(spawn.parentId) : Entity{};
+    if (spawn.hasParent && (!parent || !parent.HasComponent<TransformComponent>())) {
+        std::cerr << "[Lua] Scene.instantiate: parent entity is no longer valid for " << spawn.prefabPath << "\n";
+        return {};
+    }
 
     PrefabAsset asset;
     std::string error;
@@ -3571,6 +4562,9 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
         return {};
     }
 
+    if (parent && root.HasComponent<TransformComponent>()) {
+        m_Scene->SetParent(root, parent);
+    }
     if (root.HasComponent<TransformComponent>()) {
         auto& transform = root.GetComponent<TransformComponent>();
         if (spawn.hasPosition) {
@@ -3621,7 +4615,7 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
 
     // Prefab instantiation creates CPU-side MeshRenderer components after the
     // host's scene mesh upload pass. Reuse an already-uploaded handle for the
-    // same asset so common runtime-spawned prefabs become visible immediately.
+    // same asset, or have the host load a mesh no entity has used yet.
     auto spawnedRenderers = m_Scene->GetEntitiesWith<MeshRendererComponent>();
     for (entt::entity spawnedHandle : spawnedRenderers) {
         Entity spawnedEntity(spawnedHandle, m_Scene);
@@ -3649,6 +4643,9 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
                 spawnedRenderer.materialIndices = candidate.materialIndices;
                 break;
             }
+        }
+        if (!spawnedRenderer.HasValidMesh() && m_SpawnedMeshLoader) {
+            m_SpawnedMeshLoader(spawnedRenderer);
         }
     }
 
@@ -3733,7 +4730,7 @@ bool LuaScriptEngine::RequestSceneReload() {
     }
     bool requested = false;
     try {
-        requested = m_SceneReloadCallback();
+        requested = m_SceneReloadCallback(std::string());
         if (requested) {
             m_SceneReloadRequested = true;
         } else {
@@ -3976,6 +4973,40 @@ int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
     LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     bool valid = engine && selfId && static_cast<bool>(engine->MakeEntity(*selfId));
     lua_pushboolean(L, valid);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_GetParent(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    Entity self = engine && selfId ? engine->MakeEntity(*selfId) : Entity{};
+    const TransformComponent* transform = self ? engine->GetTransform(*selfId) : nullptr;
+    if (!transform || transform->parent == entt::null || !engine->MakeEntity(static_cast<uint32_t>(transform->parent))) {
+        lua_pushnil(L);
+        return 1;
+    }
+    engine->PushEntityUserdata(L, static_cast<uint32_t>(transform->parent));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_GetId(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!engine || !selfId || !engine->MakeEntity(*selfId)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(static_cast<std::uint32_t>(*selfId)));
     return 1;
 #else
     (void)L;
@@ -4393,6 +5424,108 @@ int LuaScriptEngine::Lua_Animator_GetTime(lua_State* L) {
 #endif
 }
 
+int LuaScriptEngine::Lua_Animator_SetTime(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    const float seconds = static_cast<float>(luaL_checknumber(L, 2));
+    if (character && !character->player.currentClip.empty()) {
+        character->player.time = (std::max)(0.0f, seconds);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_SetLayer(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    CharacterAnimationLayer layer;
+    layer.name = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    auto number = [L](const char* key, float& out) {
+        lua_getfield(L, 3, key);
+        if (lua_isnumber(L, -1)) out = static_cast<float>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    };
+    auto text = [L](const char* key, std::string& out) {
+        lua_getfield(L, 3, key);
+        if (lua_isstring(L, -1)) out = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    };
+    text("mask", layer.maskRoot);
+    text("exclude", layer.maskExclude);
+    number("excludeBlend", layer.excludeBlend);
+    number("weight", layer.targetWeight);
+    number("fade", layer.fadeSeconds);
+    number("rate", layer.rate);
+    lua_getfield(L, 3, "clips");
+    if (lua_istable(L, -1)) {
+        const lua_Integer count = luaL_len(L, -1);
+        for (lua_Integer i = 1; i <= count; ++i) {
+            lua_rawgeti(L, -1, i);
+            CharacterAnimationLayer::Clip clip;
+            if (lua_isstring(L, -1)) {
+                clip.id = lua_tostring(L, -1);
+            } else if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "clip");
+                if (lua_isstring(L, -1)) clip.id = lua_tostring(L, -1);
+                lua_pop(L, 1);
+                lua_getfield(L, -1, "weight");
+                if (lua_isnumber(L, -1)) clip.weight = static_cast<float>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_getfield(L, -1, "reverse");
+                clip.reverse = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+            if (!clip.id.empty()) layer.clips.push_back(std::move(clip));
+        }
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, 3, "phase");
+    const bool hasPhase = lua_isnumber(L, -1) != 0;
+    const float phase = hasPhase ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+    lua_pop(L, 1);
+    std::string error = character ? std::string() : std::string("No character");
+    if (character && Hephaestus::CharacterAnimationSystem::SetLayer(*character, layer, error)) {
+        if (hasPhase) {
+            // Phase 1 would wrap to 0, so a clip played through to its end holds its last pose.
+            for (CharacterAnimationLayer& stored : character->layers) {
+                if (stored.name == layer.name) {
+                    stored.phase = std::clamp(phase, 0.0f, 0.9999f);
+                }
+            }
+        }
+        lua_pushboolean(L, true);
+        return 1;
+    }
+    lua_pushboolean(L, false);
+    lua_pushstring(L, error.c_str());
+    return 2;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_ClearLayer(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    const char* name = luaL_checkstring(L, 2);
+    const float fade = static_cast<float>(luaL_optnumber(L, 3, 0.0));
+    lua_pushboolean(L, character && Hephaestus::CharacterAnimationSystem::ClearLayer(*character, name, fade));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
 int LuaScriptEngine::Lua_Animator_GetDuration(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -4499,6 +5632,25 @@ int LuaScriptEngine::Lua_TransformObj_GetPosition(lua_State* L) {
     lua_setfield(L, -2, "y");
     lua_pushnumber(L, transform->position.z);
     lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_GetWorldPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    Entity entity = engine ? engine->MakeEntity(*pEntityId) : Entity{};
+    if (!entity || !engine->GetTransform(*pEntityId)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    TransformComponent world;
+    world.SetFromMatrix(engine->m_Scene->GetWorldTransform(entity));
+    PushVec3Table(L, world.position);
     return 1;
 #else
     (void)L;
@@ -5145,6 +6297,8 @@ void LuaScriptEngine::RegisterSceneBindings() {
 
     lua_pushcfunction(m_State, Lua_Scene_Reload);
     lua_setfield(m_State, -2, "reload");
+    lua_pushcfunction(m_State, Lua_Scene_Load);
+    lua_setfield(m_State, -2, "load");
     
     lua_setglobal(m_State, "Scene");
     
@@ -5219,6 +6373,17 @@ int LuaScriptEngine::Lua_Scene_Instantiate(lua_State* L) {
                 spawn.hasRotation = true;
                 spawn.rotationDegrees = *rotVal.AsVec3();
             }
+        }
+        lua_pop(L, 1);
+
+        lua_getfield(L, 2, "parent");
+        if (!lua_isnil(L, -1)) {
+            LuaEntityReference* parent = static_cast<LuaEntityReference*>(luaL_testudata(L, -1, "HephaestusEntity"));
+            if (!parent) {
+                return luaL_error(L, "Scene.instantiate: options.parent must be an entity");
+            }
+            spawn.hasParent = true;
+            spawn.parentId = *parent;
         }
         lua_pop(L, 1);
 
@@ -5334,6 +6499,21 @@ void LuaScriptEngine::RegisterAudioBindings() {
     lua_pushcfunction(m_State, Lua_Audio_stopAll);
     lua_setfield(m_State, -2, "stopAll");
 
+    lua_pushcfunction(m_State, Lua_Audio_setPitch);
+    lua_setfield(m_State, -2, "setPitch");
+
+    lua_pushcfunction(m_State, Lua_Audio_setPosition);
+    lua_setfield(m_State, -2, "setPosition");
+
+    lua_pushcfunction(m_State, Lua_Audio_setBusVolume);
+    lua_setfield(m_State, -2, "setBusVolume");
+
+    lua_pushcfunction(m_State, Lua_Audio_getBusVolume);
+    lua_setfield(m_State, -2, "getBusVolume");
+
+    lua_pushcfunction(m_State, Lua_Audio_getVoiceCount);
+    lua_setfield(m_State, -2, "getVoiceCount");
+
     lua_setglobal(m_State, "Audio");
 #endif
 }
@@ -5359,16 +6539,52 @@ int LuaScriptEngine::Lua_Audio_play(lua_State* L) {
     }
 
     const char* path = luaL_checkstring(L, 1);
-    bool loop = false;
-    float volume = 1.0f;
-    if (lua_gettop(L) >= 2) {
-        loop = lua_toboolean(L, 2) != 0;
-    }
-    if (lua_gettop(L) >= 3) {
-        volume = static_cast<float>(luaL_checknumber(L, 3));
+    AudioEngine::PlayParams params;
+    if (lua_istable(L, 2)) {
+        auto number = [L](const char* key, float& out) {
+            lua_getfield(L, 2, key);
+            if (lua_isnumber(L, -1)) out = static_cast<float>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        };
+        number("volume", params.volume);
+        number("pitch", params.pitch);
+        number("volumeJitter", params.volumeJitter);
+        number("pitchJitter", params.pitchJitter);
+        number("minDistance", params.minDistance);
+        number("maxDistance", params.maxDistance);
+        number("loopStart", params.loopStart);
+        number("loopEnd", params.loopEnd);
+        lua_getfield(L, 2, "loop");
+        params.loop = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "priority");
+        if (lua_isnumber(L, -1)) params.priority = static_cast<int>(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "bus");
+        if (lua_isstring(L, -1)) params.bus = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "position");
+        if (lua_istable(L, -1)) {
+            params.spatial = true;
+            lua_getfield(L, -1, "x");
+            params.position.x = static_cast<float>(lua_tonumber(L, -1));
+            lua_getfield(L, -2, "y");
+            params.position.y = static_cast<float>(lua_tonumber(L, -1));
+            lua_getfield(L, -3, "z");
+            params.position.z = static_cast<float>(lua_tonumber(L, -1));
+            lua_pop(L, 3);
+        }
+        lua_pop(L, 1);
+    } else {
+        if (lua_gettop(L) >= 2) {
+            params.loop = lua_toboolean(L, 2) != 0;
+        }
+        if (lua_gettop(L) >= 3) {
+            params.volume = static_cast<float>(luaL_checknumber(L, 3));
+        }
     }
 
-    AudioEngine::SoundHandle handle = engine->m_AudioEngine->Play(path, loop, volume);
+    AudioEngine::SoundHandle handle = engine->m_AudioEngine->Play(path, params);
     lua_pushinteger(L, static_cast<lua_Integer>(handle));
     return 1;
 #else
@@ -5386,7 +6602,8 @@ int LuaScriptEngine::Lua_Audio_stop(lua_State* L) {
     }
 
     uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
-    lua_pushboolean(L, engine->m_AudioEngine->Stop(handle));
+    const float fadeSeconds = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+    lua_pushboolean(L, engine->m_AudioEngine->Stop(handle, fadeSeconds));
     return 1;
 #else
     (void)L;
@@ -5463,6 +6680,69 @@ int LuaScriptEngine::Lua_Audio_isPlaying(lua_State* L) {
 #endif
 }
 
+int LuaScriptEngine::Lua_Audio_setPitch(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const float pitch = static_cast<float>(luaL_checknumber(L, 2));
+    lua_pushboolean(L, engine && engine->m_AudioEngine && engine->m_AudioEngine->SetPitch(handle, pitch));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_setPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const Vec3 position(static_cast<float>(luaL_checknumber(L, 2)), static_cast<float>(luaL_checknumber(L, 3)),
+                        static_cast<float>(luaL_checknumber(L, 4)));
+    lua_pushboolean(L, engine && engine->m_AudioEngine && engine->m_AudioEngine->SetPosition(handle, position));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_setBusVolume(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* bus = luaL_checkstring(L, 1);
+    const float volume = static_cast<float>(luaL_checknumber(L, 2));
+    lua_pushboolean(L, engine && engine->m_AudioEngine && engine->m_AudioEngine->SetBusVolume(bus, volume));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_getBusVolume(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* bus = luaL_checkstring(L, 1);
+    lua_pushnumber(L, engine && engine->m_AudioEngine ? engine->m_AudioEngine->GetBusVolume(bus) : 1.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_getVoiceCount(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushinteger(L, engine && engine->m_AudioEngine ? engine->m_AudioEngine->GetActiveVoiceCount() : 0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
 int LuaScriptEngine::Lua_Audio_stopAll(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -5524,6 +6804,12 @@ void LuaScriptEngine::RegisterUIBindings() {
 
     lua_pushcfunction(m_State, Lua_UI_setViewportSize);
     lua_setfield(m_State, -2, "setViewportSize");
+
+    lua_pushcfunction(m_State, Lua_UI_setScale);
+    lua_setfield(m_State, -2, "setScale");
+
+    lua_pushcfunction(m_State, Lua_UI_getScale);
+    lua_setfield(m_State, -2, "getScale");
 
     lua_pushcfunction(m_State, Lua_UI_getDrawCommandCount);
     lua_setfield(m_State, -2, "getDrawCommandCount");
@@ -5618,6 +6904,10 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushcfunction(m_State, Lua_UI_setFontItalic);
     lua_setfield(m_State, -2, "setFontItalic");
 
+    lua_pushcfunction(m_State, Lua_UI_measureText);
+    lua_setfield(m_State, -2, "measureText");
+    lua_pushcfunction(m_State, Lua_UI_getLayoutSize);
+    lua_setfield(m_State, -2, "getLayoutSize");
     lua_pushcfunction(m_State, Lua_UI_setTextAlignment);
     lua_setfield(m_State, -2, "setTextAlignment");
 
@@ -5885,12 +7175,33 @@ int LuaScriptEngine::Lua_UI_setScreenVisible(lua_State* L) {
         lua_pushboolean(L, false);
         return 1;
     }
-    const char* screenName = luaL_checkstring(L, 1);
-    lua_pushboolean(L, engine->UISetScreenVisible(screenName, lua_toboolean(L, 2) != 0));
+
+    const bool visible = lua_toboolean(L, 2) != 0;
+    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen = engine->ScreenFromArgument(L, 1);
+    if (!screen) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    screen->SetVisible(visible);
+    lua_pushboolean(L, true);
     return 1;
 #else
     (void)L;
     return 0;
+#endif
+}
+
+std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> LuaScriptEngine::ScreenFromArgument(lua_State* L, int index) const {
+#if LUA_AVAILABLE
+    if (lua_type(L, index) == LUA_TNUMBER) {
+        return ResolveUIScreen(static_cast<uint32_t>(lua_tointeger(L, index)));
+    }
+    return m_UISystem ? m_UISystem->FindScreenByName(luaL_checkstring(L, index)) : nullptr;
+#else
+    (void)L;
+    (void)index;
+    return nullptr;
 #endif
 }
 
@@ -5901,8 +7212,43 @@ int LuaScriptEngine::Lua_UI_setScreenActive(lua_State* L) {
         lua_pushboolean(L, false);
         return 1;
     }
-    const char* screenName = luaL_checkstring(L, 1);
-    lua_pushboolean(L, engine->UISetScreenActive(screenName, lua_toboolean(L, 2) != 0));
+
+    const bool active = lua_toboolean(L, 2) != 0;
+    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen = engine->ScreenFromArgument(L, 1);
+    if (!screen) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    screen->SetActive(active);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UIContext) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    engine->m_UIContext->SetUserScale(static_cast<float>(luaL_checknumber(L, 1)));
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushnumber(L, engine && engine->m_UIContext ? engine->m_UIContext->GetUserScale() : 1.0);
     return 1;
 #else
     (void)L;
@@ -6310,7 +7656,7 @@ uint32_t LuaScriptEngine::UICreateSimpleMenu() {
     if (!screen) {
         screen = Hephaestus::HephaestusUI::CreateSimpleMenuScreen();
         if (m_UIContext) {
-            screen->SetViewportSize(m_UIContext->GetViewportSize());
+            screen->SetViewportSize(m_UIContext->GetLayoutSize());
         }
         m_UISystem->AddScreen(screen);
     }
@@ -6325,7 +7671,7 @@ uint32_t LuaScriptEngine::UICreateScreen(const std::string& name) {
     if (!screen) {
         screen = std::make_shared<Hephaestus::HephaestusUI::UIScreen>(name);
         if (m_UIContext) {
-            screen->SetViewportSize(m_UIContext->GetViewportSize());
+            screen->SetViewportSize(m_UIContext->GetLayoutSize());
         }
         m_UISystem->AddScreen(screen);
     }
@@ -6399,7 +7745,7 @@ bool LuaScriptEngine::UISetViewportSize(float width, float height) {
     m_UIContext->SetViewportSize(size);
     for (const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen : m_UISystem->GetScreens()) {
         if (screen) {
-            screen->SetViewportSize(size);
+            screen->SetViewportSize(m_UIContext->GetLayoutSize());
         }
     }
     return true;
@@ -7251,6 +8597,45 @@ int LuaScriptEngine::Lua_UI_setFontItalic(lua_State* L) {
 #endif
 }
 
+int LuaScriptEngine::Lua_UI_getLayoutSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UIContext) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto size = engine->m_UIContext->GetLayoutSize();
+    lua_pushnumber(L, size.x);
+    lua_pushnumber(L, size.y);
+    return 2;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_measureText(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Hephaestus::HephaestusUI::UIFontKey key;
+    const char* text = luaL_checkstring(L, 1);
+    key.size = static_cast<float>(luaL_checknumber(L, 2));
+    key.bold = lua_toboolean(L, 3) != 0;
+    if (lua_isstring(L, 4)) {
+        key.family = lua_tostring(L, 4);
+    }
+    const std::string root = engine ? engine->m_ProjectRoot.generic_string() : std::string();
+    const auto measure = Hephaestus::HephaestusUI::MeasureHUIText(root, text, key);
+    lua_pushnumber(L, measure.width);
+    lua_pushnumber(L, measure.inkLeft);
+    lua_pushnumber(L, measure.inkRight);
+    return 3;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
 int LuaScriptEngine::Lua_UI_setTextAlignment(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -7774,6 +9159,197 @@ int LuaScriptEngine::Lua_Scene_Reload(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
     lua_pushboolean(L, engine && engine->RequestSceneReload());
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_Load(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string path = luaL_checkstring(L, 1);
+    if (!engine || !engine->m_SceneReloadCallback || path.empty()) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    bool requested = false;
+    try {
+        requested = engine->m_SceneReloadCallback(path);
+        if (requested) {
+            engine->m_SceneReloadRequested = true;
+        } else {
+            engine->LogBindingError(nullptr, "Scene.load('" + path + "') rejected: a scene change is already pending "
+                                             "or scenes cannot be changed here");
+        }
+    } catch (const std::exception& exception) {
+        engine->LogBindingError(nullptr, std::string("Scene.load failed: ") + exception.what());
+    } catch (...) {
+        engine->LogBindingError(nullptr, "Scene.load failed");
+    }
+    lua_pushboolean(L, requested);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+Hephaestus::Navigation::NavMesh* LuaScriptEngine::EnsureNavMesh() {
+    if (!m_NavBuildAttempted && m_Scene) {
+        m_NavBuildAttempted = true;
+        int skipped = 0;
+        auto geometry = Hephaestus::Navigation::CollectSceneGeometry(*m_Scene, &skipped);
+        const Hephaestus::Navigation::NavBuildSettings settings;
+        const int links = Hephaestus::Navigation::AddVaultLinks(*m_Scene, settings, geometry);
+        auto mesh = std::make_unique<Hephaestus::Navigation::NavMesh>();
+        std::string error;
+        if (mesh->Build(geometry, settings, error)) {
+            Hephaestus::EngineLog::Write(
+                Hephaestus::EngineLogLevel::Info,
+                "Navmesh built: " + std::to_string(mesh->PolygonCount()) + " polygons from " +
+                    std::to_string(geometry.triangles.size() / 3) + " triangles, " + std::to_string(links) +
+                    " vault links" +
+                    (skipped ? ", " + std::to_string(skipped) + " non-box static shapes left out" : ""),
+                "Navigation");
+            m_NavMesh = std::move(mesh);
+        } else {
+            Hephaestus::EngineLog::Write(Hephaestus::EngineLogLevel::Warning, "Navmesh not built: " + error,
+                                         "Navigation");
+        }
+    }
+    return m_NavMesh.get();
+}
+
+void LuaScriptEngine::RegisterNavBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Nav_isReady);
+    lua_setfield(m_State, -2, "isReady");
+    lua_pushcfunction(m_State, Lua_Nav_rebuild);
+    lua_setfield(m_State, -2, "rebuild");
+    lua_pushcfunction(m_State, Lua_Nav_findPath);
+    lua_setfield(m_State, -2, "findPath");
+    lua_pushcfunction(m_State, Lua_Nav_closestPoint);
+    lua_setfield(m_State, -2, "closestPoint");
+    lua_pushcfunction(m_State, Lua_Nav_randomPoint);
+    lua_setfield(m_State, -2, "randomPoint");
+    lua_setglobal(m_State, "Nav");
+#endif
+}
+
+bool LuaScriptEngine::ReadNavPoint(lua_State* L, int index, Vec3& out) {
+#if LUA_AVAILABLE
+    if (!lua_istable(L, index)) {
+        return false;
+    }
+    const PropertyValue value = ParsePropertyValueFromLua(L, index);
+    if (!value.IsVec3()) {
+        return false;
+    }
+    out = *value.AsVec3();
+    return true;
+#else
+    (void)L;
+    (void)index;
+    (void)out;
+    return false;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_isReady(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushboolean(L, engine && engine->EnsureNavMesh() != nullptr);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_rebuild(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    engine->m_NavMesh.reset();
+    engine->m_NavBuildAttempted = false;
+    lua_pushboolean(L, engine->EnsureNavMesh() != nullptr);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_findPath(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 from;
+    Vec3 to;
+    auto* mesh = engine ? engine->EnsureNavMesh() : nullptr;
+    std::vector<Vec3> corners;
+    std::vector<unsigned char> linkStarts;
+    if (!mesh || !engine->ReadNavPoint(L, 1, from) || !engine->ReadNavPoint(L, 2, to) ||
+        !mesh->FindPath(from, to, corners, &linkStarts)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, static_cast<int>(corners.size()), 0);
+    for (size_t i = 0; i < corners.size(); ++i) {
+        PushVec3Table(L, corners[i]);
+        if (linkStarts[i]) {
+            lua_pushboolean(L, 1);
+            lua_setfield(L, -2, "link");
+        }
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_closestPoint(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 point;
+    Vec3 out;
+    Vec3 extents(2.0f, 4.0f, 2.0f);
+    auto* mesh = engine ? engine->EnsureNavMesh() : nullptr;
+    if (mesh && lua_gettop(L) >= 2) {
+        engine->ReadNavPoint(L, 2, extents);
+    }
+    if (!mesh || !engine->ReadNavPoint(L, 1, point) || !mesh->ClosestPoint(point, out, extents)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushVec3Table(L, out);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_randomPoint(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 center;
+    Vec3 out;
+    auto* mesh = engine ? engine->EnsureNavMesh() : nullptr;
+    const float radius = static_cast<float>(luaL_optnumber(L, 2, 5.0));
+    if (!mesh || !engine->ReadNavPoint(L, 1, center) ||
+        !mesh->RandomPointAround(center, radius, engine->m_NavRandomState, out)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushVec3Table(L, out);
     return 1;
 #else
     (void)L;

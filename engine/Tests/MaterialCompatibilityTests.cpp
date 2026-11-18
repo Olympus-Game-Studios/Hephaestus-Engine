@@ -1,5 +1,10 @@
 #include "../UI/MaterialEditor/MaterialAssetSerializer.h"
+#include "../UI/MaterialEditor/MaterialGraphEvaluator.h"
+#include "../UI/MaterialEditor/MaterialNodeDefinitions.h"
+#include "../UI/MaterialEditor/MaterialShaderCompiler.h"
 #include "../UI/MaterialEditor/MaterialShaderGenerator.h"
+
+#include <cmath>
 
 #include <filesystem>
 #include <fstream>
@@ -295,8 +300,262 @@ bool TestExpandedNodesAndShaderGeneration() {
 
     MaterialShaderGenerationResult generated = GenerateMaterialShader(graph);
     ok &= Check(generated.ok, "expanded graph shader generation succeeds");
-    ok &= Check(generated.body.find("material.albedo") != std::string::npos, "shader body writes albedo");
+    ok &= Check(generated.body.find("surface.albedo") != std::string::npos, "shader body writes albedo");
     ok &= Check(generated.body.find("clamp") != std::string::npos, "shader body contains Saturate clamp");
+    return ok;
+}
+
+bool CheckDefaultGraphLossless(const MaterialComponent& material, const std::string& label) {
+    Graph graph;
+    BuildMinimalGraphFromLegacyPbr(material, graph);
+    MaterialComponent evaluated = material;
+    std::string error;
+    if (!Check(EvaluateGraph(graph, evaluated, error), label + ": default graph evaluates: " + error)) {
+        return false;
+    }
+    const std::string loss = DescribeRenderedDifferences(material, evaluated);
+    return Check(loss.empty(), label + ": default graph loses" + loss);
+}
+
+bool TestDefaultGraphIsLossless() {
+    bool ok = true;
+    MaterialComponent plain;
+    plain.albedo = Vec3(0.2f, 0.4f, 0.6f);
+    plain.metallic = 0.3f;
+    plain.roughness = 0.7f;
+    plain.specular = 0.25f;
+    plain.emissive = Vec3(1.0f, 0.5f, 0.0f);
+    plain.emissiveStrength = 3.0f;
+    plain.reflectionStrength = 0.4f;
+    ok &= CheckDefaultGraphLossless(plain, "constant PBR");
+
+    MaterialComponent tinted;
+    tinted.albedo = Vec3(0.8f, 0.6f, 0.4f);
+    tinted.useAlbedoTexture = true;
+    tinted.albedoTexturePath = "assets/textures/bark.png";
+    tinted.useMetallicTexture = true;
+    tinted.metallicTexturePath = "assets/textures/orm.png";
+    tinted.metallicChannel = 2;
+    tinted.metallic = 0.5f;
+    tinted.useRoughnessTexture = true;
+    tinted.roughnessTexturePath = "assets/textures/orm.png";
+    tinted.roughnessChannel = 1;
+    tinted.roughness = 0.9f;
+    tinted.useAoTexture = true;
+    tinted.aoTexturePath = "assets/textures/orm.png";
+    tinted.ao = 0.8f;
+    tinted.useNormalTexture = true;
+    tinted.normalTexturePath = "assets/textures/bark_n.png";
+    ok &= CheckDefaultGraphLossless(tinted, "tinted textures with packed maps");
+
+    MaterialComponent worldAligned = tinted;
+    worldAligned.useWorldAlignedTexture = true;
+    worldAligned.worldTextureScale = 0.25f;
+    worldAligned.metallicChannel = 0;
+    worldAligned.roughnessChannel = 0;
+    ok &= CheckDefaultGraphLossless(worldAligned, "world-aligned textures");
+
+    MaterialComponent worldAlignedPacked = worldAligned;
+    worldAlignedPacked.roughnessChannel = 1;
+    Graph packedGraph;
+    BuildMinimalGraphFromLegacyPbr(worldAlignedPacked, packedGraph);
+    MaterialComponent packedEvaluated = worldAlignedPacked;
+    std::string error;
+    ok &= Check(EvaluateGraph(packedGraph, packedEvaluated, error) &&
+                    !DescribeRenderedDifferences(worldAlignedPacked, packedEvaluated).empty(),
+                "a world-aligned packed map the graph cannot express is reported, not silently changed");
+
+    MaterialComponent masked;
+    masked.blendMode = MaterialBlendMode::Masked;
+    masked.useAlbedoTexture = true;
+    masked.albedoTexturePath = "assets/textures/leaves.png";
+    masked.opacityMask = 0.35f;
+    ok &= CheckDefaultGraphLossless(masked, "masked foliage");
+
+    MaterialComponent glass;
+    glass.blendMode = MaterialBlendMode::AlphaBlend;
+    glass.opacity = 0.25f;
+    glass.opacityMask = 0.0f;
+    glass.refraction = 1.2f;
+    ok &= CheckDefaultGraphLossless(glass, "translucent glass");
+
+    MaterialComponent flash;
+    flash.blendMode = MaterialBlendMode::Additive;
+    flash.ao = 0.5f;
+    ok &= CheckDefaultGraphLossless(flash, "additive");
+    return ok;
+}
+
+bool TestMaskedBlendModeRoundtrip(const fs::path& outDir) {
+    MaterialComponent material;
+    material.blendMode = MaterialBlendMode::Masked;
+    material.opacityMask = 0.4f;
+    Graph graph;
+    BuildMinimalGraphFromLegacyPbr(material, graph);
+    const fs::path output = outDir / "masked.saved.hematerial";
+    std::string error;
+    bool ok = Check(SaveMaterialAssetCompat(output, material, "Masked", graph, {}, error), "save masked: " + error);
+    ok &= Check(LoadJson(output).value("blendMode", std::string()) == "masked", "masked writes blendMode masked");
+    MaterialComponent loaded;
+    std::string displayName;
+    Graph loadedGraph;
+    ok &= Check(LoadMaterialAssetCompat(output, loaded, displayName, loadedGraph, error) &&
+                    loaded.blendMode == MaterialBlendMode::Masked && std::abs(loaded.opacityMask - 0.4f) < 1e-6f,
+                "masked loads back with its clip threshold");
+    return ok;
+}
+
+bool TestProjectMaterialsMigrate(const fs::path& folder) {
+    bool ok = true;
+    int checked = 0;
+    int graphs = 0;
+    for (const auto& entry : fs::recursive_directory_iterator(folder)) {
+        if (entry.path().extension() != ".hematerial") continue;
+        MaterialComponent material;
+        std::string displayName;
+        std::string error;
+        Graph graph;
+        if (!Check(LoadMaterialAssetCompat(entry.path(), material, displayName, graph, error),
+                   entry.path().string() + ": " + error)) {
+            ok = false;
+            continue;
+        }
+        if (graph.HasSourceGraph()) {
+            MaterialComponent evaluated = material;
+            if (!graph.IsLegacyMode() && EvaluateGraph(graph, evaluated, error)) {
+                ok &= Check(evaluated.blendMode == material.blendMode,
+                            entry.path().string() + ": graph keeps its blend mode");
+            }
+            ++graphs;
+            continue;
+        }
+        ok &= CheckDefaultGraphLossless(material, entry.path().string());
+        ++checked;
+    }
+    std::cout << "Migrated " << checked << " materials without a graph, evaluated " << graphs << " graphs, under "
+              << folder.string() << "\n";
+    return ok;
+}
+
+bool TestCompiledMaterialShaders(const fs::path& root, const fs::path& outDir) {
+    bool ok = true;
+    MaterialComponent tinted;
+    tinted.albedo = Vec3(0.5f, 0.6f, 0.7f);
+    tinted.useAlbedoTexture = true;
+    tinted.albedoTexturePath = "assets/textures/bark.png";
+    tinted.useRoughnessTexture = true;
+    tinted.roughnessTexturePath = "assets/textures/orm.png";
+    tinted.roughnessChannel = 1;
+    Graph fixedGraph;
+    BuildMinimalGraphFromLegacyPbr(tinted, fixedGraph);
+    ok &= Check(!GraphNeedsCompiledShader(fixedGraph), "a default graph draws with the standard shader");
+
+    std::string registerError;
+    CustomNodeDefinition timeNode;
+    timeNode.owner = "test.plugin";
+    timeNode.typeName = "TestTime";
+    timeNode.outputs = {{"Seconds", ValueType::Float1, "{time}"}};
+    CustomNodeDefinition noiseNode;
+    noiseNode.owner = "test.plugin";
+    noiseNode.typeName = "TestNoise";
+    noiseNode.category = "Procedural";
+    noiseNode.functions = "float testHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }";
+    noiseNode.inputs = {{"UV", ValueType::Float2, "{uv}"}, {"Scale", ValueType::Float1, "1.0"}};
+    noiseNode.outputs = {{"Value", ValueType::Float1, "testHash({0} * {1})"}};
+    ok &= Check(RegisterCustomNode(timeNode, registerError) && RegisterCustomNode(noiseNode, registerError),
+                "plugin nodes register: " + registerError);
+    ok &= Check(!RegisterCustomNode(timeNode, registerError), "a plugin node name can only be registered once");
+    CustomNodeDefinition clash = timeNode;
+    clash.typeName = "Multiply";
+    ok &= Check(!RegisterCustomNode(clash, registerError), "a plugin node cannot take a core node's name");
+
+    Graph graph;
+    Node& output = graph.CreateNode(NodeType::MaterialOutput);
+    const std::vector<PinID> outputs = output.inputs;
+    Node& uv = graph.CreateNode(NodeType::TexCoord);
+    const PinID uvOut = uv.outputs[0];
+    Node& tiling = graph.CreateNode(NodeType::TextureTilingOffset);
+    const std::vector<PinID> tilingIn = tiling.inputs;
+    const PinID tilingOut = tiling.outputs[0];
+    Node& scale = graph.CreateNode(NodeType::Vector2Parameter);
+    scale.color = Float3{4.0f, 2.0f, 0.0f};
+    const PinID scaleOut = scale.outputs[0];
+    Node& sample = graph.CreateNode(NodeType::TextureSample);
+    sample.resourcePath = "assets/textures/bark.png";
+    const std::vector<PinID> sampleIn = sample.inputs;
+    const PinID sampleRgb = sample.outputs[1];
+    Node* time = graph.CreateNodeOfType("TestTime");
+    const PinID timeOut = time ? time->outputs[0] : 0;
+    Node* noise = graph.CreateNodeOfType("TestNoise");
+    const std::vector<PinID> noiseIn = noise ? noise->inputs : std::vector<PinID>{0, 0};
+    const PinID noiseOut = noise ? noise->outputs[0] : 0;
+    ok &= Check(time && noise && noise->type == NodeType::Custom && noiseIn.size() == 2, "plugin nodes get their pins");
+    Node& tint = graph.CreateNode(NodeType::ConstantVec3);
+    tint.color = Float3{1.0f, 0.5f, 0.25f};
+    const PinID tintOut = tint.outputs[0];
+    Node& multiply = graph.CreateNode(NodeType::Multiply);
+    const std::vector<PinID> multiplyIn = multiply.inputs;
+    const PinID multiplyOut = multiply.outputs[0];
+    ok &= Check(graph.CreateLink(uvOut, tilingIn[0]) && graph.CreateLink(scaleOut, tilingIn[1]) &&
+                    graph.CreateLink(tilingOut, sampleIn[0]) && graph.CreateLink(sampleRgb, multiplyIn[0]) &&
+                    graph.CreateLink(tintOut, multiplyIn[1]) && graph.CreateLink(multiplyOut, outputs[0]) &&
+                    graph.CreateLink(timeOut, noiseIn[1]) && graph.CreateLink(noiseOut, outputs[3]),
+                "per-pixel test graph links");
+    ok &= Check(GraphNeedsCompiledShader(graph), "tiled UVs and animated noise need a compiled shader");
+
+    const MaterialShaderGenerationResult generated = GenerateMaterialShader(graph);
+    const std::string source = BuildMaterialGraphSource(generated);
+    ok &= Check(source.find("ubo.time") != std::string::npos && source.find("graphTextureSlots[0][0]") != std::string::npos &&
+                    source.find("testHash(((fragTexCoord)) * (matNode_") != std::string::npos &&
+                    source.find("float testHash(vec2 p)") != std::string::npos,
+                "generated surface reads time, the graph's texture slot and the plugin node's GLSL:\n" + source);
+
+    const MaterialShaderCompileResult compiled = CompileMaterialGraph(graph, root / "shaders");
+    std::string diagnostics;
+    for (const std::string& line : compiled.diagnostics) diagnostics += line + "\n";
+    ok &= Check(compiled.ok && compiled.shader.spirv.size() > 5 && compiled.shader.spirv[0] == 0x07230203u &&
+                    compiled.shader.spirvRayTraced.size() > 5,
+                "graph compiles to raster and ray-traced SPIR-V:\n" + diagnostics + source);
+    ok &= Check(compiled.shader.textures.size() == 1 && compiled.shader.textures[0].path == "assets/textures/bark.png" && !compiled.shader.textures[0].linear,
+                "compiled shader lists its texture");
+
+    const fs::path shaderPath = Hephaestus::CompiledMaterialShaderPath(outDir / "animated.hematerial");
+    std::string error;
+    ok &= Check(Hephaestus::WriteCompiledMaterialShader(shaderPath, compiled.shader, error), "write .hemshader: " + error);
+    Hephaestus::CompiledMaterialShader loaded;
+    ok &= Check(Hephaestus::ReadCompiledMaterialShader(shaderPath, loaded, error) && loaded.spirv == compiled.shader.spirv &&
+                    loaded.spirvRayTraced == compiled.shader.spirvRayTraced && loaded.textures == compiled.shader.textures &&
+                    loaded.sourceHash == compiled.shader.sourceHash,
+                ".hemshader round trips: " + error);
+
+    ok &= Check(CompileMaterialGraph(graph, root / "missing-folder").diagnostics.size() > 0,
+                "a missing shader source folder is reported, not ignored");
+
+    graph.SetHasSourceGraph(true);
+    const fs::path pluginMaterial = outDir / "plugin_nodes.hematerial";
+    MaterialComponent material;
+    ok &= Check(SaveMaterialAssetCompat(pluginMaterial, material, "PluginNodes", graph, {}, error),
+                "save a material using plugin nodes: " + error);
+    UnregisterCustomNodes("test.plugin");
+    MaterialComponent reloaded;
+    std::string displayName;
+    Graph withoutPlugin;
+    ok &= Check(LoadMaterialAssetCompat(pluginMaterial, reloaded, displayName, withoutPlugin, error),
+                "load it with the plugin off: " + error);
+    ok &= Check(fs::exists(Hephaestus::CompiledMaterialShaderPath(pluginMaterial)),
+                "saving with plugin nodes compiles the material's shader");
+    std::vector<std::string> shaderDiagnostics;
+    ok &= Check(SaveMaterialAssetCompat(pluginMaterial, reloaded, displayName, withoutPlugin, {}, error,
+                                        &shaderDiagnostics),
+                "resave: " + error);
+    ok &= Check(fs::exists(Hephaestus::CompiledMaterialShaderPath(pluginMaterial)) && !shaderDiagnostics.empty(),
+                "saving while the plugin is off keeps the last compiled shader and says why");
+    const json resavedJson = LoadJson(pluginMaterial);
+    int customNodes = 0;
+    for (const json& node : resavedJson["graph"]["nodes"]) {
+        if (node.value("type", "") == "TestNoise" || node.value("type", "") == "TestTime") ++customNodes;
+    }
+    ok &= Check(customNodes == 2, "plugin nodes survive a save while their plugin is off");
     return ok;
 }
 
@@ -304,7 +563,7 @@ bool TestExpandedNodesAndShaderGeneration() {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: MaterialCompatibilityTests <repo_root>\n";
+        std::cerr << "Usage: MaterialCompatibilityTests <repo_root> [project_assets_folder]\n";
         return 2;
     }
 
@@ -319,6 +578,12 @@ int main(int argc, char** argv) {
     ok &= TestGoldenRoundtrip(root, outDir, "unknown_graph_payload.hematerial");
     ok &= TestPinIdCollision(root, outDir);
     ok &= TestExpandedNodesAndShaderGeneration();
+    ok &= TestDefaultGraphIsLossless();
+    ok &= TestMaskedBlendModeRoundtrip(outDir);
+    ok &= TestCompiledMaterialShaders(root, outDir);
+    if (argc > 2) {
+        ok &= TestProjectMaterialsMigrate(fs::path(argv[2]));
+    }
 
     if (!ok) {
         return 1;

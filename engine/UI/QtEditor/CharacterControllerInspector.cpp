@@ -86,6 +86,7 @@ void CharacterControllerInspector::buildUI()
     m_height = addSpin(shape, tr("Height"), 0.05, 10.0, 0.05);
     m_radius = addSpin(shape, tr("Radius"), 0.05, 2.0, 0.01);
     m_crouchedHeight = addSpin(shape, tr("Crouched Height"), 0.05, 10.0, 0.05);
+    m_proneHeight = addSpin(shape, tr("Prone Height"), 0.05, 10.0, 0.05);
 
     QFormLayout* movement = addGroup(tr("Movement"));
     m_walkSpeed = addSpin(movement, tr("Walk Speed"), 0.0, 40.0, 0.1);
@@ -94,6 +95,10 @@ void CharacterControllerInspector::buildUI()
     m_airAcceleration = addSpin(movement, tr("Air Acceleration"), 0.0, 200.0, 1.0);
     m_airControl = addSpin(movement, tr("Air Control"), 0.0, 1.0, 0.05);
     m_jumpSpeed = addSpin(movement, tr("Jump Speed"), 0.0, 40.0, 0.1);
+    m_coyoteTime = addSpin(movement, tr("Coyote Time"), 0.0, 1.0, 0.01);
+    m_coyoteTime->setToolTip(tr("Seconds after walking off a ledge in which jumping still works."));
+    m_jumpBufferTime = addSpin(movement, tr("Jump Buffer"), 0.0, 1.0, 0.01);
+    m_jumpBufferTime->setToolTip(tr("Seconds a jump pressed just before landing waits to happen on landing."));
     m_gravityScale = addSpin(movement, tr("Gravity Scale"), -5.0, 5.0, 0.1);
     m_maxFallSpeed = addSpin(movement, tr("Max Fall Speed"), 0.0, 200.0, 1.0);
 
@@ -143,8 +148,8 @@ void CharacterControllerInspector::connectSignals()
     };
     connect(m_enabled, &QCheckBox::toggled, this, edited);
     const QDoubleSpinBox* spins[] = {
-        m_height, m_radius, m_crouchedHeight, m_walkSpeed, m_acceleration, m_deceleration,
-        m_airAcceleration, m_airControl, m_jumpSpeed, m_gravityScale, m_maxFallSpeed,
+        m_height, m_radius, m_crouchedHeight, m_proneHeight, m_walkSpeed, m_acceleration, m_deceleration,
+        m_airAcceleration, m_airControl, m_jumpSpeed, m_coyoteTime, m_jumpBufferTime, m_gravityScale, m_maxFallSpeed,
         m_groundSnap, m_maxSlope, m_stepHeight, m_mass, m_pushStrength
     };
     for (const QDoubleSpinBox* spin : spins) {
@@ -171,12 +176,15 @@ void CharacterControllerInspector::applyToComponent()
         if (TryReadSpin(m_height, value)) component.height = static_cast<float>(value);
         if (TryReadSpin(m_radius, value)) component.radius = static_cast<float>(value);
         if (TryReadSpin(m_crouchedHeight, value)) component.crouchedHeight = static_cast<float>(value);
+        if (TryReadSpin(m_proneHeight, value)) component.proneHeight = static_cast<float>(value);
         if (TryReadSpin(m_walkSpeed, value)) component.walkSpeed = static_cast<float>(value);
         if (TryReadSpin(m_acceleration, value)) component.acceleration = static_cast<float>(value);
         if (TryReadSpin(m_deceleration, value)) component.deceleration = static_cast<float>(value);
         if (TryReadSpin(m_airAcceleration, value)) component.airAcceleration = static_cast<float>(value);
         if (TryReadSpin(m_airControl, value)) component.airControl = static_cast<float>(value);
         if (TryReadSpin(m_jumpSpeed, value)) component.jumpSpeed = static_cast<float>(value);
+        if (TryReadSpin(m_coyoteTime, value)) component.coyoteTime = static_cast<float>(value);
+        if (TryReadSpin(m_jumpBufferTime, value)) component.jumpBufferTime = static_cast<float>(value);
         if (TryReadSpin(m_gravityScale, value)) component.gravityScale = static_cast<float>(value);
         if (TryReadSpin(m_maxFallSpeed, value)) component.maxFallSpeed = static_cast<float>(value);
         if (TryReadSpin(m_groundSnap, value)) component.groundSnapDistance = static_cast<float>(value);
@@ -235,20 +243,23 @@ void CharacterControllerInspector::Refresh()
 {
     EndEdit();
     MixedBool enabled;
-    MixedScalar height, radius, crouchedHeight, walkSpeed, acceleration, deceleration;
-    MixedScalar airAcceleration, airControl, jumpSpeed, gravityScale, maxFallSpeed;
+    MixedScalar height, radius, crouchedHeight, proneHeight, walkSpeed, acceleration, deceleration;
+    MixedScalar airAcceleration, airControl, jumpSpeed, coyoteTime, jumpBufferTime, gravityScale, maxFallSpeed;
     MixedScalar groundSnap, maxSlope, stepHeight, mass, pushStrength, layer;
     VisitTargets<CharacterControllerComponent>([&](const CharacterControllerComponent& component, entt::entity) {
         AccumulateBool(enabled, component.enabled);
         AccumulateScalar(height, component.height);
         AccumulateScalar(radius, component.radius);
         AccumulateScalar(crouchedHeight, component.crouchedHeight);
+        AccumulateScalar(proneHeight, component.proneHeight);
         AccumulateScalar(walkSpeed, component.walkSpeed);
         AccumulateScalar(acceleration, component.acceleration);
         AccumulateScalar(deceleration, component.deceleration);
         AccumulateScalar(airAcceleration, component.airAcceleration);
         AccumulateScalar(airControl, component.airControl);
         AccumulateScalar(jumpSpeed, component.jumpSpeed);
+        AccumulateScalar(coyoteTime, component.coyoteTime);
+        AccumulateScalar(jumpBufferTime, component.jumpBufferTime);
         AccumulateScalar(gravityScale, component.gravityScale);
         AccumulateScalar(maxFallSpeed, component.maxFallSpeed);
         AccumulateScalar(groundSnap, component.groundSnapDistance);
@@ -289,12 +300,15 @@ void CharacterControllerInspector::Refresh()
     SetSpinFromMixed(m_height, height);
     SetSpinFromMixed(m_radius, radius);
     SetSpinFromMixed(m_crouchedHeight, crouchedHeight);
+    SetSpinFromMixed(m_proneHeight, proneHeight);
     SetSpinFromMixed(m_walkSpeed, walkSpeed);
     SetSpinFromMixed(m_acceleration, acceleration);
     SetSpinFromMixed(m_deceleration, deceleration);
     SetSpinFromMixed(m_airAcceleration, airAcceleration);
     SetSpinFromMixed(m_airControl, airControl);
     SetSpinFromMixed(m_jumpSpeed, jumpSpeed);
+    SetSpinFromMixed(m_coyoteTime, coyoteTime);
+    SetSpinFromMixed(m_jumpBufferTime, jumpBufferTime);
     SetSpinFromMixed(m_gravityScale, gravityScale);
     SetSpinFromMixed(m_maxFallSpeed, maxFallSpeed);
     SetSpinFromMixed(m_groundSnap, groundSnap);

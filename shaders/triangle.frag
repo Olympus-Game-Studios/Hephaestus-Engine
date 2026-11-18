@@ -10,6 +10,7 @@ layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragColor;
 layout(location = 3) in vec2 fragTexCoord;
 layout(location = 4) in vec4 fragLightSpacePos;
+layout(location = 5) flat in vec3 fragObjectPos;
 
 layout(location = 0) out vec4 outColor;
 
@@ -18,6 +19,7 @@ layout(std140, set = 0, binding = 0) uniform UBO {
     mat4 proj;
     vec3 viewPos;
     float shadingMode; // 0 = Lit, 1 = Unlit (Wireframe uses polygon mode)
+    float time;        // seconds since the renderer started, for material graphs
 } ubo;
 
 // Material properties (set via push constants or additional descriptor sets)
@@ -50,8 +52,11 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float opacity;            // offset 116
     float opacityMask;        // offset 120
     float refraction;         // offset 124 (reserved)
-    uint paddingTail1;        // offset 128
-    uint paddingTail2;        // offset 132
+    uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive, 3 masked
+    uint textureChannels;     // offset 132: roughness, metallic, AO map channel, 2 bits each (0 R .. 3 A)
+    uint graphPadding0;       // offset 136
+    uint graphPadding1;       // offset 140
+    uvec4 graphTextureSlots[4]; // offset 144: texture slots a compiled material graph samples
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -63,6 +68,7 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #include "lighting_common.glsl"
 #define GI_SET 2
 #include "probe_common.glsl"
+#include "material_common.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
@@ -116,12 +122,14 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-vec3 sampleEnvironmentReflection(vec3 direction) {
+// Rougher surfaces read a blurrier (smaller) mip of the environment.
+vec3 sampleEnvironmentReflection(vec3 direction, float roughness) {
     vec3 dir = normalize(direction);
     vec2 uv;
     uv.x = atan(dir.z, dir.x) / (2.0 * PI) + 0.5;
     uv.y = asin(clamp(dir.y, -1.0, 1.0)) / PI + 0.5;
-    return texture(environmentMap, uv).rgb;
+    float lod = clamp(roughness, 0.0, 1.0) * float(textureQueryLevels(environmentMap) - 1);
+    return textureLod(environmentMap, uv, lod).rgb;
 }
 
 // Point/spot shadow from one perspective tile, compared in linear depth so the bias is in metres.
@@ -339,104 +347,70 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
 // MAIN LIGHTING CALCULATION
 // ═══════════════════════════════════════════════════════════════
 
-// Calculate world-aligned UV coordinates using triplanar projection
-vec2 getWorldAlignedUV(vec3 worldPos, vec3 normal, float scale) {
-    // Use triplanar mapping - blend between XY, XZ, and YZ planes based on normal
-    vec3 blendWeights = abs(normal);
-    blendWeights = blendWeights / (blendWeights.x + blendWeights.y + blendWeights.z);
-    
-    // Sample coordinates for each plane
-    vec2 uvXY = worldPos.xy * scale;
-    vec2 uvXZ = worldPos.xz * scale;
-    vec2 uvYZ = worldPos.yz * scale;
-    
-    // For mostly horizontal surfaces (floors/ceilings), use XZ plane
-    // For vertical surfaces, blend between XY and YZ based on normal direction
-    // This gives the most intuitive result for ground textures
-    if (blendWeights.y > 0.7) {
-        return uvXZ;  // Mostly horizontal - use top-down projection
+// Applies a tangent-space normal map. Meshes carry no tangents, so the frame comes from screen-space derivatives.
+vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv, vec3 tangentNormal) {
+    vec3 dp1 = dFdx(worldPos);
+    vec3 dp2 = dFdy(worldPos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, n);
+    vec3 dp1perp = cross(n, dp1);
+    vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    float scale = max(dot(t, t), dot(b, b));
+    if (scale < 1e-20) {
+        return n;
     }
-    // Blend between the three projections for angled surfaces
-    return uvXY * blendWeights.z + uvXZ * blendWeights.y + uvYZ * blendWeights.x;
+    mat3 tbn = mat3(t * inversesqrt(scale), b * inversesqrt(scale), n);
+    return normalize(tbn * tangentNormal);
 }
+
+#ifdef MATERIAL_GRAPH
+#include "material_graph.glsl"
+#else
+#include "material_surface.glsl"
+#endif
 
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(ubo.viewPos - fragWorldPos);
-    
-    // Calculate texture coordinates - either from UV or world position
-    vec2 texCoord = fragTexCoord;
-    if (material.useWorldAlignedTexture != 0u) {
-        texCoord = getWorldAlignedUV(fragWorldPos, N, material.worldTextureScale);
-    }
-    
-    // ── Material property sampling ─────────────────────────────────
-    // Albedo (diffuse) texture
-    vec3 albedo = material.albedo * fragColor;
-    if (material.useAlbedoTexture != 0u) {
-        uint index = material.albedoTextureIndex % MAX_TEXTURE_SLOTS;
-        vec4 texColor = texture(materialTextures[index], texCoord);
-        albedo = texColor.rgb * material.albedo * fragColor;
-    }
 
-    float opacity = clamp(material.opacity, 0.0, 1.0);
-    if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
+    Surface surface = evaluateSurfaceCoverage(N);
+    vec3 albedo = surface.albedo;
+    float opacity = clamp(surface.opacity, 0.0, 1.0);
+    if (material.blendMode == 3u) {
+        if (opacity * surface.textureAlpha < clamp(surface.clipThreshold, 0.0, 1.0)) {
+            discard;
+        }
+        opacity = 1.0;
+    } else if (material.blendMode != 0u) {
+        opacity *= surface.textureAlpha;
+        if (opacity <= 0.002) {
+            discard;
+        }
+    } else if (opacity < clamp(surface.clipThreshold, 0.0, 1.0)) {
         discard;
+    }
+    if (material.blendMode == 2u) {
+        outColor = vec4((albedo + surface.emissive) * opacity, opacity);
+        return;
     }
 
     // Unlit viewport mode: albedo (+ emissive), skip lighting
     if (ubo.shadingMode > 0.5) {
-        vec3 unlit = albedo + material.emissive * material.emissiveStrength;
-        outColor = vec4(unlit, opacity);
+        outColor = vec4(albedo + surface.emissive, opacity);
         return;
     }
-    
-    // Normal map (world space - for now, not using tangent space)
-    // A better implementation would transform from tangent space
-    vec3 normalMapped = N;
-    if (material.useNormalTexture != 0u) {
-        uint index = material.normalTextureIndex % MAX_TEXTURE_SLOTS;
-        vec3 normalTex = texture(materialTextures[index], texCoord).rgb;
-        // Unpack normal from [0,1] to [-1,1]
-        normalMapped = normalize(normalTex * 2.0 - 1.0);
-        // For a world-space approximation, blend with original normal
-        // This is a simplified approach; full implementation would need tangent space
-        normalMapped = normalize(mix(N, normalMapped, 0.7));
-    }
-    N = normalMapped;
-    
-    // Roughness texture
-    float roughness = material.roughness;
-    if (material.useRoughnessTexture != 0u) {
-        uint index = material.roughnessTextureIndex % MAX_TEXTURE_SLOTS;
-        // Roughness is typically in the R or G channel
-        float texRoughness = texture(materialTextures[index], texCoord).r;
-        roughness = texRoughness * material.roughness; // Blend with base value
-    }
-    roughness = max(roughness, 0.04); // Prevent division by zero
-    
-    // Ambient occlusion texture
-    float ao = material.ao;
-    if (material.useAoTexture != 0u) {
-        uint index = material.aoTextureIndex % MAX_TEXTURE_SLOTS;
-        // AO is typically stored in R or G channel
-        float texAo = texture(materialTextures[index], texCoord).r;
-        ao = texAo * material.ao; // Blend with base value
-    }
-    
-    // Metallic texture
-    float metallic = material.metallic;
-    if (material.useMetallicTexture != 0u) {
-        uint index = material.metallicTextureIndex % MAX_TEXTURE_SLOTS;
-        // Metallic is typically in the B channel of ORM maps or R channel of standalone
-        float texMetallic = texture(materialTextures[index], texCoord).r;
-        metallic = texMetallic * material.metallic; // Blend with base value
-    }
-    metallic = clamp(metallic, 0.0, 1.0);
-    
+
+    evaluateSurfaceShading(surface);
+    N = surface.normal;
+    float roughness = clamp(surface.roughness, 0.04, 1.0); // a multiplier above 1 can roughen a map; 0.04 avoids division by zero
+    float ao = surface.ao;
+    float metallic = clamp(surface.metallic, 0.0, 1.0);
+
     // Calculate F0 (base reflectivity)
     // Dielectrics have F0 around 0.04, metals use albedo as F0
-    vec3 F0 = vec3(0.08 * clamp(material.specular, 0.0, 1.0));
+    vec3 F0 = vec3(0.08 * clamp(surface.specular, 0.0, 1.0));
     F0 = mix(F0, albedo, metallic);
     
     // Reflectance equation
@@ -574,7 +548,7 @@ void main() {
     // Basic IBL foundation: reflect the active HDRI only. Nearby objects are not reflected yet.
     if (lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {
         vec3 R = reflect(-V, N);
-        vec3 envReflection = sampleEnvironmentReflection(R);
+        vec3 envReflection = sampleEnvironmentReflection(R, roughness);
         float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
         roughnessFactor *= roughnessFactor;
         vec3 reflectionFresnel = fresnelSchlick(max(dot(N, V), 0.0), F0);
@@ -585,7 +559,7 @@ void main() {
     }
     
     // Add emissive
-    color += material.emissive * material.emissiveStrength;
+    color += surface.emissive;
 
     outColor = vec4(color, opacity);
 }

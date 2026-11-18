@@ -18,6 +18,7 @@ struct CharacterControllerComponent {
     float height = 1.8f;
     float radius = 0.3f;
     float crouchedHeight = 1.1f;
+    float proneHeight = 0.7f;
 
     float maxSlopeAngleDegrees = 45.0f;
     float stepHeight = 0.30f;
@@ -29,6 +30,8 @@ struct CharacterControllerComponent {
     float airAcceleration = 12.0f;
     float airControl = 0.35f;
     float jumpSpeed = 5.5f;
+    float coyoteTime = 0.0f;      // Seconds after walking off a ledge in which a jump still works.
+    float jumpBufferTime = 0.0f;  // Seconds a jump pressed in the air waits to happen on landing.
     float gravityScale = 1.0f;
     float maxFallSpeed = 40.0f;
 

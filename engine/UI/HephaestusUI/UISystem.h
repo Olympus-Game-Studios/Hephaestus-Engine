@@ -45,6 +45,7 @@ private:
     CursorMode m_CursorMode = CursorMode::Game;
     bool m_CursorModeDirty = false;
     UITheme m_Theme = UITheme::CreateDefaultTheme();
+    float m_Scale = 1.0f; ///< from the context at the last Update, applied by Render
 };
 
 } // namespace Hephaestus::HephaestusUI

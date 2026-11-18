@@ -19,7 +19,7 @@
         {
           "type": "LuaScript",
           "enabled": true,
-          "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/Pickup.lua", "enabled": true, "variables": {}, "authoredVariables": [] }
+          "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/Pickup.lua", "enabled": true, "variables": { "kind": "health", "amount": 25, "prompt": "Pick up", "respawnSeconds": 0 }, "authoredVariables": ["amount", "kind", "prompt", "respawnSeconds"] }
         }
       ],
       "exposed": []

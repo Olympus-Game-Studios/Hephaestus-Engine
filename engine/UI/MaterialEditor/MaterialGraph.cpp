@@ -24,9 +24,6 @@ void ApplyNodeDefaults(Node& node) {
     case NodeType::Compare:
         node.operation = ">";
         break;
-    case NodeType::Gradient:
-        node.operation = "Linear";
-        break;
     case NodeType::Transform:
         node.sourceSpace = "World";
         node.targetSpace = "Local";
@@ -50,11 +47,26 @@ Graph::Graph()
     , m_NextLinkID(1) {}
 
 Node& Graph::CreateNode(NodeType type, std::string displayName) {
+    return AddNode(m_NextNodeID++, type, std::move(displayName), {});
+}
+
+Node* Graph::CreateNodeOfType(std::string_view typeName) {
+    NodeType type = NodeType::Unknown;
+    if (TryNodeTypeName(typeName, type) && type != NodeType::Unknown && type != NodeType::Custom) {
+        return &CreateNode(type);
+    }
+    if (FindCustomNode(typeName)) {
+        return &AddNode(m_NextNodeID++, NodeType::Custom, {}, std::string(typeName));
+    }
+    return nullptr;
+}
+
+Node& Graph::AddNode(NodeID id, NodeType type, std::string displayName, std::string customType) {
     Node node;
-    node.id = m_NextNodeID++;
+    node.id = id;
     node.type = type;
-    node.serializedType = (type == NodeType::Unknown) ? "Unknown" : "";
-    node.displayName = displayName.empty() ? MakeNodeDisplayName(type) : std::move(displayName);
+    node.serializedType = type == NodeType::Unknown ? "Unknown" : type == NodeType::Custom ? std::move(customType) : "";
+    node.displayName = displayName.empty() ? std::string(GetNodeDefinition(node).displayName) : std::move(displayName);
     ApplyNodeDefaults(node);
     m_Nodes.push_back(std::move(node));
     Node& stored = m_Nodes.back();
@@ -184,15 +196,11 @@ void Graph::Clear() {
     ClearOriginalRootJson();
 }
 
-std::string Graph::MakeNodeDisplayName(NodeType type) const {
-    return std::string(GetNodeDefinition(type).displayName);
-}
-
 void Graph::AttachDefaultPins(Node& node) {
     node.inputs.clear();
     node.outputs.clear();
 
-    const NodeDefinition& definition = GetNodeDefinition(node.type);
+    const NodeDefinition& definition = GetNodeDefinition(node);
     for (const PinDefinition& pin : definition.inputs) {
         AddPin(node, PinKind::Input, pin.valueType, std::string(pin.name));
     }
@@ -224,17 +232,8 @@ void Graph::RemoveLinksForPin(PinID id) {
     }), m_Links.end());
 }
 
-Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName) {
-    Node node;
-    node.id = id;
-    node.type = type;
-    node.serializedType = (type == NodeType::Unknown) ? "Unknown" : "";
-    node.displayName = displayName.empty() ? MakeNodeDisplayName(type) : std::move(displayName);
-    ApplyNodeDefaults(node);
-    m_Nodes.push_back(std::move(node));
-    Node& stored = m_Nodes.back();
-    AttachDefaultPins(stored);
-    return stored;
+Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName, std::string customType) {
+    return AddNode(id, type, std::move(displayName), std::move(customType));
 }
 
 void Graph::SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinIds, const std::vector<PinID>& outputPinIds) {

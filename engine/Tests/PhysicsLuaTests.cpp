@@ -10,6 +10,7 @@
 #include "Scripting/LuaScriptEngine.h"
 #include "Scripting/ScriptPhysicsBindings.h"
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -155,6 +156,39 @@ end
                       "shared physics binding raycasts against the scene");
         pass &= Check(lua.ExecuteString("assert(_G.probeCharacterMove == false)"),
                       "shared character binding reports no controller system");
+
+        Entity seeker = AddBox(scene, "Seeker", Vec3(50.0f, 5.0f, 0.0f), false, false);
+        AddBox(scene, "SeekSensor", Vec3(50.0f, 2.0f, 0.0f), true, true);
+        AddBox(scene, "SeekSolid", Vec3(50.0f, -1.0f, 0.0f), true, false);
+        auto& seekerScript = seeker.AddComponent<LuaScriptComponent>();
+        seekerScript.scriptSource = R"lua(
+function onUpdate(dt)
+    local sensor = Scene.findAllWithPrefix("SeekSensor")[1]
+    local first = Physics.raycast(50, 3.8, 0, 0, -1, 0, 10)
+    _G.seekFirstSensor = first ~= nil and first.sensor == true and math.abs(first.distance - 1.3) < 0.05
+    _G.seekSameId = first ~= nil and first.entity ~= nil and first.entity:GetId() == sensor:GetId()
+    _G.seekIdIsInteger = math.type(this:GetId()) == "integer" and this:GetId() ~= sensor:GetId()
+    local past = Physics.raycast(50, 3.8, 0, 0, -1, 0, 10, nil, false, { this, sensor })
+    _G.seekPastSensor = past ~= nil and past.sensor == false and math.abs(past.distance - 4.3) < 0.05
+end
+)lua";
+        physics.Update(scene, Physics::kPhysicsFixedDt);
+        lua.Update(scene, Physics::kPhysicsFixedDt);
+        pass &= Check(lua.ExecuteString("assert(_G.seekFirstSensor == true)"),
+                      "raycast reports that the first hit is a sensor");
+        pass &= Check(lua.ExecuteString("assert(_G.seekSameId == true and _G.seekIdIsInteger == true)"),
+                      "entity GetId is a stable integer shared by every reference to one entity");
+        pass &= Check(lua.ExecuteString("assert(_G.seekPastSensor == true)"),
+                      "raycast ignore list skips the listed sensor and reaches the solid behind it");
+
+        Entity plate = AddBox(scene, "ThinPlate", Vec3(70.0f, 1.0f, 0.0f), true, false);
+        plate.GetComponent<TransformComponent>().scale = Vec3(0.03f, 1.0f, 1.0f);
+        physics.Update(scene, Physics::kPhysicsFixedDt);
+        Physics::RaycastHit plateHit{};
+        pass &= Check(physics.Raycast(entt::null, Vec3(68.0f, 1.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f), 5.0f, plateHit) &&
+                          plateHit.hit && plateHit.entity == static_cast<entt::entity>(plate) &&
+                          std::abs(plateHit.distance - 1.985f) < 0.01f,
+                      "a box thinner than the default convex radius keeps its real size");
 
         physicsAvailable = false;
         lua.Update(scene, Physics::kPhysicsFixedDt);

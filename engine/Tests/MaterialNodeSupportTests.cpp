@@ -55,11 +55,36 @@ bool EvaluateRoughnessThrough(NodeType type, float& outRoughness)
     return true;
 }
 
+// Roughness 0.4 on the Roughness pin and a texture on the Roughness Map pin (the layout imported PBR materials use).
+bool RoughnessValueSurvivesMap()
+{
+    Graph graph;
+    Node& output = graph.CreateNode(NodeType::MaterialOutput);
+    const PinID roughnessPin = output.inputs[kRoughnessInput];
+    const PinID roughnessMapPin = output.inputs[5];
+    Node& constant = graph.CreateNode(NodeType::ConstantFloat);
+    constant.scalar = 0.4f;
+    const PinID constantOut = constant.outputs[0];
+    Node& map = graph.CreateNode(NodeType::RoughnessTextureSample);
+    map.resourcePath = "assets/textures/rough.png";
+    const PinID mapOut = map.outputs[0];
+    if (!graph.CreateLink(constantOut, roughnessPin) || !graph.CreateLink(mapOut, roughnessMapPin)) {
+        return Check(false, "roughness graph links");
+    }
+    MaterialComponent material;
+    std::string error;
+    const bool evaluated = EvaluateGraph(graph, material, error);
+    return Check(evaluated && material.useRoughnessTexture && material.roughnessTexturePath == "assets/textures/rough.png"
+                     && std::fabs(material.roughness - 0.4f) < 1e-6f,
+                 "a Roughness Map keeps the Roughness pin's value as its multiplier");
+}
+
 } // namespace
 
 int main()
 {
     bool ok = true;
+    ok &= RoughnessValueSurvivesMap();
 
     float roughness = -1.0f;
     ok &= Check(EvaluateRoughnessThrough(NodeType::ConstantFloat, roughness) &&

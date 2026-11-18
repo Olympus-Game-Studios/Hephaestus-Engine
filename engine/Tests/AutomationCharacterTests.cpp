@@ -6,6 +6,12 @@
 #include "Assets/AssetManager.h"
 #include "Assets/CharacterAsset.h"
 #include "Assets/CharacterImport.h"
+#include "Assets/SkeletalModelImporter.h"
+#include "Assets/FbxDocument.h"
+#include "stb_image.h"
+
+#include <algorithm>
+#include <cmath>
 
 #include <filesystem>
 #include <fstream>
@@ -131,6 +137,66 @@ int main(int argc, char** argv)
     ok &= Check(importedInfo.Ok() && importedInfo.value["data"]["mesh"]["source"].is_string(),
                 "character.get_info reports the owned mesh source");
 
+    const fs::path textured = fs::path(repoRoot) / "engine" / "Tests" / "Fixtures" / "Fbx" /
+                              "skinned_textured.fbx";
+    std::vector<Hephaestus::FbxMaterialInfo> fbxMaterials;
+    ok &= Check(Hephaestus::ReadFbxMaterials(textured, fbxMaterials, error) && fbxMaterials.size() == 1 &&
+                    fbxMaterials[0].name == "FixtureSkin" &&
+                    fbxMaterials[0].baseColorTexture.extension == ".png" &&
+                    !fbxMaterials[0].baseColorTexture.embedded.empty(),
+                "ReadFbxMaterials finds the material and its embedded base colour texture: " + error);
+    auto texturedImport = Call(service, "character.import",
+                               {{"source", textured.string()}, {"name", "TexturedHero"}});
+    auto texturedInfo = Call(service, "character.get_info",
+                             {{"path", "assets/characters/TexturedHero.hpcharacter"}});
+    bool materialWritten = false;
+    if (texturedImport.Ok() && texturedInfo.Ok()) {
+        for (const auto& slot : texturedInfo.value["data"]["mesh"]["parts"]) {
+            if (slot["name"] != "FixtureSkin") continue;
+            const fs::path materialPath = project / slot["material"].get<std::string>();
+            std::ifstream in(materialPath);
+            const auto material = Hephaestus::Automation::Json::parse(in, nullptr, false);
+            materialWritten = !material.is_discarded() && material.value("useAlbedoTexture", false) &&
+                              fs::exists(project / material.value("albedoTexturePath", std::string()));
+        }
+    }
+    ok &= Check(materialWritten,
+                "character.import writes the slot material with the extracted texture and assigns it");
+
+    // Same file and map; only the creator differs. Blender's ShininessExponent map is roughness,
+    // an FBX SDK (Mixamo) one is glossiness scaling the material's exponent (25 in the fixture).
+    auto roughnessPixel = [&](const char* name, const fs::path& source, float& factor) -> int {
+        if (!Call(service, "character.import", {{"source", source.string()}, {"name", name}}).Ok()) return -1;
+        auto info = Call(service, "character.get_info",
+                         {{"path", std::string("assets/characters/") + name + ".hpcharacter"}});
+        if (!info.Ok()) return -1;
+        for (const auto& slot : info.value["data"]["mesh"]["parts"]) {
+            std::ifstream in(project / slot["material"].get<std::string>());
+            const auto material = Hephaestus::Automation::Json::parse(in, nullptr, false);
+            if (material.is_discarded() || !material.value("useRoughnessTexture", false)) return -1;
+            factor = material.value("roughness", 0.0f);
+            const std::string map = (project / material.value("roughnessTexturePath", std::string())).string();
+            int w = 0, h = 0, c = 0;
+            unsigned char* pixels = stbi_load(map.c_str(), &w, &h, &c, 1);
+            if (!pixels) return -1;
+            const int value = pixels[0];
+            stbi_image_free(pixels);
+            return value;
+        }
+        return -1;
+    };
+    float blenderFactor = 0.0f, sdkFactor = 0.0f;
+    const int blenderRoughness = roughnessPixel("BlenderRoughHero", textured, blenderFactor);
+    const int sdkRoughness = roughnessPixel(
+        "SdkGlossHero", fs::path(repoRoot) / "engine" / "Tests" / "Fixtures" / "Fbx" / "skinned_textured_fbxsdk.fbx",
+        sdkFactor);
+    const float gloss = static_cast<float>(blenderRoughness) / 255.0f;
+    const int expectedSdk = static_cast<int>(std::lround((1.0f - std::sqrt(25.0f * gloss) / 10.0f) * 255.0f));
+    ok &= Check(blenderRoughness >= 0 && std::abs(sdkRoughness - expectedSdk) <= 1 &&
+                    blenderFactor == 1.0f && sdkFactor == 1.0f,
+                "an FBX SDK glossiness map converts through the shininess exponent; a Blender roughness map is "
+                "kept (" + std::to_string(blenderRoughness) + ", " + std::to_string(sdkRoughness) + ")");
+
     auto duplicate = Call(service, "character.import",
                           {{"source", source.string()}, {"name", "ImportedHero"}});
     ok &= Check(!duplicate.Ok(),
@@ -143,6 +209,35 @@ int main(int argc, char** argv)
                 "character.import rejects a missing source");
 
     ok &= Check(backend.NotifyCount() > 0, "character.import notifies the editor host");
+
+    Hephaestus::SkeletalImportResult fixture;
+    ok &= Check(Hephaestus::SkeletalModelImporter::Load(source, {}, fixture, error) && !fixture.clips.empty(),
+                "skinned FBX fixture has a clip: " + error);
+    if (!fixture.clips.empty()) {
+        const auto& first = fixture.clips.front();
+        const std::string take = first.sourceClip.empty() ? first.name : first.sourceClip;
+        auto clipImport = Call(service, "character.import_clips",
+                               {{"path", "assets/characters/ImportedHero.hpcharacter"},
+                                {"source", source.string()},
+                                {"clips", Hephaestus::Automation::Json::array({{{"sourceClip", take}, {"name", "Wave"}}})}});
+        ok &= Check(clipImport.Ok() && clipImport.value["added"].size() == 1 &&
+                        clipImport.value["added"][0] == "Wave",
+                    "character.import_clips adds the named clip");
+        auto afterClips = Call(service, "character.get_info",
+                               {{"path", "assets/characters/ImportedHero.hpcharacter"}});
+        bool saved = false;
+        if (afterClips.Ok()) {
+            for (const auto& clip : afterClips.value["data"]["clips"]) {
+                saved |= clip["id"] == "Wave";
+            }
+        }
+        ok &= Check(saved, "character.import_clips saves the clip into the .hpcharacter");
+        auto unknownTake = Call(service, "character.import_clips",
+                                {{"path", "assets/characters/ImportedHero.hpcharacter"},
+                                 {"source", source.string()},
+                                 {"clips", Hephaestus::Automation::Json::array({{{"sourceClip", "NoSuchTake"}}})}});
+        ok &= Check(!unknownTake.Ok(), "character.import_clips rejects an unknown take");
+    }
 
     service.Shutdown();
     assetManager.Clear();

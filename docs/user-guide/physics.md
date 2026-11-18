@@ -52,6 +52,8 @@ For players and NPCs that walk around, don't use a dynamic rigid body; use a **C
 
 - Walking with **Acceleration**, **Deceleration**, **Air Acceleration** and **Air Control**
 - **Jump Speed**, **Gravity Scale** and **Max Fall Speed**
+- **Crouched Height** and **Prone Height**: the capsule's height when crouching and lying down (`Character.setCrouched` and `Character.setProne` in Lua). Getting up waits until the taller capsule has room.
+- **Coyote Time**: a jump still works for this many seconds after walking off a ledge, and **Jump Buffer**: a jump pressed this many seconds before landing happens on landing. Both make jumping feel responsive; at 0 they are off.
 - Slopes up to **Max Slope Angle** and stairs up to **Step Height**
 - Sticking to the ground on the way down slopes (**Ground Snap Distance**)
 - Standing on and riding moving platforms
@@ -79,4 +81,4 @@ end
 
 - Physics steps at a fixed 60 times a second. Moving bodies and characters are drawn smoothly between steps, so it still looks right at high frame rates.
 - Tick **Debug Draw Bounds** on a Mesh Collider to see its box as a green outline in the viewport. There's no matching view for Rigid Body shapes yet.
-- There are no joints, ragdolls or vehicles yet, and no overlap or shape cast queries; raycasts are the only physics query for now.
+- Humanoid characters can go limp as ragdolls from Lua (`Character.ragdoll`, see the [Lua API reference](lua-api.md#character)). There are no joints you can set up yourself and no vehicles yet, and no overlap or shape cast queries; raycasts are the only physics query for now.

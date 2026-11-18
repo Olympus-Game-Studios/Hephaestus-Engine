@@ -431,6 +431,72 @@ void RegisterAssetAutomation(AutomationService& service)
         }, true));
 
     RegisterOrThrow(service, Definition(
+        "asset.import_pack",
+        "Import a downloaded asset pack (.zip, folder, or one .fbx/.glb/.gltf/.obj) with everything in it: one "
+        "prefab per model with materials created and applied (glTF/FBX materials and Megascans, Unreal or "
+        "Substance texture sets, packed ORM maps read per channel), leftover textures and documents. With a "
+        "credit (title, author or license) the asset is added to assets/scripts/ImportedCredits.lua. Use it for "
+        "packs downloaded from Fab, Quixel or anywhere else; respect each pack's licence.",
+        ObjectSchema({{"source", {{"type", "string"}, {"description", "Absolute path of the .zip, folder or model"}}},
+                      {"destination", {{"type", "string"},
+                                       {"description", "Folder under assets/ (default Imported/<source name>); "
+                                                       "made unique when it exists"}}},
+                      {"credit", {{"type", "object"},
+                                  {"properties", {{"title", {{"type", "string"}}},
+                                                  {"source", {{"type", "string"}}},
+                                                  {"sourceUrl", {{"type", "string"}}},
+                                                  {"author", {{"type", "string"}}},
+                                                  {"authorUrl", {{"type", "string"}}},
+                                                  {"license", {{"type", "string"}}},
+                                                  {"licenseUrl", {{"type", "string"}}}}}}}},
+                     Json::array({"source"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto assets = RequireAssets(context, failure);
+            if (!assets) return failure;
+            IAssetImportService* importer = context.Backend().AssetImport();
+            if (!importer) {
+                return Failure(ErrorCode::ToolUnavailable, "Asset pack import is unavailable for this host");
+            }
+            if (!arguments.contains("source") || !arguments["source"].is_string() ||
+                arguments["source"].get<std::string>().empty()) {
+                return Failure(ErrorCode::InvalidArguments, "A source path is required");
+            }
+            const std::filesystem::path source =
+                std::filesystem::path(arguments["source"].get<std::string>()).lexically_normal();
+            const std::string defaultFolder =
+                "Imported/" + (source.has_stem() ? source.stem() : source.parent_path().filename()).string();
+            std::string error;
+            const auto folder = ResolveAssetFolder(assets->assetRoot,
+                                                   arguments.value("destination", defaultFolder), error);
+            if (!folder) return Failure(ErrorCode::InvalidArguments, error);
+
+            AssetIntakeRequest request;
+            request.source = source;
+            request.projectRoot = assets->projectRoot;
+            request.targetFolder = AssetPathPolicy::ToPortableKey(assets->projectRoot, folder->generic_string());
+            if (arguments.contains("credit") && arguments["credit"].is_object()) {
+                const Json& credit = arguments["credit"];
+                request.credit = {credit.value("title", ""),     credit.value("source", ""),
+                                  credit.value("sourceUrl", ""), credit.value("author", ""),
+                                  credit.value("authorUrl", ""), credit.value("license", ""),
+                                  credit.value("licenseUrl", "")};
+            }
+            AssetIntakeResult result;
+            if (!importer->ImportPack(request, result, error)) {
+                return Failure(ErrorCode::InvalidArguments, error, {{"warnings", result.warnings}});
+            }
+            assets->assets->Refresh();
+            context.Backend().NotifyAssetChanged();
+            return ToolResult::Success({{"folder", result.folder},
+                                        {"prefabs", result.prefabs},
+                                        {"materials", result.materials},
+                                        {"models", result.models},
+                                        {"otherFiles", result.otherFiles},
+                                        {"warnings", result.warnings}});
+        }, true));
+
+    RegisterOrThrow(service, Definition(
         "asset.reimport",
         "Reimport a project asset through the editor reimport pipeline.",
         ObjectSchema({{"path", {{"type", "string"}}}}, Json::array({"path"})),

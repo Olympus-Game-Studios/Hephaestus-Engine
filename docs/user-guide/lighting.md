@@ -48,6 +48,20 @@ With an HDRI, the sky also lights your scene: surfaces facing up get the sky's c
 
 **Render Distance** lets you skip drawing objects beyond a certain distance from the camera, which helps in big open scenes.
 
+### Post Processing
+
+The Environment's **Post Processing** settings change the look of the whole picture, in the editor and in your game:
+
+- **Exposure** brightens or darkens everything, in stops.
+- **Contrast** and **Saturation** start at 1, which changes nothing. Lower saturation towards 0 for black and white.
+- **Color Filter** tints everything. White leaves colours alone; a pale orange gives a warm, filmic look.
+- **Vignette** darkens the edges of the screen.
+- **Film Grain** adds fine moving noise.
+- **Scanlines** darken every third row of pixels for a monitor or broadcast feel.
+- **Bloom** makes bright areas glow into their surroundings, like light blooming in a camera lens. **Bloom Threshold** is how bright something must be before it glows (lower it to make more of the picture glow), and **Bloom Radius** is how far the glow spreads. Bloom is off at 0.
+
+Your game's menus and HUD are drawn on top afterwards, so they stay clean.
+
 ## Bounce light: Probe Volumes
 
 In real life, light bounces. A red wall tints the floor next to it, and a sunlit courtyard lights up the inside of the room beside it. That's **global illumination** (GI), and in Hephaestus you get it with **Probe Volumes**.

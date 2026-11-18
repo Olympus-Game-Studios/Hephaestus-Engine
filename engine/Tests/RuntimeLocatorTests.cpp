@@ -69,6 +69,17 @@ int main() {
     ok &= Check(RuntimeLocator::discoverEngineRoot(developer / "build" / "Release") == developer,
                 "developer source root is discovered from a build output");
 
+    ok &= Check(RuntimeBuildDirectory(developer, true) == developer / "build-automation" &&
+                    RuntimeBuildDirectory(developer, false) == developer / "build",
+                "automation runtimes build outside the shared build tree");
+    WriteRuntime(developer / "build-automation" / "Debug");
+    located = locator.locate(developer, developer / "build" / "Release", BuildConfiguration::Development, true);
+    ok &= Check(located.artifacts.executable == developer / "build-automation" / "Debug" / kPlayerExecutable,
+                "an automation request uses the automation build tree");
+    located = locator.locate(developer, developer / "build" / "Release", BuildConfiguration::Development);
+    ok &= Check(located.artifacts.executable == developer / "build" / "Debug" / kPlayerExecutable,
+                "a normal request never uses the automation build tree");
+
     const fs::path incomplete = root / "incomplete";
     Write(incomplete / kPlayerExecutable);
     located = locator.locate(incomplete, incomplete, BuildConfiguration::Release);

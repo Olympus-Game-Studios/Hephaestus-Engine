@@ -29,6 +29,7 @@
 #include "PhysicsInspectors.h"
 #include "CameraInspector.h"
 #include "AudioSourceInspector.h"
+#include "ParticleEmitterInspector.h"
 #include "CharacterInspector.h"
 #include "CharacterControllerInspector.h"
 #include "AddComponentPopup.h"
@@ -47,6 +48,7 @@
 #include "EditorSystemUsage.h"
 #include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
+#include "HierarchyEye.h"
 #include "EditorPluginHost.h"
 #include "PluginManagerDialog.h"
 #include "../Shared/SettingsWindow.h"
@@ -135,6 +137,9 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QActionGroup>
+#include <QGuiApplication>
+#include <QScreen>
+#include <utility>
 #include <QFrame>
 #include <QGridLayout>
 #include <QSettings>
@@ -313,7 +318,7 @@ QString OutlinerTypeLabel(const QString& iconName)
     return QCoreApplication::translate("EditorMainWindow", labels.value(iconName, QT_TRANSLATE_NOOP("EditorMainWindow", "Entity")));
 }
 
-/** Draws a row's trailing marker: the Prefab tag, or the hidden / locked icon. */
+/** Draws a row's visibility eye (HierarchyEye) and, left of it, its trailing marker: the Prefab tag or the lock. */
 class OutlinerRowDelegate final : public QStyledItemDelegate
 {
 public:
@@ -322,9 +327,10 @@ public:
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
     {
         QStyledItemDelegate::paint(painter, option, index);
+        HierarchyEye::Paint(painter, option, index);
         const QString trailing = index.data(kOutlinerTrailingRole).toString();
         if (trailing.isEmpty()) return;
-        const QRect area = option.rect.adjusted(0, 0, -8, 0);
+        const QRect area = option.rect.adjusted(0, 0, -(8 + HierarchyEye::kWidth), 0);
         if (trailing == QLatin1String("prefab")) {
             painter->save();
             painter->setPen(Theme::Color(Theme::Token::TextMuted));
@@ -335,9 +341,8 @@ public:
             painter->restore();
             return;
         }
-        const QString icon = trailing == QLatin1String("hidden") ? QStringLiteral("eye-off") : QStringLiteral("lock");
         const QRect iconRect(area.right() - 16, area.center().y() - 8, 16, 16);
-        Theme::Icon(icon, Theme::IconTone::Muted).paint(painter, iconRect);
+        Theme::Icon(QStringLiteral("lock"), Theme::IconTone::Muted).paint(painter, iconRect);
     }
 };
 
@@ -422,7 +427,8 @@ EditorMainWindow::EditorMainWindow(QWidget* parent,
             rebuildOutliner();
             refreshDetailsPanel();
             updateUndoRedoActions();
-        });
+        },
+        m_automationService ? &m_automationService->Registry() : nullptr);
     m_pluginSystem->SetContextFactory([this](const Plugins::PluginManifest& manifest) {
         return m_pluginHost->CreateContext(manifest);
     });
@@ -927,6 +933,11 @@ public:
         return &Hephaestus::AssetManager::GetInstance();
     }
 
+    AudioEngine* Audio() noexcept override
+    {
+        return m_owner->m_engine ? m_owner->m_engine->GetAudioEngine() : nullptr;
+    }
+
     Hephaestus::AssetReferenceIndex* AssetReferences() noexcept override
     {
         return &EditorAssetServices::Instance().ReferenceIndex();
@@ -1371,6 +1382,8 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
     if (m_engine) {
         m_engine->Shutdown();
     }
+    delete m_playWindow;
+    m_playWindow = nullptr;
 
     event->accept();
 }
@@ -1612,6 +1625,10 @@ void EditorMainWindow::setupTopToolbar()
         connect(m_playAction, &QAction::triggered, this, [this](bool checked) {
             if (!m_engine) return;
 
+            if (checked && m_playInWindowAction && m_playInWindowAction->isChecked()) {
+                openPlayWindow();
+                return;
+            }
             if (checked) {
                 // Start play mode
                 m_engine->StartPlayMode();
@@ -1676,6 +1693,57 @@ void EditorMainWindow::setupTopToolbar()
         }
     });
 
+    QSettings playSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+    auto* playModeGroup = new QActionGroup(this);
+    auto* playInViewportAction = new QAction(tr("Play in Viewport"), playModeGroup);
+    m_playInWindowAction = new QAction(tr("Play in New Window"), playModeGroup);
+    playInViewportAction->setCheckable(true);
+    m_playInWindowAction->setCheckable(true);
+    m_playInWindowAction->setChecked(playSettings.value(QStringLiteral("play/newWindow"), false).toBool());
+    playInViewportAction->setChecked(!m_playInWindowAction->isChecked());
+    connect(m_playInWindowAction, &QAction::toggled, this, [](bool inWindow) {
+        QSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"))
+            .setValue(QStringLiteral("play/newWindow"), inWindow);
+    });
+
+    auto* buildAndRunAction = new QAction(Theme::Icon(QStringLiteral("build")), tr("Build and Run"), this);
+    buildAndRunAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
+    buildAndRunAction->setToolTip(tr("Package the open scene into Saved/BuildAndRun and start it"));
+    connect(buildAndRunAction, &QAction::triggered, this, &EditorMainWindow::onBuildAndRun);
+    auto* buildConfigGroup = new QActionGroup(this);
+    auto* buildRunDevelopmentAction = new QAction(tr("Development Build"), buildConfigGroup);
+    m_buildRunReleaseAction = new QAction(tr("Release Build"), buildConfigGroup);
+    buildRunDevelopmentAction->setCheckable(true);
+    m_buildRunReleaseAction->setCheckable(true);
+    m_buildRunReleaseAction->setChecked(playSettings.value(QStringLiteral("play/buildRunRelease"), false).toBool());
+    buildRunDevelopmentAction->setChecked(!m_buildRunReleaseAction->isChecked());
+    connect(m_buildRunReleaseAction, &QAction::toggled, this, [](bool release) {
+        QSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"))
+            .setValue(QStringLiteral("play/buildRunRelease"), release);
+    });
+    auto addPlayModeAndBuild = [=, this](QMenu* menu) {
+        menu->addSection(tr("Play Mode"));
+        menu->addAction(playInViewportAction);
+        menu->addAction(m_playInWindowAction);
+        menu->addSection(tr("Standalone"));
+        menu->addAction(buildAndRunAction);
+        menu->addAction(buildRunDevelopmentAction);
+        menu->addAction(m_buildRunReleaseAction);
+    };
+
+    m_playAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
+    auto* playMenuBarMenu = new QMenu(tr("&Play"), m_menuBar);
+    playMenuBarMenu->addAction(m_playAction);
+    playMenuBarMenu->addAction(m_pauseAction);
+    playMenuBarMenu->addAction(m_stopAction);
+    playMenuBarMenu->addAction(m_stepAction);
+    addPlayModeAndBuild(playMenuBarMenu);
+    QAction* insertBefore = nullptr;
+    for (QAction* menuAction : m_menuBar->actions()) {
+        if (menuAction->text() == tr("&View")) insertBefore = menuAction;
+    }
+    m_menuBar->insertMenu(insertBefore, playMenuBarMenu);
+
     // Header: brand, project, menus, command search, history and play controls.
     {
         auto* header = new QWidget(this);
@@ -1726,6 +1794,14 @@ void EditorMainWindow::setupTopToolbar()
         modeSwitch->setFixedHeight(26);
         layout->addWidget(modeSwitch, 0, Qt::AlignVCenter);
         layout->addStretch(1);
+
+        // Plugins add their own buttons here (EditorPluginHost::RegisterHeaderButton).
+        auto* pluginButtons = new QWidget(header);
+        pluginButtons->setObjectName(QStringLiteral("PluginHeaderButtons"));
+        auto* pluginButtonsLayout = new QHBoxLayout(pluginButtons);
+        pluginButtonsLayout->setContentsMargins(0, 0, 0, 0);
+        pluginButtonsLayout->setSpacing(2);
+        layout->addWidget(pluginButtons);
 
         auto* search = new EditorCommandSearch(m_menuBar, header);
         search->setFixedWidth(360);
@@ -1786,6 +1862,7 @@ void EditorMainWindow::setupTopToolbar()
         connect(playMenu, &QMenu::aboutToShow, this, [this, realtimeAction]() {
             if (m_engine) realtimeAction->setChecked(m_engine->IsRealtime());
         });
+        addPlayModeAndBuild(playMenu);
         playMenuBtn->setMenu(playMenu);
         playBtn->setFocusPolicy(Qt::NoFocus);
         auto* playPair = new QHBoxLayout();
@@ -1823,7 +1900,11 @@ void EditorMainWindow::setupTopToolbar()
         m_buildBtn->setIcon(Theme::Icon(QStringLiteral("build"), Theme::IconTone::Primary));
         m_buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         m_buildBtn->setFocusPolicy(Qt::NoFocus);
+        m_buildBtn->setToolTip(buildAndRunAction->toolTip());
         auto* buildMenu = new QMenu(m_buildBtn);
+        buildMenu->addAction(buildRunDevelopmentAction);
+        buildMenu->addAction(m_buildRunReleaseAction);
+        buildMenu->addSeparator();
         buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
         buildMenu->addAction(tr("Package"), this, &EditorMainWindow::onBuildProject);
         buildMenu->addAction(tr("Package && Run"), this, &EditorMainWindow::onPackageAndRun);
@@ -1832,7 +1913,7 @@ void EditorMainWindow::setupTopToolbar()
         buildMenu->addAction(tr("Clean Package"), this, &EditorMainWindow::onCleanPackage);
         m_buildBtn->setMenu(buildMenu);
         m_buildBtn->setPopupMode(QToolButton::DelayedPopup);
-        connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onPackageAndRun);
+        connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onBuildAndRun);
         layout->addWidget(m_buildBtn);
 
         setMenuWidget(header);
@@ -2046,6 +2127,9 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerTree->setObjectName("OutlinerTree");
     m_outlinerTree->setHeaderHidden(true);
     m_outlinerTree->setItemDelegate(new OutlinerRowDelegate(m_outlinerTree));
+    HierarchyEye::Install(m_outlinerTree, [this](QTreeWidgetItem* item, bool isolate) {
+        toggleOutlinerVisibility(static_cast<entt::entity>(item->data(0, Qt::UserRole).toUInt()), isolate);
+    }, true);
     m_outlinerTree->setIconSize(QSize(16, 16));
     m_outlinerTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_outlinerTree->setRootIsDecorated(true);
@@ -3499,6 +3583,8 @@ bool EditorMainWindow::initializeEngine()
             this, &EditorMainWindow::onFrameRendered);
     connect(m_engine.get(), &QtEditorEngine::engineError,
             this, &EditorMainWindow::onEngineError);
+    connect(m_engine.get(), &QtEditorEngine::presentationTargetChanged,
+            this, &EditorMainWindow::onPresentationTargetChanged);
     connect(m_engine.get(), &QtEditorEngine::playStateChanged,
             this, [this](bool playing, bool paused) {
         if (m_debuggerPanel && !LuaDebugger::Instance().IsPaused()) m_debuggerPanel->ShowRunning(playing);
@@ -3513,9 +3599,13 @@ bool EditorMainWindow::initializeEngine()
             m_viewportHost->style()->unpolish(m_viewportHost);
             m_viewportHost->style()->polish(m_viewportHost);
         }
+        if (!playing && m_playWindow) {
+            m_engine->PresentTo(nullptr);
+        }
         if (m_runtimeUIOverlay) {
             const auto& runtimeUICommands = m_engine->GetRuntimeUIDrawCommands();
-            const bool showUI = (playing || paused) && !runtimeUICommands.empty();
+            const bool showUI = (playing || paused) && !runtimeUICommands.empty() &&
+                                !m_engine->IsPresentingToPlayWindow();
             m_runtimeUIOverlay->setVisible(showUI);
             m_runtimeUIOverlay->SetMouseEventsEnabled(
                 showUI && m_engine->IsRuntimeUICursorMode());
@@ -3724,7 +3814,7 @@ void EditorMainWindow::onFrameRendered(float dt)
         }
         const auto& runtimeUICommands = m_engine->GetRuntimeUIDrawCommands();
         const bool showRuntimeUI = (m_engine->IsPlaying() || m_engine->IsPaused()) &&
-                                   !runtimeUICommands.empty();
+                                   !runtimeUICommands.empty() && !m_engine->IsPresentingToPlayWindow();
         m_runtimeUIOverlay->setVisible(showRuntimeUI);
         // Only route mouse to the overlay in UI cursor mode (menus). Game/FPS
         // cursor capture must keep events on the viewport.
@@ -4018,8 +4108,14 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     item->setText(0, QString::fromStdString(name));
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
     if (ctx->IsEditorHidden(entity)) {
+        item->setData(0, HierarchyEye::kRole, static_cast<int>(HierarchyEye::State::Hidden));
+    } else if (!ctx->IsEditorEntityShown(entity)) {
+        item->setData(0, HierarchyEye::kRole, static_cast<int>(HierarchyEye::State::HiddenByParent));
+    } else {
+        item->setData(0, HierarchyEye::kRole, static_cast<int>(HierarchyEye::State::Shown));
+    }
+    if (!ctx->IsEditorEntityShown(entity)) {
         item->setForeground(0, Theme::Color(Theme::Token::TextDisabled));
-        item->setData(0, kOutlinerTrailingRole, QStringLiteral("hidden"));
         item->setToolTip(0, tr("Hidden in editor"));
     } else if (ctx->IsEditorLocked(entity)) {
         item->setForeground(0, Theme::Color(Theme::Token::TextMuted));
@@ -4410,6 +4506,10 @@ void EditorMainWindow::setupLuaDebugger()
         QEventLoop loop;
         LuaDebugger::Instance().onResumeRequested = [&loop]() { loop.quit(); };
         for (QShortcut* shortcut : m_debuggerShortcuts) shortcut->setEnabled(true);
+        // The engine tick that hands the keyboard to the game does not run while Lua is paused.
+        if (QtViewportWindow* gameWindow = m_engine ? m_engine->PresentationTarget() : nullptr) {
+            gameWindow->SetGameOwnsKeyboard(false);
+        }
         showProgrammerPanel(m_debuggerDock);
         m_codeEditorDock->show();
         m_debuggerPanel->ShowPause(state);
@@ -5251,6 +5351,26 @@ void EditorMainWindow::hideSelectedInEditor()
     refreshDetailsPanel();
 }
 
+void EditorMainWindow::toggleOutlinerVisibility(entt::entity entity, bool isolate)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || entity == entt::null) return;
+    if (isolate) {
+        const bool alreadyIsolated = ctx->GetIsolatedIds().size() == 1 &&
+                                     ctx->GetIsolatedIds().contains(static_cast<uint32_t>(entity));
+        if (alreadyIsolated) {
+            ctx->ExitIsolation();
+        } else {
+            ctx->IsolateEntities({ entity });
+        }
+    } else {
+        ctx->SetEditorHidden(entity, !ctx->IsEditorHidden(entity));
+        saveEditorViewState();
+    }
+    rebuildOutliner();
+}
+
 void EditorMainWindow::isolateSelectedInEditor()
 {
     if (!m_engine) return;
@@ -5786,6 +5906,11 @@ void EditorMainWindow::onOpenLevel()
 void EditorMainWindow::onSaveLevel()
 {
     if (!m_engine) return;
+    // Play runs on the edited scene, so saving now would write the game's state into the level.
+    if (m_engine->IsPlaying() || m_engine->IsPaused()) {
+        statusBar()->showMessage(tr("Stop Play to save the level"), 3000);
+        return;
+    }
     auto* ctx = m_engine->GetEditorContext();
     if (!ctx || !ctx->HasActiveScene()) return;
     
@@ -5806,6 +5931,10 @@ void EditorMainWindow::onSaveLevel()
 void EditorMainWindow::onSaveLevelAs()
 {
     if (!m_engine) return;
+    if (m_engine->IsPlaying() || m_engine->IsPaused()) {
+        statusBar()->showMessage(tr("Stop Play to save the level"), 3000);
+        return;
+    }
     auto* ctx = m_engine->GetEditorContext();
     if (!ctx || !ctx->HasActiveScene()) return;
     
@@ -6362,8 +6491,8 @@ void EditorMainWindow::promptPendingRecovery()
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(tr("Recover Unsaved Work"));
     box.setText(tr("The previous editor session ended unexpectedly. "
-                   "Restore a recovery snapshot into the active scene "
-                   "(does not overwrite the scene file on disk)?"));
+                   "Reopen the newest snapshot's scene with the recovered changes "
+                   "(nothing is written to disk until you save)?"));
     box.setInformativeText(lines.join(QLatin1Char('\n')));
     auto* restoreBtn = box.addButton(tr("Restore"), QMessageBox::AcceptRole);
     auto* discardBtn = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
@@ -6400,28 +6529,27 @@ void EditorMainWindow::promptPendingRecovery()
     if (!ctx) {
         return;
     }
-    if (!ctx->HasActiveScene()) {
-        ctx->NewScene("Recovered Scene");
-    }
-    Scene* scene = ctx->GetActiveScene();
-    if (!scene) {
-        return;
-    }
-
-    if (!SceneSerializer::DeserializeFromString(*scene, *content)) {
+    bool openedSource = false;
+    std::string restoreError;
+    if (!ctx->RestoreSceneSnapshot(chosen.sourcePath, *content, openedSource, restoreError)) {
         if (m_notifications) {
-            m_notifications->ShowError(tr("Failed to restore recovery snapshot"));
+            m_notifications->ShowError(tr("Failed to restore recovery snapshot: %1")
+                                           .arg(QString::fromStdString(restoreError)));
         }
         return;
     }
 
-    ctx->MarkDirty();
     m_engine->RebuildSceneMeshes();
     m_recoveryStore.DiscardAll();
     updateWindowTitle();
     rebuildOutliner();
     if (m_notifications) {
-        m_notifications->ShowInfo(tr("Recovery snapshot restored (unsaved)"));
+        if (openedSource) {
+            m_notifications->ShowInfo(tr("Recovery snapshot restored into %1 (unsaved)")
+                                          .arg(QString::fromStdString(chosen.sourcePath)));
+        } else {
+            m_notifications->ShowWarning(tr("The snapshot's scene file is missing; restored into a new unsaved scene"));
+        }
     }
 }
 
@@ -6774,7 +6902,7 @@ void EditorMainWindow::onOpenSettings()
 void EditorMainWindow::onOpenPlugins()
 {
     if (!m_pluginSystem) return;
-    PluginManagerDialog dialog(*m_pluginSystem, this);
+    PluginManagerDialog dialog(*m_pluginSystem, m_pluginHost.get(), this);
     dialog.exec();
 }
 
@@ -7011,6 +7139,93 @@ void EditorMainWindow::onPackageAndRun()
     startBuild(Build::BuildAction::PackageAndRun);
 }
 
+void EditorMainWindow::onBuildAndRun()
+{
+    if (m_buildThread && m_buildThread->isRunning()) {
+        startBuild(Build::BuildAction::PackageAndRun);
+        return;
+    }
+    if (!m_engine) return;
+    if (m_engine->IsPlaying() || m_engine->IsPaused()) {
+        statusBar()->showMessage(tr("Stop Play to build and run"), 3000);
+        return;
+    }
+    // The packager reads scenes from disk, so unsaved edits would silently be left out.
+    auto* ctx = m_engine->GetEditorContext();
+    if (ctx && ctx->HasActiveScene() && (ctx->IsDirty() || ctx->GetScenePath().empty())) {
+        QMessageBox box(QMessageBox::Question, tr("Build and Run"),
+                        tr("The open scene has unsaved changes, and the build uses the saved files."),
+                        QMessageBox::NoButton, this);
+        QPushButton* save = box.addButton(tr("Save and Build"), QMessageBox::AcceptRole);
+        QPushButton* lastSaved = ctx->GetScenePath().empty()
+            ? nullptr : box.addButton(tr("Build Last Saved Version"), QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(save);
+        box.exec();
+        if (box.clickedButton() == save) {
+            onSaveLevel();
+            if (ctx->IsDirty() || ctx->GetScenePath().empty()) return;
+        } else if (!lastSaved || box.clickedButton() != lastSaved) {
+            return;
+        }
+    }
+    startBuild(Build::BuildAction::PackageAndRun,
+               m_buildRunReleaseAction && m_buildRunReleaseAction->isChecked()
+                   ? Build::BuildConfiguration::Release
+                   : Build::BuildConfiguration::Development);
+}
+
+void EditorMainWindow::openPlayWindow()
+{
+    if (!m_engine || m_playWindow) return;
+    m_playWindow = new QtViewportWindow();
+    QString title = m_projectContext && m_projectContext->HasProject()
+        ? QString::fromStdString(m_projectContext->GetProjectName()) : QString();
+    if (title.trimmed().isEmpty()) title = QStringLiteral("Hephaestus");
+    m_playWindow->setTitle(tr("%1 (Play)").arg(title));
+    m_playWindow->setIcon(windowIcon());
+    m_playWindow->setMinimumSize(QSize(320, 180));
+    const QRect saved = QSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"))
+                            .value(QStringLiteral("play/windowGeometry")).toRect();
+    if (saved.isValid() && QGuiApplication::screenAt(saved.center())) {
+        m_playWindow->setGeometry(saved);
+    } else {
+        QScreen* screen = windowHandle() ? windowHandle()->screen() : QGuiApplication::primaryScreen();
+        const QRect available = screen->availableGeometry();
+        const double scale = std::min({1.0, available.width() * 0.8 / 1920.0, available.height() * 0.8 / 1080.0});
+        const QSize size(static_cast<int>(1920 * scale), static_cast<int>(1080 * scale));
+        m_playWindow->resize(size);
+        m_playWindow->setPosition(available.center() - QPoint(size.width() / 2, size.height() / 2));
+    }
+    connect(m_playWindow, &QtViewportWindow::viewportReady, this, [this]() {
+        if (m_engine && m_playWindow) m_engine->PresentTo(m_playWindow);
+    });
+    connect(m_playWindow, &QtViewportWindow::closeRequested, this, [this]() {
+        if (!m_engine) return;
+        if (m_engine->IsPlaying() || m_engine->IsPaused()) m_stopAction->trigger();
+        else m_engine->PresentTo(nullptr);
+    });
+    m_playWindow->show();
+    statusBar()->showMessage(tr("Opening the Play window"), 2000);
+}
+
+void EditorMainWindow::onPresentationTargetChanged(QtViewportWindow* target)
+{
+    if (!m_engine || !m_playWindow) return;
+    if (target == m_playWindow) {
+        if (!m_engine->IsPlaying()) m_engine->StartPlayMode();
+        m_playWindow->requestActivate();
+        return;
+    }
+    QSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"))
+        .setValue(QStringLiteral("play/windowGeometry"), m_playWindow->geometry());
+    QtViewportWindow* window = std::exchange(m_playWindow, nullptr);
+    window->hide();
+    window->deleteLater();
+    if (m_playAction) m_playAction->setChecked(m_engine->IsPlaying());
+    activateWindow();
+}
+
 void EditorMainWindow::onRunLastPackage()
 {
     QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
@@ -7060,7 +7275,8 @@ void EditorMainWindow::onCleanPackage()
     startBuild(Build::BuildAction::Clean);
 }
 
-void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
+void EditorMainWindow::startBuild(Build::BuildAction requestedAction,
+                                  std::optional<Build::BuildConfiguration> quickRun)
 {
     if (m_buildThread && m_buildThread->isRunning()) {
         if (m_buildCancel) {
@@ -7137,65 +7353,83 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
         QStringLiteral("build/outputRoot/") + QString::number(qHash(projectRoot)),
         QDir(projectRoot).filePath(QStringLiteral("Builds"))).toString();
 
-    BuildSettingsDialog dialog(projectName, sceneFiles, startupScene, outputRoot, defaults, this);
-    connect(&dialog, &BuildSettingsDialog::openStartupSceneRequested, this,
-            [this](const QString& path) {
-        if (!path.isEmpty() && m_assetActions) {
-            m_assetActions->Open(path);
-        }
-    });
-    connect(&dialog, &BuildSettingsDialog::revealStartupSceneRequested, this,
-            [this](const QString& path) {
-        if (!path.isEmpty() && m_assetBrowser) {
-            m_assetBrowser->RevealAsset(path);
-            m_assetBrowserDock->show();
-            m_assetBrowserDock->raise();
-        }
-    });
-    if (dialog.exec() != QDialog::Accepted) {
-        return;
-    }
-    BuildSettings selected = dialog.GetSettings();
-    if (requestedAction != Build::BuildAction::Package) {
-        selected.action = requestedAction;
-    }
-    if (selected.action == Build::BuildAction::Clean) {
-        const QString product = QString::fromStdString(
-            Build::PackageStager::sanitizeProductName(projectName.toStdString()));
-        const QString packagePath =
-            QDir(selected.outputDirectory).filePath(product);
-        if (QMessageBox::warning(
-                this, tr("Clean Package"),
-                tr("This permanently removes the last successful package and any "
-                   "temporary staging data at:\n\n%1\n\nContinue?")
-                    .arg(QDir::toNativeSeparators(packagePath)),
-                QMessageBox::Yes | QMessageBox::Cancel,
-                QMessageBox::Cancel) != QMessageBox::Yes) {
+    BuildSettings selected;
+    if (quickRun) {
+        selected = defaults;
+        selected.configuration = *quickRun;
+        selected.action = Build::BuildAction::PackageAndRun;
+        const auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+        const QString scenePath = ctx ? QString::fromStdString(ctx->GetScenePath()) : QString();
+        selected.startScene = scenePath.isEmpty()
+            ? startupScene : QDir(projectRoot).relativeFilePath(scenePath).replace('\\', '/');
+        selected.outputDirectory = QDir(projectRoot).filePath(
+            *quickRun == Build::BuildConfiguration::Release ? QStringLiteral("Saved/BuildAndRun/Release")
+                                                            : QStringLiteral("Saved/BuildAndRun/Development"));
+        selected.validateFirst = *quickRun == Build::BuildConfiguration::Release;
+        selected.openOutputFolder = false;
+        selected.createZip = false;
+        selected.reportUnusedAssets = false;
+    } else {
+        BuildSettingsDialog dialog(projectName, sceneFiles, startupScene, outputRoot, defaults, this);
+        connect(&dialog, &BuildSettingsDialog::openStartupSceneRequested, this,
+                [this](const QString& path) {
+            if (!path.isEmpty() && m_assetActions) {
+                m_assetActions->Open(path);
+            }
+        });
+        connect(&dialog, &BuildSettingsDialog::revealStartupSceneRequested, this,
+                [this](const QString& path) {
+            if (!path.isEmpty() && m_assetBrowser) {
+                m_assetBrowser->RevealAsset(path);
+                m_assetBrowserDock->show();
+                m_assetBrowserDock->raise();
+            }
+        });
+        if (dialog.exec() != QDialog::Accepted) {
             return;
         }
-    }
+        selected = dialog.GetSettings();
+        if (requestedAction != Build::BuildAction::Package) {
+            selected.action = requestedAction;
+        }
+        if (selected.action == Build::BuildAction::Clean) {
+            const QString product = QString::fromStdString(
+                Build::PackageStager::sanitizeProductName(projectName.toStdString()));
+            const QString packagePath =
+                QDir(selected.outputDirectory).filePath(product);
+            if (QMessageBox::warning(
+                    this, tr("Clean Package"),
+                    tr("This permanently removes the last successful package and any "
+                       "temporary staging data at:\n\n%1\n\nContinue?")
+                        .arg(QDir::toNativeSeparators(packagePath)),
+                    QMessageBox::Yes | QMessageBox::Cancel,
+                    QMessageBox::Cancel) != QMessageBox::Yes) {
+                return;
+            }
+        }
 
-    if (m_projectSettingsManager) {
-        m_projectSettingsManager->SetValue(
-            QStringLiteral("project.info.defaultScene"), selected.startScene);
-        m_projectSettingsManager->SetValue(
-            QStringLiteral("project.build.defaultConfiguration"),
-            selected.configuration == Build::BuildConfiguration::Release
-                ? QStringLiteral("Release") : QStringLiteral("Development"));
-        m_projectSettingsManager->SetValue(
-            QStringLiteral("project.build.windowTitle"), selected.windowTitle);
-        m_projectSettingsManager->SetValue(
-            QStringLiteral("project.build.defaultResolution"),
-            QStringLiteral("%1x%2").arg(selected.windowWidth).arg(selected.windowHeight));
-        m_projectSettingsManager->SetValue(
-            QStringLiteral("project.build.fullscreenDefault"), selected.fullscreen);
-        m_projectSettingsManager->SetValue(
-            QStringLiteral("project.build.vsyncDefault"), selected.vsync);
-        m_projectSettingsManager->Save();
+        if (m_projectSettingsManager) {
+            m_projectSettingsManager->SetValue(
+                QStringLiteral("project.info.defaultScene"), selected.startScene);
+            m_projectSettingsManager->SetValue(
+                QStringLiteral("project.build.defaultConfiguration"),
+                selected.configuration == Build::BuildConfiguration::Release
+                    ? QStringLiteral("Release") : QStringLiteral("Development"));
+            m_projectSettingsManager->SetValue(
+                QStringLiteral("project.build.windowTitle"), selected.windowTitle);
+            m_projectSettingsManager->SetValue(
+                QStringLiteral("project.build.defaultResolution"),
+                QStringLiteral("%1x%2").arg(selected.windowWidth).arg(selected.windowHeight));
+            m_projectSettingsManager->SetValue(
+                QStringLiteral("project.build.fullscreenDefault"), selected.fullscreen);
+            m_projectSettingsManager->SetValue(
+                QStringLiteral("project.build.vsyncDefault"), selected.vsync);
+            m_projectSettingsManager->Save();
+        }
+        userSettings.setValue(
+            QStringLiteral("build/outputRoot/") + QString::number(qHash(projectRoot)),
+            selected.outputDirectory);
     }
-    userSettings.setValue(
-        QStringLiteral("build/outputRoot/") + QString::number(qHash(projectRoot)),
-        selected.outputDirectory);
 
     const std::filesystem::path executableDirectory(
         Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
@@ -7263,10 +7497,10 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
         m_notifications->ShowProgress(tr("Preparing package..."));
     }
     const bool openOutput = selected.openOutputFolder;
-    m_buildThread = QThread::create([this, request, openOutput]() {
+    m_buildThread = QThread::create([this, request, openOutput, quickRun]() {
         Build::BuildService service;
         Build::BuildResult result = service.execute(request);
-        QMetaObject::invokeMethod(this, [this, result = std::move(result), openOutput,
+        QMetaObject::invokeMethod(this, [this, result = std::move(result), openOutput, quickRun,
                                          projectRoot = request.projectRoot,
                                          buildAction = request.action]() mutable {
             m_buildBtn->setText(tr("Build && Run"));
@@ -7359,13 +7593,13 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
                         tr("Stop the game and retry, choose another output directory, or cancel."));
                     auto* retryButton = lockMessage.addButton(
                         tr("Retry After Stopping Game"), QMessageBox::AcceptRole);
-                    auto* chooseButton = lockMessage.addButton(
+                    auto* chooseButton = quickRun ? nullptr : lockMessage.addButton(
                         tr("Choose Different Output"), QMessageBox::ActionRole);
                     lockMessage.addButton(QMessageBox::Cancel);
                     lockMessage.exec();
 
                     bool retry = lockMessage.clickedButton() == retryButton;
-                    if (lockMessage.clickedButton() == chooseButton) {
+                    if (chooseButton && lockMessage.clickedButton() == chooseButton) {
                         const QString chosen = QFileDialog::getExistingDirectory(
                             this, tr("Choose Package Output"),
                             result.outputPath.empty()
@@ -7381,8 +7615,8 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
                         }
                     }
                     if (retry) {
-                        QTimer::singleShot(250, this, [this, buildAction]() {
-                            startBuild(buildAction);
+                        QTimer::singleShot(250, this, [this, buildAction, quickRun]() {
+                            startBuild(buildAction, quickRun);
                         });
                     }
                 }
@@ -7521,6 +7755,14 @@ void EditorMainWindow::registerComponentInspectors()
         },
         [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
             return new AudioSourceInspector(ctx, e, parent);
+        });
+
+    reg.Register("ParticleEmitter", 44,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<ParticleEmitterComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new ParticleEmitterInspector(ctx, e, parent);
         });
 
     // ── Camera (order 50) ───────────────────────────────────────────────
@@ -8401,52 +8643,6 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         camComp.isActive  = false;
         camComp.showEditorMesh = true;
         created.AddComponent<CameraComponent>(camComp);
-
-        // Editor-only visual representation via Camera.glb mesh
-        if (frameRenderer) {
-            namespace fs = std::filesystem;
-            // Resolve camera mesh from the project's .engine folder first
-            fs::path camMeshPath;
-            if (m_projectContext && m_projectContext->HasProject()) {
-                camMeshPath = fs::path(m_projectContext->GetProjectRootDir()) / ".engine" / "meshes" / "Camera.glb";
-            }
-            if (camMeshPath.empty() || !fs::exists(camMeshPath)) {
-                fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
-                camMeshPath = exeDir / "assets" / "meshes" / "Camera.glb";
-            }
-            std::string camAssetPath = ".engine/meshes/Camera.glb";
-            if (fs::exists(camMeshPath)) {
-                std::string normalizedKey = camMeshPath.lexically_normal().generic_string();
-                size_t meshHandle = frameRenderer->GetMeshHandle(normalizedKey);
-                if (meshHandle == SIZE_MAX) {
-                    meshHandle = frameRenderer->GetMeshHandle(camAssetPath);
-                }
-                if (meshHandle == SIZE_MAX) {
-                    MeshData meshData;
-                    std::string loadError;
-                    if (ModelImporter::LoadModel(camMeshPath, meshData, loadError) &&
-                        !meshData.vertices.empty() && !meshData.indices.empty()) {
-                        meshHandle = m_engine->uploadMeshToGPU("Camera", meshData, camMeshPath, true);
-                        if (meshHandle != MeshRendererComponent::InvalidMesh) {
-                            frameRenderer->AddMeshAlias(camAssetPath, meshHandle);
-                        }
-                    }
-                }
-                if (meshHandle != MeshRendererComponent::InvalidMesh) {
-                    MeshGPU* meshGPU = frameRenderer->GetMesh(meshHandle);
-                    int subCount = (meshGPU && !meshGPU->submeshes.empty())
-                        ? static_cast<int>(meshGPU->submeshes.size()) : 1;
-                    AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
-
-                    auto& renderer = created.AddComponent<MeshRendererComponent>();
-                    renderer.SetMesh(meshHandle, bounds, camAssetPath, true, subCount);
-                    renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
-                    renderer.appliedMaterialPaths.resize(static_cast<size_t>(subCount));
-                    renderer.hideInGame = true; // Editor-only visual
-                    created.AddComponent<MaterialComponent>(Vec3(0.6f, 0.6f, 0.7f));
-                }
-            }
-        }
 
         auto& tc = created.GetComponent<TransformComponent>();
         tc.position = spawnPos;

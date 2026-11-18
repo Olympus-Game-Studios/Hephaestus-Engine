@@ -14,6 +14,7 @@
 #include "UI/QtEditor/EditorConsolePanel.h"
 #include "Core/EngineLog.h"
 #include "UI/QtEditor/EditorTheme.h"
+#include "UI/QtEditor/QtViewportWindow.h"
 
 #include <QtTest/QtTest>
 #include <QAbstractItemView>
@@ -25,6 +26,7 @@
 #include <QAbstractItemModel>
 #include <QCompleter>
 #include <QLineEdit>
+#include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPlainTextEdit>
@@ -37,6 +39,57 @@
 class EditorQtSmokeTests : public QObject {
     Q_OBJECT
 private slots:
+    // Crouch (Ctrl) plus D or S must reach the game in Play, not the editor's Duplicate and Save.
+    void runningGameClaimsEditorShortcutsInTheViewport() {
+        Hephaestus::QtEditor::QtViewportWindow viewport;
+        for (const QKeySequence& key : {QKeySequence(Qt::CTRL | Qt::Key_D), QKeySequence(Qt::CTRL | Qt::Key_S),
+                                        QKeySequence(Qt::Key_H), QKeySequence(Qt::Key_F5)}) {
+            const QKeyCombination combo = key[0];
+            QKeyEvent editing(QEvent::ShortcutOverride, combo.key(), combo.keyboardModifiers());
+            editing.ignore();
+            QCoreApplication::sendEvent(&viewport, &editing);
+            QVERIFY2(!editing.isAccepted(), "editor shortcuts work in the viewport outside Play");
+            viewport.SetGameOwnsKeyboard(true);
+            QKeyEvent playing(QEvent::ShortcutOverride, combo.key(), combo.keyboardModifiers());
+            playing.ignore();
+            QCoreApplication::sendEvent(&viewport, &playing);
+            QVERIFY2(playing.isAccepted(), "the running game keeps the key from editor shortcuts");
+            viewport.SetGameOwnsKeyboard(false);
+        }
+    }
+
+    // The same through Qt's shortcut handling: a window-wide Ctrl+D action does not fire while the game plays.
+    void runningGameStopsWindowShortcutsFiring() {
+        QMainWindow window;
+        int duplicates = 0;
+        auto* duplicate = new QAction(&window);
+        duplicate->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+        window.addAction(duplicate);
+        connect(duplicate, &QAction::triggered, &window, [&duplicates]() { ++duplicates; });
+        auto* viewport = new Hephaestus::QtEditor::QtViewportWindow();
+        QList<int> gameKeys;
+        viewport->SetInputEventCallback([&gameKeys](const Hephaestus::QtEditor::InputEvent& event) {
+            if (event.type == Hephaestus::QtEditor::InputEvent::Type::KeyPress) gameKeys << event.key;
+        });
+        window.setCentralWidget(QWidget::createWindowContainer(viewport, &window));
+        window.show();
+        window.activateWindow();
+        viewport->requestActivate();
+        if (!QTest::qWaitForWindowActive(viewport)) QSKIP("the platform did not activate the test window");
+        QTest::keyClick(viewport, Qt::Key_D, Qt::ControlModifier);
+        QCOMPARE(duplicates, 1);
+        viewport->SetGameOwnsKeyboard(true);
+        gameKeys.clear();
+        QTest::keyClick(viewport, Qt::Key_D, Qt::ControlModifier);
+        QCOMPARE(duplicates, 1);
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        QVERIFY2(gameKeys.contains(Qt::Key_D) && gameKeys.contains(Qt::Key_Escape),
+                 "the game receives Ctrl+D as D, and Escape still arrives to stop Play");
+        viewport->SetGameOwnsKeyboard(false);
+        QTest::keyClick(viewport, Qt::Key_D, Qt::ControlModifier);
+        QCOMPARE(duplicates, 2);
+    }
+
     void searchBoxClearRestoresEmptyQuery() {
         QLineEdit box;
         box.setClearButtonEnabled(true);

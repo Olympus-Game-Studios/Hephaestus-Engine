@@ -70,18 +70,6 @@ enum class NodeType {
     BreakVector,
     Transform,
     TexCoord,
-    ScreenPosition,
-    Noise,
-    Gradient,
-    Fresnel,
-    UVDistortion,
-    Time,
-    CameraVector,
-    ViewDirection,
-    ReflectionVector,
-    WorldPosition,
-    ObjectPosition,
-    DistanceToCamera,
     If,
     Step,
     SmoothStep,
@@ -89,6 +77,7 @@ enum class NodeType {
     Overlay,
     Screen,
     HeightBlend,
+    Custom,  ///< a node a plugin registered (MaterialNodeDefinitions.h:RegisterCustomNode); serializedType names it
     Unknown
 };
 
@@ -153,6 +142,8 @@ public:
     Graph();
 
     Node& CreateNode(NodeType type, std::string displayName = {});
+    /// A core node by its type name, or a plugin node; null when no such node type is known.
+    Node* CreateNodeOfType(std::string_view typeName);
     bool RemoveNode(NodeID id);
 
     Pin* FindPin(PinID id);
@@ -174,7 +165,7 @@ public:
     const std::vector<Pin>& GetPins() const { return m_Pins; }
 
     // Serialization support - creates nodes/links with specific IDs for loading saved graphs
-    Node& CreateNodeWithID(NodeID id, NodeType type, std::string displayName = {});
+    Node& CreateNodeWithID(NodeID id, NodeType type, std::string displayName = {}, std::string customType = {});
     void SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinIds, const std::vector<PinID>& outputPinIds);
     Link* CreateLinkWithID(LinkID id, PinID from, PinID to);
     void UpdateNextIDs(); // Call after loading to ensure new IDs don't conflict
@@ -206,7 +197,7 @@ public:
     bool ShouldCleanOrphansOnSave() const { return m_CleanOrphansOnSave; }
 
 private:
-    std::string MakeNodeDisplayName(NodeType type) const;
+    Node& AddNode(NodeID id, NodeType type, std::string displayName, std::string customType);
     void AttachDefaultPins(Node& node);
     Pin& AddPin(Node& owner, PinKind kind, ValueType valueType, std::string name);
     void RemoveLinksForPin(PinID id);

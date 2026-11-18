@@ -1,0 +1,53 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(set = 0, binding = 1, rgba16f) uniform image2D target;
+
+layout(push_constant) uniform BloomPush {
+    vec2 sourceTexel; // 1 / source size
+    float threshold;
+    float knee;
+    float radius;
+    uint mode;        // 0 bright pass + downsample, 1 downsample, 2 upsample and add
+} pc;
+
+vec3 downsample(vec2 uv) {
+    vec2 t = pc.sourceTexel;
+    return 0.25 * (texture(source, uv + vec2(-t.x, -t.y)).rgb + texture(source, uv + vec2(t.x, -t.y)).rgb +
+                   texture(source, uv + vec2(-t.x, t.y)).rgb + texture(source, uv + vec2(t.x, t.y)).rgb);
+}
+
+vec3 upsample(vec2 uv) {
+    vec2 t = pc.sourceTexel;
+    vec3 sum = texture(source, uv).rgb * 4.0;
+    sum += (texture(source, uv + vec2(-t.x, 0.0)).rgb + texture(source, uv + vec2(t.x, 0.0)).rgb +
+            texture(source, uv + vec2(0.0, -t.y)).rgb + texture(source, uv + vec2(0.0, t.y)).rgb) * 2.0;
+    sum += texture(source, uv + vec2(-t.x, -t.y)).rgb + texture(source, uv + vec2(t.x, -t.y)).rgb +
+           texture(source, uv + vec2(-t.x, t.y)).rgb + texture(source, uv + vec2(t.x, t.y)).rgb;
+    return sum / 16.0;
+}
+
+void main() {
+    ivec2 size = imageSize(target);
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= size.x || pixel.y >= size.y) {
+        return;
+    }
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+    if (pc.mode == 2u) {
+        vec3 current = imageLoad(target, pixel).rgb;
+        imageStore(target, pixel, vec4(current + upsample(uv) * pc.radius, 1.0));
+        return;
+    }
+    vec3 color = downsample(uv);
+    if (pc.mode == 0u) {
+        color = min(color, vec3(100.0));
+        float brightness = max(color.r, max(color.g, color.b));
+        float soft = clamp(brightness - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
+        soft = soft * soft / (4.0 * pc.knee + 1.0e-4);
+        color *= max(soft, brightness - pc.threshold) / max(brightness, 1.0e-4);
+    }
+    imageStore(target, pixel, vec4(color, 1.0));
+}

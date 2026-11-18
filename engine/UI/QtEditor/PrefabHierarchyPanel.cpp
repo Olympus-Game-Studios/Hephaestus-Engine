@@ -1,6 +1,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "PrefabHierarchyPanel.h"
+#include "HierarchyEye.h"
 #include "../../UI/InspectorSelectionModel.h"
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -71,6 +72,11 @@ PrefabHierarchyPanel::PrefabHierarchyPanel(QWidget* parent)
             this, &PrefabHierarchyPanel::onContextMenu);
     connect(m_tree, &PrefabHierarchyTree::itemsDropped,
             this, &PrefabHierarchyPanel::onItemsDropped);
+    HierarchyEye::Install(m_tree, [this](QTreeWidgetItem* item, bool isolate) {
+        if (item->data(0, kKindRole).toInt() == kKindNode) {
+            emit visibilityToggled(item->data(0, Qt::UserRole).toString().toStdString(), isolate);
+        }
+    });
 
     layout->addWidget(m_tree, 1);
 }
@@ -81,11 +87,16 @@ void PrefabHierarchyPanel::Rebuild(const PrefabAsset& asset, const std::string& 
     m_rootNodeId = asset.rootNodeId;
 
     if (!asset.rootNodeId.empty()) {
-        populateItem(nullptr, asset, asset.rootNodeId, selectedNodeId);
+        populateItem(nullptr, asset, asset.rootNodeId, selectedNodeId, false, m_isolatedNode.empty());
     }
 
     m_tree->expandAll();
     m_tree->blockSignals(false);
+}
+
+void PrefabHierarchyPanel::SetVisibility(std::unordered_set<std::string> hiddenNodes, std::string isolatedNode) {
+    m_hiddenNodes = std::move(hiddenNodes);
+    m_isolatedNode = std::move(isolatedNode);
 }
 
 void PrefabHierarchyPanel::SetSelectedNodeId(const std::string& nodeId) {
@@ -152,7 +163,8 @@ void PrefabHierarchyPanel::appendComponentItems(QTreeWidgetItem* nodeItem, const
 }
 
 void PrefabHierarchyPanel::populateItem(QTreeWidgetItem* parent, const PrefabAsset& asset,
-                                         const std::string& nodeId, const std::string& selectedNodeId) {
+                                         const std::string& nodeId, const std::string& selectedNodeId,
+                                         bool parentHidden, bool underIsolated) {
     const PrefabNode* node = nullptr;
     for (const auto& n : asset.nodes) {
         if (n.id == nodeId) { node = &n; break; }
@@ -171,6 +183,18 @@ void PrefabHierarchyPanel::populateItem(QTreeWidgetItem* parent, const PrefabAss
     item->setData(0, Qt::UserRole, QString::fromStdString(node->id));
     item->setData(0, kKindRole, kKindNode);
     item->setFlags(item->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
+    underIsolated = underIsolated || nodeId == m_isolatedNode;
+    const bool hidden = m_hiddenNodes.contains(nodeId);
+    HierarchyEye::State eye = HierarchyEye::State::Shown;
+    if (hidden) {
+        eye = HierarchyEye::State::Hidden;
+    } else if (parentHidden || !underIsolated) {
+        eye = HierarchyEye::State::HiddenByParent;
+    }
+    item->setData(0, HierarchyEye::kRole, static_cast<int>(eye));
+    if (eye != HierarchyEye::State::Shown) {
+        item->setForeground(0, QColor("#6f7378"));
+    }
 
     if (nodeId == selectedNodeId) {
         item->setSelected(true);
@@ -183,7 +207,7 @@ void PrefabHierarchyPanel::populateItem(QTreeWidgetItem* parent, const PrefabAss
             isChild = true;
         }
         if (isChild) {
-            populateItem(item, asset, child.id, selectedNodeId);
+            populateItem(item, asset, child.id, selectedNodeId, parentHidden || hidden, underIsolated);
         }
     }
 
@@ -253,6 +277,19 @@ void PrefabHierarchyPanel::onContextMenu(const QPoint& pos) {
     menu.addAction(tr("Focus in Viewport"), this, [this, nodeId]() {
         emit focusInViewportRequested(nodeId);
     });
+
+    menu.addSeparator();
+
+    const bool hidden = m_hiddenNodes.contains(nodeId);
+    menu.addAction(hidden ? tr("Show") : tr("Hide"), this, [this, nodeId]() {
+        emit visibilityToggled(nodeId, false);
+    });
+    menu.addAction(m_isolatedNode == nodeId ? tr("Exit Isolation") : tr("Isolate"), this, [this, nodeId]() {
+        emit visibilityToggled(nodeId, true);
+    });
+    menu.addAction(tr("Show All"), this, [this]() {
+        emit showAllRequested();
+    })->setEnabled(!m_hiddenNodes.empty() || !m_isolatedNode.empty());
 
     menu.addSeparator();
 

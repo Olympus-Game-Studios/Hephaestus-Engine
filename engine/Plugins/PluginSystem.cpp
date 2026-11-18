@@ -172,7 +172,11 @@ void PluginSystem::LoadEnabled() {
             if (!std::filesystem::is_regular_file(libraryPath))
                 throw std::runtime_error("plugin library is missing: " + libraryPath.string());
 #ifdef _WIN32
-            candidate->module = LoadLibraryW(libraryPath.wstring().c_str());
+            // A plugin's own DLLs (a browser engine, for example) are found in its bin folder, as for script languages.
+            // LOAD_WITH_ALTERED_SEARCH_PATH needs an absolute path with backslashes; with forward slashes Windows
+            // silently falls back to the standard order and can pick up another program's Qt from PATH.
+            const auto nativePath = std::filesystem::absolute(libraryPath).lexically_normal().make_preferred();
+            candidate->module = LoadLibraryExW(nativePath.wstring().c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
             if (!candidate->module) throw std::runtime_error("LoadLibrary failed (error " + std::to_string(GetLastError()) + ")");
             auto getExports = reinterpret_cast<GetPluginExportsFn>(GetProcAddress(candidate->module, "HP_GetPluginExports"));
 #else

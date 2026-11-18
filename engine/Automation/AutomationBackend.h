@@ -11,6 +11,7 @@
 #include <entt/entt.hpp>
 
 class AssetDatabase;
+class AudioEngine;
 class Scene;
 
 namespace Hephaestus {
@@ -161,6 +162,7 @@ public:
     virtual Hephaestus::AssetOperationService* AssetOperations() noexcept { return nullptr; }
     virtual IAssetImportService* AssetImport() noexcept { return nullptr; }
     virtual AssetDatabase* ImportDatabase() noexcept { return nullptr; }
+    virtual AudioEngine* Audio() noexcept { return nullptr; }
 
     /** Refresh editor views after an asset file operation. */
     virtual void NotifyAssetChanged() {}

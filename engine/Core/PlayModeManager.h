@@ -129,9 +129,10 @@ public:
 
     /// Gameplay-facing request; accepted requests are processed by the host at
     /// the boundary after script callbacks return and before physics advances.
-    bool RequestSceneReload();
+    /// scenePath names another scene to load (a project path); empty reloads the current one.
+    bool RequestSceneReload(const std::string& scenePath = {});
     bool HasPendingSceneReload() const { return m_sceneReloadRequested; }
-    using SceneReloadCallback = std::function<bool(std::string& outError)>;
+    using SceneReloadCallback = std::function<bool(const std::string& scenePath, std::string& outError)>;
     void SetSceneReloadCallback(SceneReloadCallback callback) {
         m_sceneReloadCallback = std::move(callback);
     }
@@ -217,6 +218,9 @@ private:
     bool m_stopRequested = false;
     bool m_sceneReloadRequested = false;
     bool m_processingSceneReload = false;
+    std::string m_pendingScenePath;
+    // The edited scene's source path; a Scene.load during Play changes the scene's, so Stop puts it back.
+    std::string m_editSceneSourcePath;
     SceneReloadCallback m_sceneReloadCallback;
 
     // Logging

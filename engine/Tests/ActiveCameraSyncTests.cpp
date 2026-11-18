@@ -75,6 +75,24 @@ bool TestRootCamera()
     return ok;
 }
 
+bool TestFlippedEulerCamera()
+{
+    // A gizmo rotation can store the same orientation with pitch past 90 degrees and roll at 180.
+    constexpr float kPi = 3.14159265358979f;
+    Scene scene;
+    Entity camera = AddCamera(scene, "FlippedCamera", true);
+    camera.GetComponent<TransformComponent>().rotation = Vec3(0.35f + kPi, kPi + 0.8f, 0.1f - kPi);
+    const std::optional<Hephaestus::ActiveCameraView> view = Hephaestus::TryReadActiveCameraView(scene);
+    bool ok = Check(view.has_value(), "flipped camera view");
+    if (!view) {
+        return false;
+    }
+    ok &= Check(Near(view->pitchRadians, 0.35f), "flipped camera pitch is the upright one");
+    ok &= Check(Near(view->yawRadians, -0.8f), "flipped camera yaw");
+    ok &= Check(Near(view->rollRadians, 0.1f), "flipped camera is not upside down");
+    return ok;
+}
+
 bool TestParentedCamera()
 {
     Scene scene;
@@ -174,11 +192,81 @@ bool TestSetRotationRoundTrip()
     return ok;
 }
 
+bool TestViewFrameMatchesRenderView()
+{
+    bool ok = true;
+    const float samples[][2] = {{0.0f, 0.0f}, {0.7f, 0.3f}, {-2.1f, -0.9f}, {3.0f, 1.2f}};
+    for (const auto& sample : samples) {
+        const float yaw = sample[0];
+        const float pitch = sample[1];
+        const Vec3 eye(1.0f, 2.0f, 3.0f);
+        const Mat4 frame = Hephaestus::MakeCameraViewFrame(eye, yaw, pitch);
+        const Mat4 view = Mat4::LookAt(eye, vadd(eye, RenderForward(yaw, pitch)), Vec3(0.0f, 1.0f, 0.0f));
+        const Mat4 local = Mat4::Multiply(view, frame);
+        ok &= Check(NearVec(Mat4::TransformPoint(local, Vec3(0.0f, 0.0f, 0.0f)), Vec3(0.0f, 0.0f, 0.0f)),
+                    "view frame origin is the eye");
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(1.0f, 0.0f, 0.0f)), Vec3(0.0f, 0.0f, 1.0f)),
+                    "view frame +X is view forward");
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 1.0f, 0.0f)), Vec3(0.0f, 1.0f, 0.0f)),
+                    "view frame +Y is view up");
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 0.0f, 1.0f)), Vec3(1.0f, 0.0f, 0.0f)),
+                    "view frame +Z is view right");
+    }
+    for (const float roll : {0.3f, -0.4f}) {
+        const Vec3 eye(1.0f, 2.0f, 3.0f);
+        const Mat4 frame = Hephaestus::MakeCameraViewFrame(eye, 0.7f, 0.3f, roll);
+        const Vec3 up(frame.m[4], frame.m[5], frame.m[6]);
+        const Mat4 view = Mat4::LookAt(eye, vadd(eye, RenderForward(0.7f, 0.3f)), up);
+        const Mat4 local = Mat4::Multiply(view, frame);
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(1.0f, 0.0f, 0.0f)), Vec3(0.0f, 0.0f, 1.0f)) &&
+                        NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 1.0f, 0.0f)), Vec3(0.0f, 1.0f, 0.0f)) &&
+                        NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 0.0f, 1.0f)), Vec3(1.0f, 0.0f, 0.0f)),
+                    "a rolled view frame stays aligned with a view built from its up");
+    }
+    const Mat4 rolled = Hephaestus::MakeCameraViewFrame(Vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, -0.5f);
+    ok &= Check(rolled.m[6] > 0.0f && rolled.m[5] < 1.0f,
+                "negative roll tilts the view's up towards its right");
+    const Mat4 identity = Hephaestus::MakeCameraViewFrame(Vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f);
+    ok &= Check(NearVec(Mat4::TransformDirection(identity, Vec3(0.3f, 0.5f, 0.7f)), Vec3(0.3f, 0.5f, 0.7f)),
+                "view frame is identity at yaw 0 pitch 0");
+    return ok;
+}
+
+bool TestViewModelFovAdjust()
+{
+    const Vec3 eye(2.0f, 1.0f, -3.0f);
+    const Mat4 view = Mat4::LookAt(eye, vadd(eye, RenderForward(0.6f, -0.2f)), Vec3(0.0f, 1.0f, 0.0f));
+    const float aspect = 2.4f;
+    const Mat4 worldProj = Mat4::Perspective(65.0f * 3.1415926535f / 180.0f, aspect, 0.02f, 1000.0f);
+    const Mat4 viewModelProj = Mat4::Perspective(55.0f * 3.1415926535f / 180.0f, aspect, 0.02f, 1000.0f);
+    const Mat4 adjust = Hephaestus::MakeViewModelFovAdjust(view, 65.0f, 55.0f);
+    bool ok = true;
+    for (const Vec3& offset : {Vec3(0.4f, -0.2f, 0.1f), Vec3(0.3f, 0.05f, -0.15f), Vec3(1.0f, 0.3f, 0.4f)}) {
+        const Vec3 p = vadd(eye, Mat4::TransformDirection(Mat4::Invert(view), offset));
+        const Vec4 viaAdjust = Mat4::TransformVec4(Mat4::Multiply(worldProj, Mat4::Multiply(view, adjust)),
+                                                   Vec4(p.x, p.y, p.z, 1.0f));
+        const Vec4 direct = Mat4::TransformVec4(Mat4::Multiply(viewModelProj, view), Vec4(p.x, p.y, p.z, 1.0f));
+        ok &= Check(Near(viaAdjust.x / viaAdjust.w, direct.x / direct.w) &&
+                        Near(viaAdjust.y / viaAdjust.w, direct.y / direct.w) &&
+                        Near(viaAdjust.z / viaAdjust.w, direct.z / direct.w),
+                    "view model FOV adjust projects like a camera at the view model FOV");
+    }
+    const Mat4 none = Hephaestus::MakeViewModelFovAdjust(view, 65.0f, 0.0f);
+    ok &= Check(NearVec(Mat4::TransformPoint(none, Vec3(1.0f, 2.0f, 3.0f)), Vec3(1.0f, 2.0f, 3.0f)),
+                "a view model FOV of 0 leaves view models alone");
+    return ok;
+}
+
 } // namespace
 
 int main()
 {
+    if (!TestViewModelFovAdjust()) {
+        return 1;
+    }
     bool ok = TestRootCamera();
+    ok &= TestViewFrameMatchesRenderView();
+    ok &= TestFlippedEulerCamera();
     ok &= TestParentedCamera();
     ok &= TestParentYawChildPitch();
     ok &= TestSetRotationRoundTrip();

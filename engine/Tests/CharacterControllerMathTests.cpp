@@ -159,6 +159,9 @@ int main()
         auto& controller = entity.AddComponent<CharacterControllerComponent>();
         controller.walkSpeed = 6.5f;
         controller.jumpSpeed = 4.25f;
+        controller.coyoteTime = 0.12f;
+        controller.proneHeight = 0.65f;
+        controller.jumpBufferTime = 0.1f;
         controller.crouchedHeight = 1.05f;
         controller.collisionLayer = 2;
         const std::string saved = SceneSerializer(scene).SerializeToString();
@@ -171,7 +174,8 @@ int main()
         auto view = loaded.GetRegistry().view<CharacterControllerComponent>();
         for (auto handle : view) {
             const auto& copy = loaded.GetRegistry().get<CharacterControllerComponent>(handle);
-            found = Near(copy.walkSpeed, 6.5f) && Near(copy.jumpSpeed, 4.25f) && Near(copy.crouchedHeight, 1.05f);
+            found = Near(copy.walkSpeed, 6.5f) && Near(copy.jumpSpeed, 4.25f) && Near(copy.crouchedHeight, 1.05f)
+                && Near(copy.coyoteTime, 0.12f) && Near(copy.jumpBufferTime, 0.1f) && Near(copy.proneHeight, 0.65f);
         }
         pass &= Check(found, "Scene round trip keeps authored controller values");
     }
@@ -184,6 +188,8 @@ int main()
         controller.enabled = false;
         PrefabComponentEntry entry;
         pass &= Check(PrefabComponentIO::CaptureComponent(source, "CharacterController", entry), "Prefab capture writes the controller");
+        pass &= Check(entry.data.Find("coyoteTime") != nullptr && entry.data.Find("jumpBufferTime") != nullptr,
+                      "Prefab data has the jump timing fields");
         pass &= Check(entry.data.Find("walkSpeed") != nullptr && entry.data.Find("groundState") == nullptr,
                       "Prefab data has authored fields and no runtime state");
         Entity partial = scene.CreateEntity("Partial");
@@ -206,6 +212,76 @@ int main()
         const auto& defaults = fresh.GetComponent<CharacterControllerComponent>();
         pass &= Check(Near(defaults.walkSpeed, 5.0f) && Near(defaults.height, 1.8f),
                       "Missing prefab fields leave component defaults");
+    }
+
+    {
+        Physics::ControllerAuthoredValues tall;
+        tall.crouchedHeight = 1.1f;
+        tall.proneHeight = 1.5f;
+        bool clamped = false;
+        const Physics::ControllerAuthoredValues fixedTall = Physics::ClampControllerAuthored(tall, clamped);
+        pass &= Check(clamped && fixedTall.proneHeight <= fixedTall.crouchedHeight,
+                      "Prone height is clamped to the crouched height");
+        Physics::ControllerAuthoredValues tiny;
+        tiny.proneHeight = 0.1f;
+        const Physics::ControllerAuthoredValues fixedTiny = Physics::ClampControllerAuthored(tiny, clamped);
+        pass &= Check(clamped && fixedTiny.proneHeight >= 2.0f * fixedTiny.radius,
+                      "Prone height is at least the capsule's two end caps");
+    }
+
+    {
+        using Physics::CharacterGroundState;
+        const float dt = 1.0f / 60.0f;
+        Physics::JumpGate gate;
+        Physics::StepJumpGate(gate, false, CharacterGroundState::OnGround, 0.0f, 0.0f, dt);
+        const Physics::JumpDecision air = Physics::StepJumpGate(gate, true, CharacterGroundState::InAir, 0.0f, 0.0f, dt);
+        const Physics::JumpDecision later = Physics::StepJumpGate(gate, false, CharacterGroundState::OnGround, 0.0f, 0.0f, dt);
+        pass &= Check(!air.jump && !later.jump, "Without coyote time or buffering an air jump is dropped");
+
+        gate = {};
+        Physics::StepJumpGate(gate, false, CharacterGroundState::OnGround, 0.1f, 0.0f, dt);
+        for (int i = 0; i < 5; ++i) {
+            Physics::StepJumpGate(gate, false, CharacterGroundState::InAir, 0.1f, 0.0f, dt);
+        }
+        const Physics::JumpDecision coyote = Physics::StepJumpGate(gate, true, CharacterGroundState::InAir, 0.1f, 0.0f, dt);
+        pass &= Check(coyote.jump && coyote.coyote, "A jump shortly after walking off a ledge is a coyote jump");
+        const Physics::JumpDecision twice = Physics::StepJumpGate(gate, true, CharacterGroundState::InAir, 0.1f, 0.0f, dt);
+        pass &= Check(!twice.jump, "Coyote time allows one jump, not a double jump");
+
+        gate = {};
+        Physics::StepJumpGate(gate, false, CharacterGroundState::OnGround, 0.1f, 0.0f, dt);
+        for (int i = 0; i < 10; ++i) {
+            Physics::StepJumpGate(gate, false, CharacterGroundState::InAir, 0.1f, 0.0f, dt);
+        }
+        pass &= Check(!Physics::StepJumpGate(gate, true, CharacterGroundState::InAir, 0.1f, 0.0f, dt).jump,
+                      "Coyote time runs out");
+
+        gate = {};
+        Physics::StepJumpGate(gate, true, CharacterGroundState::InAir, 0.0f, 0.1f, dt);
+        for (int i = 0; i < 4; ++i) {
+            Physics::StepJumpGate(gate, false, CharacterGroundState::InAir, 0.0f, 0.1f, dt);
+        }
+        const Physics::JumpDecision buffered =
+            Physics::StepJumpGate(gate, false, CharacterGroundState::OnGround, 0.0f, 0.1f, dt);
+        pass &= Check(buffered.jump && !buffered.coyote, "A jump pressed just before landing happens on landing");
+        gate = {};
+        Physics::StepJumpGate(gate, true, CharacterGroundState::InAir, 0.0f, 0.1f, dt);
+        for (int i = 0; i < 8; ++i) {
+            Physics::StepJumpGate(gate, false, CharacterGroundState::InAir, 0.0f, 0.1f, dt);
+        }
+        pass &= Check(!Physics::StepJumpGate(gate, false, CharacterGroundState::OnGround, 0.0f, 0.1f, dt).jump,
+                      "A buffered jump expires");
+
+        Physics::VelocityStepInput step;
+        step.ground = CharacterGroundState::InAir;
+        step.velocity = Vec3(2.0f, -1.0f, 0.0f);
+        step.gravity = Vec3(0.0f, -9.81f, 0.0f);
+        step.jump = true;
+        step.coyoteJump = true;
+        step.jumpSpeed = 5.0f;
+        const Physics::VelocityStepResult result = Physics::IntegrateCharacterVelocity(step);
+        pass &= Check(result.jumped && Near(result.velocity.y, 5.0f - 9.81f / 60.0f, 1.0e-3f),
+                      "A coyote jump replaces the falling speed with the jump speed");
     }
 
     if (!pass) {

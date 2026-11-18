@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <vector>
 #include <filesystem>
+#include <chrono>
 #include <limits>
 #include <cstdint>
 #include <functional>
@@ -32,11 +33,15 @@ namespace Hephaestus {
 class InputSystem;
 class EngineFrameRenderer;
 }
+namespace Hephaestus::Navigation {
+class NavMesh;
+}
 struct GLFWwindow;
 struct LuaScriptComponent;
 struct TransformComponent;
 struct TagComponent;
 struct CharacterComponent;
+struct MeshRendererComponent;
 class AudioEngine;
 
 namespace Hephaestus::HephaestusUI {
@@ -69,6 +74,7 @@ struct PhysicsRaycastHit {
     Vec3 point{0.0f, 0.0f, 0.0f};
     Vec3 normal{0.0f, 1.0f, 0.0f};
     uint32_t entityId = std::numeric_limits<uint32_t>::max(); // max = no entity mapping
+    bool sensor = false;
 };
 
 enum class LuaScriptSlot : uint8_t {
@@ -95,6 +101,8 @@ struct CharacterBinding {
     std::function<bool(uint32_t entityId, float worldX, float worldZ)> move;
     std::function<bool(uint32_t entityId)> jump;
     std::function<bool(uint32_t entityId, bool crouched)> setCrouched;
+    std::function<bool(uint32_t entityId, bool prone)> setProne;
+    std::function<bool(uint32_t entityId)> isProne;
     std::function<bool(uint32_t entityId)> isGrounded;
     std::function<bool(uint32_t entityId, float multiplier)> setSpeedMultiplier;
     std::function<bool(uint32_t entityId, float& outMultiplier)> getSpeedMultiplier;
@@ -106,6 +114,8 @@ struct CharacterBinding {
     std::function<bool(uint32_t entityId, std::string& outState)> getGroundState;
     std::function<bool(uint32_t entityId, float x, float y, float z)> teleport;
     std::function<bool(uint32_t entityId, float radians)> setFacingYaw;
+    std::function<bool(uint32_t entityId, const Vec3& impulse, const Vec3* impulsePoint, std::string& outError)> ragdoll;
+    std::function<bool(uint32_t entityId)> isRagdoll;
 };
 
 struct PhysicsBinding {
@@ -114,7 +124,7 @@ struct PhysicsBinding {
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setLinearVelocity;
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setAngularVelocity;
     std::function<bool(uint32_t entityId, const Vec3& rotationEuler, bool activate)> setRotation;
-    std::function<bool(uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit, const char* layerName, std::string& outError, bool ignoreSensors)> raycast;
+    std::function<bool(const std::vector<uint32_t>& ignoreEntityIds, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit, const char* layerName, std::string& outError, bool ignoreSensors)> raycast;
     std::function<bool(uint32_t entityId)> isGrounded;
     std::function<bool(uint32_t entityId, float wishX, float wishZ, float speed)> move;
     std::function<bool(uint32_t entityId, float impulse)> jump;
@@ -272,6 +282,10 @@ public:
     void SetPhysicsBinding(PhysicsBinding binding);
     void SetCharacterBinding(CharacterBinding binding);
 
+    /// Loads and uploads the mesh of a renderer spawned by Scene.instantiate when no entity has it loaded yet.
+    using SpawnedMeshLoader = std::function<void(MeshRendererComponent&)>;
+    void SetSpawnedMeshLoader(SpawnedMeshLoader loader);
+
     /// Provide the shared input system populated by the current host.
     void SetInputSystem(Hephaestus::InputSystem* inputSystem);
     Hephaestus::InputSystem* GetInputSystem() const { return m_InputSystem; }
@@ -279,13 +293,32 @@ public:
     using QuitRequestCallback = std::function<void()>;
     void SetQuitRequestCallback(QuitRequestCallback cb) { m_QuitRequestCallback = std::move(cb); }
 
-    using SceneReloadCallback = std::function<bool()>;
+    // Requests a scene change at the next safe point: the given scene (a project path), or the current one when
+    // the path is empty. Returns false when the host refuses.
+    using SceneReloadCallback = std::function<bool(const std::string& scenePath)>;
     void SetSceneReloadCallback(SceneReloadCallback cb) { m_SceneReloadCallback = std::move(cb); }
+
+    // Gameplay time multiplier set by Time.setScale; the host scales each frame's dt by it. Reset to 1 when a
+    // simulation starts, stops or changes scene.
+    float GetTimeScale() const { return m_TimeScale; }
+    // The frame's real dt, for Time.unscaledDeltaTime.
+    void SetUnscaledDeltaTime(float dt) { m_UnscaledDeltaTime = dt; }
+    // Folder Storage.save and Storage.load use; empty disables them.
+    void SetStorageRoot(const std::filesystem::path& root) { m_StorageRoot = root; }
+    // Config.save("Settings") writes <root>/<prefix>Settings.ini.
+    void SetConfigRoot(const std::filesystem::path& root, const std::string& prefix = {})
+    {
+        m_ConfigRoot = root;
+        m_ConfigPrefix = prefix;
+    }
 
     /**
      * Provide audio backend for Lua Audio.* bindings.
      */
     void SetAudioEngine(AudioEngine* audioEngine);
+    /// Whether this is Editor Play or a Development build, for Lua `Application.isDevelopment()`: developer tools
+    /// such as cheat menus check it, so Release games never reach them.
+    void SetDevelopment(bool development) { m_Development = development; }
 
     /**
      * Provide runtime UI bridge for Lua UI.* bindings.
@@ -301,6 +334,8 @@ public:
         Vec3 position{0.0f, 0.0f, 0.0f};
         bool hasRotation = false;
         Vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
+        uint32_t parentId = 0;
+        bool hasParent = false;
         std::unordered_map<std::string, PropertyValue> vars;
     };
 
@@ -377,28 +412,35 @@ private:
     lua_State* m_State = nullptr;
     PluginScriptHost* m_PluginScripts = nullptr;
     Scene* m_Scene = nullptr;
+    std::unique_ptr<Hephaestus::Navigation::NavMesh> m_NavMesh;
+    bool m_NavBuildAttempted = false;
+    std::uint32_t m_NavRandomState = 0x2545F491u;
     GLFWwindow* m_Window = nullptr;
     std::filesystem::path m_ProjectRoot;
     Hephaestus::EngineFrameRenderer* m_FrameRenderer = nullptr;
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
     CharacterBinding m_CharacterBinding{};
+    SpawnedMeshLoader m_SpawnedMeshLoader;
     Hephaestus::InputSystem* m_InputSystem = nullptr;
     std::unordered_set<std::string> m_MissingInputNames;
     QuitRequestCallback m_QuitRequestCallback;
     SceneReloadCallback m_SceneReloadCallback;
     AudioEngine* m_AudioEngine = nullptr;
+    bool m_Development = false;
     Hephaestus::HephaestusUI::UISystem* m_UISystem = nullptr;
     Hephaestus::HephaestusUI::UIContext* m_UIContext = nullptr;
     Hephaestus::HephaestusUI::UIRenderer* m_UIRenderer = nullptr;
     int m_CurrentCursorMode = 0; // 0=normal, 1=disabled
 
+    static constexpr std::chrono::milliseconds kScriptRecheckInterval{500};
     struct ScriptInstance {
         uint32_t entityId = 0;
         LuaScriptSlot slot = LuaScriptSlot::Gameplay;
         std::string userPath;
         std::filesystem::path resolvedPath;
         std::filesystem::file_time_type lastWriteTime{};
+        std::chrono::steady_clock::time_point lastFileCheck{};
         size_t embeddedSourceHash = 0;
         bool forceReload = false;
         int environmentRef = -1;
@@ -439,6 +481,11 @@ private:
 
     uint32_t m_CurrentEntityId = std::numeric_limits<uint32_t>::max();
     float m_CurrentDeltaTime = 0.0f;
+    float m_TimeScale = 1.0f;
+    float m_UnscaledDeltaTime = 0.0f;
+    std::filesystem::path m_StorageRoot;
+    std::filesystem::path m_ConfigRoot;
+    std::string m_ConfigPrefix;
 
     static LuaScriptEngine* s_Instance;
     static LuaScriptEngine* GetInstance();
@@ -458,6 +505,11 @@ private:
      */
     void RegisterTransformBindings();
     void RegisterMeshBindings();
+    void RegisterParticleBindings();
+    void RegisterNavBindings();
+    // Builds the navmesh from the current scene on first use after Play starts or Nav.rebuild().
+    Hephaestus::Navigation::NavMesh* EnsureNavMesh();
+    bool ReadNavPoint(lua_State* L, int index, Vec3& out);
 
     /**
      * Register Input bindings
@@ -478,6 +530,7 @@ private:
      * Register camera bindings
      */
     void RegisterCameraBindings();
+    void RegisterGraphicsBindings();
 
     /**
      * Register physics bindings
@@ -544,6 +597,17 @@ private:
     static int Lua_Transform_setScale(lua_State* L);
     static int Lua_Mesh_setVisible(lua_State* L);
     static int Lua_Mesh_isVisible(lua_State* L);
+    static int Lua_Particles_play(lua_State* L);
+    static int Lua_Nav_isReady(lua_State* L);
+    static int Lua_Nav_rebuild(lua_State* L);
+    static int Lua_Nav_findPath(lua_State* L);
+    static int Lua_Nav_closestPoint(lua_State* L);
+    static int Lua_Nav_randomPoint(lua_State* L);
+    static int Lua_Particles_stop(lua_State* L);
+    static int Lua_Particles_burst(lua_State* L);
+    static int Lua_Particles_setRate(lua_State* L);
+    static int Lua_Particles_isPlaying(lua_State* L);
+    static int Lua_Particles_count(lua_State* L);
 
     static int Lua_Entity_isValid(lua_State* L);
     static int Lua_Entity_getName(lua_State* L);
@@ -560,10 +624,22 @@ private:
     static int Lua_Input_getAxis(lua_State* L);
     static int Lua_Input_isGamepadConnected(lua_State* L);
     static int Lua_Input_setCursorMode(lua_State* L);
+    static int Lua_Input_getBindings(lua_State* L);
+    static int Lua_Input_setBindings(lua_State* L);
+    static int Lua_Input_getPressedControl(lua_State* L);
 
     static int Lua_Time_deltaTime(lua_State* L);
+    static int Lua_Time_unscaledDeltaTime(lua_State* L);
+    static int Lua_Time_setScale(lua_State* L);
+    static int Lua_Time_getScale(lua_State* L);
+    static int Lua_Storage_save(lua_State* L);
+    static int Lua_Storage_load(lua_State* L);
+    static int Lua_Config_load(lua_State* L);
+    static int Lua_Config_save(lua_State* L);
+    static int Lua_Config_path(lua_State* L);
 
     static int Lua_Application_quit(lua_State* L);
+    static int Lua_Application_isDevelopment(lua_State* L);
 
     static int Lua_Camera_setActive(lua_State* L);
     static int Lua_Camera_isActive(lua_State* L);
@@ -572,6 +648,10 @@ private:
     static int Lua_Camera_setRotation(lua_State* L);
     static int Lua_Camera_getRotation(lua_State* L);
     static int Lua_Camera_translate(lua_State* L);
+    static int Lua_Camera_worldToScreen(lua_State* L);
+    static int Lua_Graphics_setMaxTextureSize(lua_State* L);
+    static int Lua_Graphics_getMaxTextureSize(lua_State* L);
+    static int Lua_Graphics_setScopeLens(lua_State* L);
 
     static int Lua_Physics_isAvailable(lua_State* L);
     static int Lua_Physics_hasBody(lua_State* L);
@@ -591,6 +671,10 @@ private:
     static int Lua_Character_getSpeedMultiplier(lua_State* L);
     static int Lua_Character_isCrouched(lua_State* L);
     static int Lua_Character_isStandBlocked(lua_State* L);
+    static int Lua_Character_setProne(lua_State* L);
+    static int Lua_Character_isProne(lua_State* L);
+    static int Lua_Character_ragdoll(lua_State* L);
+    static int Lua_Character_isRagdoll(lua_State* L);
     static int Lua_Character_getVelocity(lua_State* L);
     static int Lua_Character_getGroundNormal(lua_State* L);
     static int Lua_Character_getGroundVelocity(lua_State* L);
@@ -606,6 +690,11 @@ private:
     static int Lua_Audio_setVolume(lua_State* L);
     static int Lua_Audio_isPlaying(lua_State* L);
     static int Lua_Audio_stopAll(lua_State* L);
+    static int Lua_Audio_setPitch(lua_State* L);
+    static int Lua_Audio_setPosition(lua_State* L);
+    static int Lua_Audio_setBusVolume(lua_State* L);
+    static int Lua_Audio_getBusVolume(lua_State* L);
+    static int Lua_Audio_getVoiceCount(lua_State* L);
 
     static int Lua_UI_isAvailable(lua_State* L);
     static int Lua_UI_createSimpleMenu(lua_State* L);
@@ -622,6 +711,8 @@ private:
     static int Lua_UI_setScreenVisible(lua_State* L);
     static int Lua_UI_setScreenActive(lua_State* L);
     static int Lua_UI_setViewportSize(lua_State* L);
+    static int Lua_UI_setScale(lua_State* L);
+    static int Lua_UI_getScale(lua_State* L);
     static int Lua_UI_getDrawCommandCount(lua_State* L);
     static int Lua_UI_setPosition(lua_State* L);
     static int Lua_UI_setSize(lua_State* L);
@@ -654,6 +745,8 @@ private:
     static int Lua_UI_setFontBold(lua_State* L);
     static int Lua_UI_setFontItalic(lua_State* L);
     static int Lua_UI_setTextAlignment(lua_State* L);
+    static int Lua_UI_measureText(lua_State* L);
+    static int Lua_UI_getLayoutSize(lua_State* L);
     static int Lua_UI_setTextShadow(lua_State* L);
     static int Lua_UI_setWordWrap(lua_State* L);
     static int Lua_UI_setStyle(lua_State* L);
@@ -683,6 +776,8 @@ private:
     uint32_t RegisterUIScreenHandle(const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen);
     uint32_t RegisterUIElementHandle(Hephaestus::HephaestusUI::UIElement* element);
     std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> ResolveUIScreen(uint32_t handle) const;
+    /// The screen a Lua argument names: a handle from UI.createScreen, or a screen name.
+    std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> ScreenFromArgument(lua_State* L, int index) const;
     Hephaestus::HephaestusUI::UIElement* ResolveUIElement(uint32_t handle) const;
     void ResetUIHandleMaps();
 
@@ -717,10 +812,13 @@ private:
     static int Lua_This_GetName(lua_State* L);
     static int Lua_This_SetName(lua_State* L);
     static int Lua_This_IsValid(lua_State* L);
+    static int Lua_This_GetParent(lua_State* L);
+    static int Lua_This_GetId(lua_State* L);
     static int Lua_This_GetCamera(lua_State* L);
     
     // Transform object methods (returned by this:GetTransform())
     static int Lua_TransformObj_GetPosition(lua_State* L);
+    static int Lua_TransformObj_GetWorldPosition(lua_State* L);
     static int Lua_TransformObj_SetPosition(lua_State* L);
     static int Lua_TransformObj_GetRotation(lua_State* L);
     static int Lua_TransformObj_SetRotation(lua_State* L);
@@ -748,6 +846,7 @@ private:
     static int Lua_Scene_Destroy(lua_State* L);
     static int Lua_Scene_FindAllWithPrefix(lua_State* L);
     static int Lua_Scene_Reload(lua_State* L);
+    static int Lua_Scene_Load(lua_State* L);
 
     static int Lua_This_Call(lua_State* L);
     static int Lua_This_CallController(lua_State* L);
@@ -764,6 +863,9 @@ private:
     static int Lua_Animator_IsPlaying(lua_State* L);
     static int Lua_Animator_GetCurrentAnimation(lua_State* L);
     static int Lua_Animator_GetTime(lua_State* L);
+    static int Lua_Animator_SetTime(lua_State* L);
+    static int Lua_Animator_SetLayer(lua_State* L);
+    static int Lua_Animator_ClearLayer(lua_State* L);
     static int Lua_Animator_GetDuration(lua_State* L);
 
     static int Lua_Character_GetSocket(lua_State* L);

@@ -77,7 +77,7 @@ Drag one entity onto another in the Hierarchy to make it a child. Children move,
 
 ### Hide, isolate and lock
 
-`H` hides the selection, `Shift+H` shows only the selection and `Ctrl+H` brings everything back. **Lock / Unlock Selected** stops something being clicked by accident, which is perfect for floors and walls. All three only affect the editor; your game still sees everything.
+`H` hides the selection, `Shift+H` shows only the selection and `Ctrl+H` brings everything back. You can also click the eye at the right of a Hierarchy row (it shows when you point at the row, and stays on hidden ones) to hide or show that entity, or Alt+click it to show only that entity (Alt+click again to come out of it). Hiding or isolating something takes its children with it; their rows show a faded eye. **Lock / Unlock Selected** stops something being clicked by accident, which is perfect for floors and walls. Hidden things can't be clicked in the viewport. All of this only affects the editor; your game still sees everything.
 
 ## Prefabs
 
@@ -85,7 +85,7 @@ A **prefab** is a saved, reusable entity setup: say an enemy with its mesh, coll
 
 - **Make one:** right click an entity in the Hierarchy and choose **Create Prefab From Selection**, or use **New Prefab** in the Content Browser.
 - **Place one:** drag it from the Content Browser into the viewport, or right click it and choose **Instantiate in Scene**.
-- **Edit one:** double click the prefab to open the **Prefab Editor**, which uses the same Inspector cards as the main editor. Save with `Ctrl+S`.
+- **Edit one:** double click the prefab to open the **Prefab Editor**, which uses the same Inspector cards as the main editor. Save with `Ctrl+S`. Its Hierarchy has the same eyes, plus **Hide**, **Isolate** and **Show All** when you right click a node, so you can show just the part you're positioning (a weapon and its arms, say). That's only for the editor window and is never saved into the prefab.
 
 Changes you make to a placed copy are tracked as **overrides** and marked in the Inspector. For each override you can **Revert** it back to the prefab's value or **Apply** it to the prefab so every copy gets it. **Unpack** turns a copy back into ordinary entities if you want to break the link.
 

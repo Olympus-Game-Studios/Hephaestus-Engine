@@ -35,6 +35,14 @@ void Problem(PackageStageResult& result, ProblemSeverity severity, std::string c
         {severity, std::move(code), std::move(message), std::move(detail)});
 }
 
+// Blender and Maya scenes: authoring files the runtime cannot load.
+bool IsAuthoringOnlyFile(const std::filesystem::path& file) {
+    std::string extension = file.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension == ".blend" || extension == ".blend1" || extension == ".ma" || extension == ".mb";
+}
+
 bool SameFile(const std::filesystem::path& left, const std::filesystem::path& right) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(right, ec) ||
@@ -93,7 +101,7 @@ bool CopyTree(const std::filesystem::path& source,
     for (std::filesystem::recursive_directory_iterator it(
              source, std::filesystem::directory_options::skip_permission_denied, ec), end;
          !ec && it != end; it.increment(ec)) {
-        if (it->is_regular_file(ec) && !it->is_symlink(ec)) {
+        if (it->is_regular_file(ec) && !it->is_symlink(ec) && !IsAuthoringOnlyFile(it->path())) {
             files.push_back(it->path());
         }
     }
@@ -489,6 +497,8 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                   previousContent / ".engine" / "meshes", "Copying builtin meshes", request, result) ||
         !CopyTree(request.engineRoot / ".engine" / "hdris", content / ".engine" / "hdris",
                   previousContent / ".engine" / "hdris", "Copying builtin HDRIs", request, result) ||
+        !CopyTree(request.engineRoot / "assets" / "fonts", content / ".engine" / "fonts",
+                  previousContent / ".engine" / "fonts", "Copying builtin fonts", request, result) ||
         !CopyTree(request.projectRoot / ".engine", content / ".engine",
                   previousContent / ".engine", "Copying project runtime content", request, result) ||
         !CopyTree(runtime.shadersDirectory, content / "shaders", previousContent / "shaders",

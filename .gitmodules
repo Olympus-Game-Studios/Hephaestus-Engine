@@ -7,3 +7,7 @@
 [submodule "extern/ufbx"]
 	path = extern/ufbx
 	url = https://github.com/ufbx/ufbx.git
+[submodule "extern/tinyusdz"]
+	path = extern/tinyusdz
+	url = https://github.com/Olympus-Game-Studios/LightUSD.git
+	branch = hephaestus/internal-reference-fix

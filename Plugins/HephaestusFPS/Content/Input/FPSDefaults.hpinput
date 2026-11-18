@@ -58,6 +58,101 @@
     {
       "name": "Weapon4",
       "bindings": [ { "type": "keyboard", "control": "4" } ]
+    },
+    {
+      "name": "Weapon5",
+      "bindings": [ { "type": "keyboard", "control": "5" } ]
+    },
+    {
+      "name": "LeanLeft",
+      "bindings": [ { "type": "keyboard", "control": "C" } ]
+    },
+    {
+      "name": "LeanRight",
+      "bindings": [ { "type": "keyboard", "control": "V" } ]
+    },
+    {
+      "name": "Prone",
+      "bindings": [
+        { "type": "keyboard", "control": "X" },
+        { "type": "gamepad_button", "control": "RIGHT_STICK" }
+      ]
+    },
+    {
+      "name": "ThrowFrag",
+      "bindings": [
+        { "type": "keyboard", "control": "G" },
+        { "type": "gamepad_button", "control": "DPAD_UP" }
+      ]
+    },
+    {
+      "name": "ThrowSmoke",
+      "bindings": [
+        { "type": "keyboard", "control": "T" },
+        { "type": "gamepad_button", "control": "DPAD_DOWN" }
+      ]
+    },
+    {
+      "name": "Pause",
+      "bindings": [
+        { "type": "keyboard", "control": "ESCAPE" },
+        { "type": "keyboard", "control": "F1" },
+        { "type": "gamepad_button", "control": "START" }
+      ]
+    },
+    {
+      "name": "DevMenu",
+      "bindings": [
+        { "type": "keyboard", "control": "F2" }
+      ]
+    },
+    {
+      "name": "MenuUp",
+      "bindings": [
+        { "type": "keyboard", "control": "UP" },
+        { "type": "keyboard", "control": "W" },
+        { "type": "gamepad_button", "control": "DPAD_UP" }
+      ]
+    },
+    {
+      "name": "MenuDown",
+      "bindings": [
+        { "type": "keyboard", "control": "DOWN" },
+        { "type": "keyboard", "control": "S" },
+        { "type": "gamepad_button", "control": "DPAD_DOWN" }
+      ]
+    },
+    {
+      "name": "MenuLeft",
+      "bindings": [
+        { "type": "keyboard", "control": "LEFT" },
+        { "type": "keyboard", "control": "A" },
+        { "type": "gamepad_button", "control": "DPAD_LEFT" }
+      ]
+    },
+    {
+      "name": "MenuRight",
+      "bindings": [
+        { "type": "keyboard", "control": "RIGHT" },
+        { "type": "keyboard", "control": "D" },
+        { "type": "gamepad_button", "control": "DPAD_RIGHT" }
+      ]
+    },
+    {
+      "name": "MenuSelect",
+      "bindings": [
+        { "type": "keyboard", "control": "ENTER" },
+        { "type": "keyboard", "control": "SPACE" },
+        { "type": "gamepad_button", "control": "SOUTH" }
+      ]
+    },
+    {
+      "name": "MenuBack",
+      "bindings": [
+        { "type": "keyboard", "control": "ESCAPE" },
+        { "type": "keyboard", "control": "BACKSPACE" },
+        { "type": "gamepad_button", "control": "EAST" }
+      ]
     }
   ],
   "axes": [

@@ -1,6 +1,8 @@
 #include "Animation/CharacterPlayback.h"
 #include "Automation/EntityRef.h"
+#include "Core/EditorCameraController.h"
 #include "Core/PlayModeManager.h"
+#include "Gfx/EngineFrameRenderer.h"
 #include "Scene/ActiveCameraSync.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
@@ -86,9 +88,11 @@ int main()
     Hephaestus::PlayModeManager play;
     play.SetScene(&scene);
     bool nestedReloadAccepted = true;
-    play.SetSceneReloadCallback([&](std::string& outError) {
+    std::string loadedPath;
+    play.SetSceneReloadCallback([&](const std::string& scenePath, std::string& outError) {
         nestedReloadAccepted = play.RequestSceneReload();
-        return Reconstruct(scene, source, outError);
+        loadedPath = scenePath;
+        return Reconstruct(scene, scenePath.empty() ? source : fs::path(scenePath), outError);
     });
     ok &= Check(play.StartPlayMode(), "start Play Mode");
     play.SetRealtime(false);
@@ -128,15 +132,32 @@ int main()
                     "repeated reload restores authored state with stable entity count");
     }
 
+    // Scene.load: another scene replaces this one during Play, and Stop gives the edited scene its own path back.
+    const fs::path other = root / "Other.hpscene";
+    {
+        Scene otherScene("Other");
+        otherScene.CreateEntity("OnlyInOther");
+        ok &= Check(SceneSerializer(otherScene).Serialize(other, error), "write a second scene");
+    }
+    ok &= Check(play.RequestSceneReload(other.string()) && play.ProcessSceneReload() && loadedPath == other.string(),
+                "Scene.load passes the requested scene to the host");
+    ok &= Check(static_cast<bool>(scene.FindEntityByName("OnlyInOther")) &&
+                    fs::path(scene.GetSourceAssetPath()) == other,
+                "the requested scene replaces the current one");
+
     play.StopPlayMode();
     ok &= Check(play.IsRealtime(), "Editor Stop restores realtime execution semantics");
+    ok &= Check(fs::path(scene.GetSourceAssetPath()) == source && static_cast<bool>(scene.FindEntityByName("Player")),
+                "Stop restores the edited scene and its own source path after a Scene.load");
 
     Scene inMemory("Unsaved");
     Hephaestus::PlayModeManager unsavedPlay;
     unsavedPlay.SetScene(&inMemory);
-    unsavedPlay.SetSceneReloadCallback([](std::string&) { return true; });
+    unsavedPlay.SetSceneReloadCallback([](const std::string&, std::string&) { return true; });
     ok &= Check(unsavedPlay.StartPlayMode() && !unsavedPlay.RequestSceneReload(),
                 "in-memory scene rejects reload without an authored source");
+    ok &= Check(unsavedPlay.RequestSceneReload(other.string()),
+                "an in-memory scene can still load a saved scene");
     unsavedPlay.StopPlayMode();
 
     Scene missingSource;
@@ -144,7 +165,7 @@ int main()
                 "load scene before testing a removed source");
     Hephaestus::PlayModeManager missingPlay;
     missingPlay.SetScene(&missingSource);
-    missingPlay.SetSceneReloadCallback([&](std::string& outError) {
+    missingPlay.SetSceneReloadCallback([&](const std::string&, std::string& outError) {
         return Reconstruct(missingSource, source, outError);
     });
     ok &= Check(missingPlay.StartPlayMode(), "start Play Mode for missing-source check");
@@ -153,6 +174,13 @@ int main()
                     missingPlay.IsPaused() && EntityCount(missingSource) == 2,
                 "missing source fails before teardown and freezes gameplay safely");
     missingPlay.StopPlayMode();
+
+    // A script camera's roll must not stay on the editor view once the fly camera takes over again.
+    Hephaestus::RenderCamera rendered;
+    rendered.rollDeg = 180.0f;
+    Hephaestus::EditorCameraController flyCamera;
+    flyCamera.BuildRenderCamera(rendered);
+    ok &= Check(rendered.rollDeg == 0.0f, "the editor camera clears roll left by a script camera");
 
     fs::remove_all(root, ec);
     if (ok) {

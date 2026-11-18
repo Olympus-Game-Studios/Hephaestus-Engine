@@ -123,6 +123,12 @@ public:
     void SetForceInputForwarding(bool force) { m_forceForwardInput = force; }
 
     /**
+     * @brief While the running game owns the keyboard, every key pressed in the viewport reaches it: editor
+     * shortcuts (Ctrl+D, Ctrl+S, H, ...) do not fire. Escape still arrives as a key press, which stops Play.
+     */
+    void SetGameOwnsKeyboard(bool owns) { m_gameOwnsKeyboard = owns; }
+
+    /**
      * @brief Capture the mouse cursor for camera / FPS look.
      *
      * Hides the cursor, grabs mouse input, and recenters so look is not limited
@@ -188,6 +194,9 @@ signals:
      */
     void viewportResized(uint32_t width, uint32_t height);
 
+    /** @brief The window's close button was pressed; the window stays open until its owner closes it. */
+    void closeRequested();
+
 protected:
     // QWindow event overrides
     void exposeEvent(QExposeEvent* event) override;
@@ -234,6 +243,7 @@ private:
     
     // Force forwarding mode (for play mode)
     bool m_forceForwardInput = false;
+    bool m_gameOwnsKeyboard = false;
 };
 
 } // namespace QtEditor

@@ -23,7 +23,7 @@ vec3 sampleEquirectangular(vec3 direction) {
     uv.x = atan(direction.z, direction.x) / (2.0 * PI) + 0.5;
     uv.y = asin(direction.y) / PI + 0.5;
     
-    return texture(environmentMap, uv).rgb;
+    return textureLod(environmentMap, uv, 0.0).rgb;
 }
 
 void main() {

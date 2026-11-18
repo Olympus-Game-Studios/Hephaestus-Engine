@@ -1,7 +1,10 @@
 #include "MaterialAssetSerializer.h"
+#include "MaterialGraphEvaluator.h"
 #include "MaterialNodeDefinitions.h"
+#include "MaterialShaderCompiler.h"
 #include "../../Assets/AssetPathPolicy.h"
 
+#include <algorithm>
 #include <fstream>
 #include <unordered_set>
 
@@ -107,6 +110,9 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("opacity") && root["opacity"].is_number()) outMaterial.opacity = root["opacity"].get<float>();
     if (root.contains("opacityMask") && root["opacityMask"].is_number()) outMaterial.opacityMask = root["opacityMask"].get<float>();
     if (root.contains("refraction") && root["refraction"].is_number()) outMaterial.refraction = root["refraction"].get<float>();
+    if (root.contains("blendMode") && root["blendMode"].is_string()) {
+        outMaterial.blendMode = MaterialBlendModeFromName(root["blendMode"].get<std::string>());
+    }
 
     if (root.contains("useAlbedoTexture") && root["useAlbedoTexture"].is_boolean()) outMaterial.useAlbedoTexture = root["useAlbedoTexture"].get<bool>();
     if (root.contains("albedoTexturePath") && root["albedoTexturePath"].is_string()) outMaterial.albedoTexturePath = root["albedoTexturePath"].get<std::string>();
@@ -119,6 +125,11 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("useAoTexture") && root["useAoTexture"].is_boolean()) outMaterial.useAoTexture = root["useAoTexture"].get<bool>();
     if (root.contains("aoTexturePath") && root["aoTexturePath"].is_string()) outMaterial.aoTexturePath = root["aoTexturePath"].get<std::string>();
     if (root.contains("useWorldAlignedTexture") && root["useWorldAlignedTexture"].is_boolean()) outMaterial.useWorldAlignedTexture = root["useWorldAlignedTexture"].get<bool>();
+    for (auto [key, channel] : {std::pair{"roughnessChannel", &outMaterial.roughnessChannel},
+                                std::pair{"metallicChannel", &outMaterial.metallicChannel},
+                                std::pair{"aoChannel", &outMaterial.aoChannel}}) {
+        if (root.contains(key) && root[key].is_number_unsigned()) *channel = root[key].get<uint32_t>() & 3u;
+    }
     if (root.contains("worldTextureScale") && root["worldTextureScale"].is_number()) outMaterial.worldTextureScale = root["worldTextureScale"].get<float>();
 
     std::vector<std::string> warnings;
@@ -163,10 +174,15 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
             }
 
             NodeType nodeType = NodeType::MaterialOutput;
-            const bool recognized = TryNodeTypeFromString(typeString, nodeType);
+            bool recognized = TryNodeTypeFromString(typeString, nodeType);
+            if (!recognized && FindCustomNode(typeString)) {
+                nodeType = NodeType::Custom;
+                recognized = true;
+            }
             if (!recognized) {
                 nodeType = NodeType::Unknown;
-                warnings.emplace_back("Encountered unknown node type: " + typeString);
+                warnings.emplace_back("Encountered unknown node type: " + typeString +
+                                      " (a plugin node whose plugin is not loaded is kept as it is)");
             }
 
             std::string displayName = recognized ? "" : typeString;
@@ -174,7 +190,7 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
                 displayName = nodeVal["displayName"].get<std::string>();
             }
 
-            Node& node = outGraph.CreateNodeWithID(nodeId, nodeType, displayName);
+            Node& node = outGraph.CreateNodeWithID(nodeId, nodeType, displayName, typeString);
             node.serializedType = typeString;
 
             if (nodeVal.contains("scalar") && nodeVal["scalar"].is_number()) node.scalar = nodeVal["scalar"].get<float>();
@@ -300,7 +316,8 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
                              const std::string& displayName,
                              const Graph& graph,
                              const NodePositionProvider& nodePositionProvider,
-                             std::string& outError) {
+                             std::string& outError,
+                             std::vector<std::string>* shaderDiagnostics) {
     json root = graph.HasOriginalRootJson() ? graph.GetOriginalRootJson() : json::object();
     if (!root.is_object()) {
         root = json::object();
@@ -317,6 +334,11 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["opacity"] = material.opacity;
     root["opacityMask"] = material.opacityMask;
     root["refraction"] = material.refraction;
+    if (material.blendMode != MaterialBlendMode::Opaque) {
+        root["blendMode"] = MaterialBlendModeName(material.blendMode);
+    } else {
+        root.erase("blendMode");
+    }
     if (root.contains("reflectionStrength") || material.reflectionStrength != 1.0f) {
         root["reflectionStrength"] = material.reflectionStrength;
     }
@@ -330,6 +352,15 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["metallicTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.metallicTexturePath);
     root["useAoTexture"] = material.useAoTexture;
     root["aoTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.aoTexturePath);
+    for (const auto& [key, channel] : {std::pair{"roughnessChannel", material.roughnessChannel},
+                                       std::pair{"metallicChannel", material.metallicChannel},
+                                       std::pair{"aoChannel", material.aoChannel}}) {
+        if (channel != 0) {
+            root[key] = channel;
+        } else {
+            root.erase(key);
+        }
+    }
     root["useWorldAlignedTexture"] = material.useWorldAlignedTexture;
     root["worldTextureScale"] = material.worldTextureScale;
 
@@ -343,7 +374,9 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
             MergeUnknownInto(nodeJson, node.unknownFields);
 
             const std::string typeString =
-                (node.type == NodeType::Unknown && !node.serializedType.empty()) ? node.serializedType : NodeTypeToString(node.type);
+                ((node.type == NodeType::Unknown || node.type == NodeType::Custom) && !node.serializedType.empty())
+                    ? node.serializedType
+                    : NodeTypeToString(node.type);
 
             nodeJson["id"] = node.id;
             nodeJson["type"] = typeString;
@@ -418,108 +451,192 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
         outError = "Failed to write material data.";
         return false;
     }
+    out.close();
+
+    std::vector<std::string> diagnostics;
+    const std::filesystem::path shaderPath = Hephaestus::CompiledMaterialShaderPath(path);
+    bool keepShader = false;
+    const auto missingNode = std::find_if(graph.GetNodes().begin(), graph.GetNodes().end(),
+                                          [](const Node& node) { return node.type == NodeType::Unknown; });
+    if (missingNode != graph.GetNodes().end()) {
+        keepShader = true;
+        diagnostics.push_back("Kept the last compiled shader: the " + missingNode->serializedType +
+                              " node's plugin is not loaded, so the graph cannot be compiled.");
+    } else if (graph.HasSourceGraph() && !graph.IsLegacyMode() && GraphNeedsCompiledShader(graph)) {
+        MaterialShaderCompileResult compiled = CompileMaterialGraph(graph, FindMaterialShaderSourceDirectory());
+        diagnostics = std::move(compiled.diagnostics);
+        std::string writeError;
+        if (compiled.ok && Hephaestus::WriteCompiledMaterialShader(shaderPath, compiled.shader, writeError)) {
+            keepShader = true;
+        } else if (!writeError.empty()) {
+            diagnostics.push_back(writeError);
+        }
+    }
+    if (!keepShader) {
+        std::error_code ec;
+        std::filesystem::remove(shaderPath, ec);
+    }
+    if (shaderDiagnostics) {
+        *shaderDiagnostics = std::move(diagnostics);
+    }
 
     outError.clear();
     return true;
 }
 
 void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& graph) {
+    const bool hadOriginalRoot = graph.HasOriginalRootJson();
+    json originalRoot = graph.GetOriginalRootJson();
     graph.Clear();
+    if (hadOriginalRoot) {
+        graph.SetOriginalRootJson(std::move(originalRoot));
+    }
     graph.SetLegacyMode(false);
     graph.SetGraphEditingEnabled(true);
     graph.SetHasSourceGraph(true);
 
-    Node& output = graph.CreateNode(NodeType::MaterialOutput);
-    output.posX = 450.0f;
-    output.posY = 200.0f;
+    constexpr float kRowHeight = 120.0f;
+    constexpr float kInputX = 160.0f;
+    constexpr float kSampleX = -80.0f;
+    const MaterialComponent defaults;
 
-    auto connectScalar = [&](float value, PinID outputPin) {
-        Node& scalarNode = graph.CreateNode(NodeType::ConstantFloat);
-        scalarNode.scalar = value;
-        scalarNode.posX = 160.0f;
-        scalarNode.posY = output.posY;
-        if (!scalarNode.outputs.empty()) {
-            graph.CreateLink(scalarNode.outputs[0], outputPin);
+    // CreateNode may reallocate the node list, so keep copies of pin ids rather than node references.
+    Node& outputNode = graph.CreateNode(NodeType::MaterialOutput);
+    const NodeID outputId = outputNode.id;
+    const std::vector<PinID> outputInputs = outputNode.inputs;
+    float rowY = 0.0f;
+
+    auto place = [](Node& node, float x, float y) {
+        node.posX = x;
+        node.posY = y;
+    };
+    auto link = [&](PinID from, size_t outputSlot) {
+        if (from != 0 && outputSlot < outputInputs.size()) {
+            graph.CreateLink(from, outputInputs[outputSlot]);
         }
     };
-
-    auto connectColor = [&](const Vec3& color, PinID outputPin) {
-        Node& colorNode = graph.CreateNode(NodeType::ConstantVec3);
-        colorNode.color = Float3{color.x, color.y, color.z};
-        colorNode.posX = 160.0f;
-        colorNode.posY = output.posY;
-        if (!colorNode.outputs.empty()) {
-            graph.CreateLink(colorNode.outputs[0], outputPin);
+    auto scalarNode = [&](float value, float x, float y) {
+        Node& node = graph.CreateNode(NodeType::ConstantFloat);
+        node.scalar = value;
+        place(node, x, y);
+        return node.outputs.empty() ? PinID{0} : node.outputs[0];
+    };
+    auto colorNode = [&](const Vec3& value, float x, float y) {
+        Node& node = graph.CreateNode(NodeType::ConstantVec3);
+        node.color = Float3{value.x, value.y, value.z};
+        place(node, x, y);
+        return node.outputs.empty() ? PinID{0} : node.outputs[0];
+    };
+    auto multiply = [&](PinID a, PinID b, float x, float y) {
+        Node& node = graph.CreateNode(NodeType::Multiply);
+        place(node, x, y);
+        const std::vector<PinID> inputs = node.inputs;
+        const PinID result = node.outputs.empty() ? PinID{0} : node.outputs[0];
+        if (inputs.size() >= 2) {
+            graph.CreateLink(a, inputs[0]);
+            graph.CreateLink(b, inputs[1]);
         }
+        return result;
+    };
+    auto sample = [&](NodeType type, const std::string& path, bool scalar, uint32_t channel, float y) {
+        const bool worldAligned = material.useWorldAlignedTexture;
+        const bool split = scalar && channel != 0;
+        Node& node = graph.CreateNode(worldAligned ? NodeType::WorldAlignedTexture
+                                      : split      ? NodeType::TextureSample
+                                                   : type);
+        node.resourcePath = path;
+        node.worldAlignedScale = material.worldTextureScale;
+        node.boolValue = scalar || type == NodeType::NormalTextureSample;
+        place(node, split ? kSampleX - 220.0f : kSampleX, y);
+        const std::vector<PinID> outputs = node.outputs;
+        if (outputs.empty()) {
+            return PinID{0};
+        }
+        if (!split) {
+            return worldAligned && scalar && outputs.size() > 1 ? outputs[1] : outputs[0];
+        }
+        Node& breakNode = graph.CreateNode(NodeType::BreakVector);
+        place(breakNode, kSampleX, y);
+        const std::vector<PinID> breakInputs = breakNode.inputs;
+        const std::vector<PinID> breakOutputs = breakNode.outputs;
+        if (breakInputs.empty() || channel >= breakOutputs.size()) {
+            return PinID{0};
+        }
+        graph.CreateLink(outputs[0], breakInputs[0]);
+        return breakOutputs[channel];
+    };
+    auto mapTimes = [&](NodeType type, const std::string& path, uint32_t channel, float factor, size_t outputSlot) {
+        PinID map = sample(type, path, true, channel, rowY);
+        if (factor != 1.0f) {
+            map = multiply(map, scalarNode(factor, kSampleX, rowY + kRowHeight * 0.5f), kInputX, rowY);
+            rowY += kRowHeight * 0.5f;
+        }
+        link(map, outputSlot);
+        rowY += kRowHeight;
     };
 
-    if (!output.inputs.empty()) {
-        if (material.useAlbedoTexture && !material.albedoTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::AlbedoTextureSample);
-            tex.resourcePath = material.albedoTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 80.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[0]);
-            }
-        } else {
-            connectColor(material.albedo, output.inputs[0]);
+    if (material.useAlbedoTexture && !material.albedoTexturePath.empty()) {
+        PinID color = sample(NodeType::AlbedoTextureSample, material.albedoTexturePath, false, 0, rowY);
+        const Vec3& tint = material.albedo;
+        if (tint.x != 1.0f || tint.y != 1.0f || tint.z != 1.0f) {
+            color = multiply(color, colorNode(tint, kSampleX, rowY + kRowHeight * 0.5f), kInputX, rowY);
+            rowY += kRowHeight * 0.5f;
         }
+        link(color, 0);
+    } else {
+        link(colorNode(material.albedo, kInputX, rowY), 0);
     }
-    if (output.inputs.size() > 1) {
-        if (material.useMetallicTexture && !material.metallicTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::MetallicTextureSample);
-            tex.resourcePath = material.metallicTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 140.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[1]);
-            }
-        } else {
-            connectScalar(material.metallic, output.inputs[1]);
-        }
-    }
-    if (output.inputs.size() > 2) connectScalar(material.roughness, output.inputs[2]);
-    if (output.inputs.size() > 3) connectColor(material.emissive, output.inputs[3]);
+    rowY += kRowHeight;
 
-    if (output.inputs.size() > 4 && material.useNormalTexture && !material.normalTexturePath.empty()) {
-        Node& tex = graph.CreateNode(NodeType::NormalTextureSample);
-        tex.resourcePath = material.normalTexturePath;
-        tex.posX = 140.0f;
-        tex.posY = 260.0f;
-        if (!tex.outputs.empty()) {
-            graph.CreateLink(tex.outputs[0], output.inputs[4]);
-        }
+    if (material.useMetallicTexture && !material.metallicTexturePath.empty()) {
+        mapTimes(NodeType::MetallicTextureSample, material.metallicTexturePath, material.metallicChannel,
+                 material.metallic, 1);
+    } else {
+        link(scalarNode(material.metallic, kInputX, rowY), 1);
+        rowY += kRowHeight;
     }
 
-    if (output.inputs.size() > 5) {
-        if (material.useRoughnessTexture && !material.roughnessTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::RoughnessTextureSample);
-            tex.resourcePath = material.roughnessTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 320.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[5]);
-            }
-        } else {
-            connectScalar(material.roughness, output.inputs[5]);
-        }
+    link(scalarNode(material.roughness, kInputX, rowY), 2);
+    rowY += kRowHeight;
+    if (material.useRoughnessTexture && !material.roughnessTexturePath.empty()) {
+        link(sample(NodeType::RoughnessTextureSample, material.roughnessTexturePath, true, material.roughnessChannel,
+                    rowY), 5);
+        rowY += kRowHeight;
     }
 
-    if (output.inputs.size() > 6) {
-        if (material.useAoTexture && !material.aoTexturePath.empty()) {
-            Node& tex = graph.CreateNode(NodeType::AoTextureSample);
-            tex.resourcePath = material.aoTexturePath;
-            tex.posX = 140.0f;
-            tex.posY = 380.0f;
-            if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[6]);
-            }
-        } else {
-            connectScalar(material.ao, output.inputs[6]);
-        }
+    if (material.emissive.x != 0.0f || material.emissive.y != 0.0f || material.emissive.z != 0.0f) {
+        link(colorNode(material.emissive, kInputX, rowY), 3);
+        rowY += kRowHeight;
     }
 
+    if (material.useNormalTexture && !material.normalTexturePath.empty()) {
+        link(sample(NodeType::NormalTextureSample, material.normalTexturePath, false, 0, rowY), 4);
+        rowY += kRowHeight;
+    }
+
+    if (material.useAoTexture && !material.aoTexturePath.empty()) {
+        mapTimes(NodeType::AoTextureSample, material.aoTexturePath, material.aoChannel, material.ao, 6);
+    } else if (material.ao != defaults.ao) {
+        link(scalarNode(material.ao, kInputX, rowY), 6);
+        rowY += kRowHeight;
+    }
+
+    link(scalarNode(material.specular, kInputX, rowY), 7);
+    rowY += kRowHeight;
+    link(scalarNode(material.opacity, kInputX, rowY), 8);
+    rowY += kRowHeight;
+    if (material.opacityMask != defaults.opacityMask || material.blendMode == MaterialBlendMode::Masked) {
+        link(scalarNode(material.opacityMask, kInputX, rowY), 9);
+        rowY += kRowHeight;
+    }
+    if (material.refraction != defaults.refraction) {
+        link(scalarNode(material.refraction, kInputX, rowY), 10);
+        rowY += kRowHeight;
+    }
+
+    if (Node* output = graph.FindNode(outputId)) {
+        place(*output, 480.0f, std::max(0.0f, rowY * 0.5f - 200.0f));
+    }
     graph.UpdateNextIDs();
 }
 

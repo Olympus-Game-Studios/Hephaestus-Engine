@@ -47,6 +47,7 @@
 !/CMakeLists.txt
 
 build/
+build-automation/
 dist/
 !engine/Build/
 !engine/Build/**

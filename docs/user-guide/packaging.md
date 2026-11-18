@@ -26,7 +26,9 @@ Open **Build > Package Project** (`Ctrl+Shift+B`). The Build Project window has:
 
 Then click **Package**, or **Package & Run** to launch the game as soon as it's done. The Output panel shows progress file by file. You can cancel at any time, and your previous successful package isn't touched until the new one has finished, so a failed package never leaves you with nothing.
 
-**Build > Run Last Package** launches the most recent package again, and **Build > Clean Package** deletes it (after asking). The **Build & Run** button in the tool row has the same options.
+**Build > Run Last Package** launches the most recent package again, and **Build > Clean Package** deletes it (after asking). The arrow on the **Build & Run** button in the tool row has the same options.
+
+For a quick test, **Play > Build and Run** (`Ctrl+B`, or a click on the **Build & Run** button) skips this window: it packages the scene you have open with your project's settings into `Saved/BuildAndRun/Development` (or `Release`, whichever is ticked in the Play menu) and starts the game. It doesn't change the settings above or your usual output folder. If the scene has unsaved changes, you choose between saving first and building the last saved version.
 
 **Report possibly unused assets** lists files nothing seems to reference. It's only advice: Hephaestus packages everything in your `assets` folder anyway, because scripts can load files by name and there's no way to know for sure what they'll ask for.
 

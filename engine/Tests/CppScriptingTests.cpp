@@ -502,13 +502,13 @@ end
             if (id == ballId) ballVelocity = v;
             return id == ballId;
         };
-        physics.raycast = [&](uint32_t ignore, const Vec3&, const Vec3&, float, PhysicsRaycastHit& hit,
-                              const char* layer, std::string& error, bool) {
+        physics.raycast = [&](const std::vector<uint32_t>& ignore, const Vec3&, const Vec3&, float,
+                              PhysicsRaycastHit& hit, const char* layer, std::string& error, bool) {
             if (layer && std::string(layer) != "Ground") {
                 error = std::string("unknown layer ") + layer;
                 return false;
             }
-            hit.hit = ignore != ballId;
+            hit.hit = std::find(ignore.begin(), ignore.end(), ballId) == ignore.end();
             hit.distance = 2.5f;
             hit.entityId = ballId;
             return true;

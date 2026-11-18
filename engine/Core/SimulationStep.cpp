@@ -2,8 +2,10 @@
 
 #include "../Animation/CharacterPlayback.h"
 #include "../Audio/AudioEngine.h"
+#include "../Scene/ActiveCameraSync.h"
 #include "../Physics/JoltPhysicsSystem.h"
 #include "../Scene/Components.h"
+#include "../Scene/ParticleSimulation.h"
 #include "../Scene/Scene.h"
 #include "../Scripting/LuaScriptEngine.h"
 #include "../Scripting/PluginScriptHost.h"
@@ -38,10 +40,17 @@ bool ReloadAtSafePoint(const SimulationStepContext& context)
 
 } // namespace
 
-bool RunSimulationStep(const SimulationStepContext& context, float dt)
+bool RunSimulationStep(const SimulationStepContext& context, float realDt)
 {
     Scene& scene = *context.scene;
     Physics::JoltPhysicsSystem* physics = context.physics;
+    // Gameplay runs at the script-set time scale (Time.setScale); it is read again after the scripts so a pause
+    // takes effect this frame. Audio and UI keep real time.
+    auto scaled = [&]() { return context.lua ? realDt * context.lua->GetTimeScale() : realDt; };
+    if (context.lua) {
+        context.lua->SetUnscaledDeltaTime(realDt);
+    }
+    float dt = scaled();
 
     if (context.audio) {
         UpdateSceneAudioSources(scene, *context.audio);
@@ -60,6 +69,7 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
         if (ReloadAtSafePoint(context)) return false;
     }
 
+    dt = scaled();
     // Fixed-step physics follows scripts so onUpdate can write this frame's motion.
     RunPhysics(context, physics, [&](Physics::JoltPhysicsSystem& p) {
         p.Update(scene, dt);
@@ -88,11 +98,18 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
     if (context.cppScripts) {
         context.cppScripts->LateUpdateScripts(dt);
     }
+    Particles::UpdateScene(scene, dt);
     return !ReloadAtSafePoint(context);
 }
 
 void UpdateSceneAudioSources(Scene& scene, AudioEngine& audioEngine)
 {
+    if (const auto view = TryReadActiveCameraView(scene)) {
+        const Mat4 frame = MakeCameraViewFrame(view->position, view->yawRadians, view->pitchRadians, view->rollRadians);
+        audioEngine.SetListener(view->position, Vec3(frame.m[0], frame.m[1], frame.m[2]),
+                                Vec3(frame.m[4], frame.m[5], frame.m[6]));
+    }
+
     auto audioView = scene.GetEntitiesWith<AudioSourceComponent>();
     for (auto entityHandle : audioView) {
         auto& audio = audioView.get<AudioSourceComponent>(entityHandle);
@@ -113,15 +130,31 @@ void UpdateSceneAudioSources(Scene& scene, AudioEngine& audioEngine)
                 audio.runtimeHandle = 0;
             } else {
                 audioEngine.SetVolume(audio.runtimeHandle, audio.volume);
+                if (audio.spatial) {
+                    const Mat4 world = scene.GetWorldTransform(Entity(entityHandle, &scene));
+                    audioEngine.SetPosition(audio.runtimeHandle, Vec3(world.m[12], world.m[13], world.m[14]));
+                }
             }
         }
 
         if (audio.runtimeHandle == 0 && audio.playOnStart && !audio.runtimeStarted) {
-            audio.runtimeHandle = audioEngine.Play(audio.clipPath, audio.loop, audio.volume);
+            AudioEngine::PlayParams params;
+            params.loop = audio.loop;
+            params.volume = audio.volume;
+            params.bus = audio.bus;
+            params.spatial = audio.spatial;
+            params.minDistance = audio.minDistance;
+            params.maxDistance = audio.maxDistance;
+            if (audio.spatial) {
+                const Mat4 world = scene.GetWorldTransform(Entity(entityHandle, &scene));
+                params.position = Vec3(world.m[12], world.m[13], world.m[14]);
+            }
+            audio.runtimeHandle = audioEngine.Play(audio.clipPath, params);
             audio.runtimeStarted = audio.runtimeHandle != 0;
             audio.runtimeLastClip = audio.clipPath;
         }
     }
+    audioEngine.Update();
 }
 
 } // namespace Hephaestus

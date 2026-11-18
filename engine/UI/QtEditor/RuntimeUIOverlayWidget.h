@@ -4,8 +4,11 @@
 
 #include "../HephaestusUI/UIRenderer.h"
 
+#include <QImage>
 #include <QWidget>
 #include <functional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Hephaestus {
@@ -41,6 +44,11 @@ private:
     std::vector<Hephaestus::HephaestusUI::UIDrawCommand> m_drawCommands;
     UIMouseEventCallback m_mouseCallback;
     bool m_mouseEventsEnabled = false;
+    // Loaded images by imageId (a null image when it could not be loaded), and tinted copies by imageId + tint.
+    std::unordered_map<std::string, QImage> m_images;
+    std::unordered_map<std::string, QImage> m_tintedImages;
+
+    const QImage& TintedImage(const std::string& imageId, const Hephaestus::HephaestusUI::UIColor& tint);
 };
 
 } // namespace QtEditor
