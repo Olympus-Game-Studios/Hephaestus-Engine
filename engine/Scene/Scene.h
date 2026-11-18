@@ -63,8 +63,7 @@ public:
     void ToggleSelectedEntity(Entity entity);
     void ClearSelection();
 
-    // Simple in-memory clipboard for editor copy/paste (single-entity)
-    // Copies a shallow snapshot of commonly-used components so users can duplicate objects with Ctrl+C / Ctrl+V
+    // In-memory clipboard for editor copy/paste: the entity and its children with every saved component, as Duplicate.
     void CopyEntityToClipboard(Entity entity);
     bool HasClipboardEntity() const;
     Entity PasteClipboard();

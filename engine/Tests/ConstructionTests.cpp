@@ -810,6 +810,28 @@ void TestWalls()
           "nothing walkable lies within the sloped wall or an agent's radius of it");
 }
 
+void TestCopyPaste()
+{
+    Scene scene("Copy Paste");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams params;
+    params.width = 1.5f;
+    Entity hole = AddBox(scene, "Hole", params, Vec3(2.0f, 1.0f, 0.0f));
+    ConstructionSystem::SetOperation(scene, hole, Operation::Subtract);
+    system.Update(scene);
+
+    scene.CopyEntityToClipboard(hole);
+    Entity pasted = scene.PasteClipboard();
+    const auto* shape = pasted ? scene.GetRegistry().try_get<ConstructionShapeComponent>(pasted) : nullptr;
+    Check(shape && shape->recipe == Recipe::Box && shape->operation == Operation::Subtract &&
+              std::fabs(shape->box.width - 1.5f) < 1e-4f,
+          "a pasted subtract block is still a subtract block of the same size");
+    system.Update(scene);
+    Check(pasted && system.Geometry(pasted) != nullptr, "the pasted block is evaluated like any construction shape");
+}
+
 void TestWallsLineUp()
 {
     Scene scene("Wall Snapping");
@@ -2065,6 +2087,7 @@ int main()
     TestWalls();
     TestWallTool();
     TestWallsLineUp();
+    TestCopyPaste();
     TestRampsAndTurns();
     TestFaceMaterials();
     TestKits();
