@@ -200,7 +200,8 @@ void RegisterConstructionAutomation(AutomationService& service)
 
     RegisterOrThrow(service, Definition(
         "construction.add_opening",
-        "Cut a doorway or window into a construction block, room or wall. The opening is a child entity of the host.",
+        "Cut a doorway or window into a construction block, room, wall or editable mesh (for a mesh, params.segment is "
+        "the index of an upright face in mesh.faces). The opening is a child entity of the host.",
         ObjectSchema({{"host", {{"type", "string"}}},
                       {"name", {{"type", "string"}}},
                       {"role", {{"type", "string"}}},
@@ -213,7 +214,7 @@ void RegisterConstructionAutomation(AutomationService& service)
             if (!host) return failure;
             const auto* hostShape = host->scene->GetRegistry().try_get<ConstructionShapeComponent>(host->handle);
             if (!hostShape || !Construction::CanHostOpenings(*hostShape)) {
-                return Failure(ErrorCode::InvalidArguments, "host is not a construction block, room or wall");
+                return Failure(ErrorCode::InvalidArguments, "host is not a construction block, room, wall or editable mesh");
             }
             ConstructionShapeComponent shape;
             shape.recipe = Recipe::Opening;

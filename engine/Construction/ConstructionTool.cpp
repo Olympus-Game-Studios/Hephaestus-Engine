@@ -114,6 +114,26 @@ bool HostFrame(Scene& scene, entt::entity host, WallSide side, int segment, Wall
     return CanHostOpenings(shape) && GetHostWallFrame(shape, side, segment, out);
 }
 
+// The host face under a hit that an opening would go in: a box side or wall face, or a face of an editable mesh.
+bool OpeningFace(Scene& scene, const ConstructionHit& hit, WallSide& side, int& segment, WallFrame& frame)
+{
+    const auto* shape = scene.GetRegistry().valid(hit.entity)
+        ? scene.GetRegistry().try_get<ConstructionShapeComponent>(hit.entity) : nullptr;
+    if (!shape) {
+        return false;
+    }
+    if (shape->source == SourceKind::EditableMesh) {
+        side = WallSide::PosZ;
+        segment = hit.tag.segment;
+    } else if (hit.tag.wall >= 0) {
+        side = static_cast<WallSide>(hit.tag.wall);
+        segment = std::max<int>(0, hit.tag.segment);
+    } else {
+        return false;
+    }
+    return segment >= 0 && HostFrame(scene, hit.entity, side, segment, frame);
+}
+
 Vec3 FrameCoordinates(const WallFrame& wall, const Vec3& local)
 {
     return Vec3(vdot(vsub(local, wall.center), wall.u), local.y, 0.0f);
@@ -381,16 +401,15 @@ bool ConstructionTool::OnPress(Scene& scene, ConstructionSystem& system, const T
             return true;
         }
         ConstructionHit hit;
-        if (!system.Raycast(scene, input.ray, hit) || hit.tag.wall < 0) {
-            return false;
-        }
         WallFrame frame;
-        if (!HostFrame(scene, hit.entity, static_cast<WallSide>(hit.tag.wall), std::max<int>(0, hit.tag.segment), frame)) {
+        WallSide side = WallSide::PosZ;
+        int segment = 0;
+        if (!system.Raycast(scene, input.ray, hit) || !OpeningFace(scene, hit, side, segment, frame)) {
             return false;
         }
         m_target = hit.entity;
-        m_wall = static_cast<WallSide>(hit.tag.wall);
-        m_segment = std::max<int>(0, hit.tag.segment);
+        m_wall = side;
+        m_segment = segment;
         m_planePoint = hit.localPoint;
         const Vec3 wc = FrameCoordinates(frame, hit.localPoint);
         m_wallStart = wc;
@@ -463,12 +482,13 @@ void ConstructionTool::OnMove(Scene& scene, ConstructionSystem& system, const To
     } else if (m_mode == ToolMode::DrawOpening) {
         ConstructionHit hit;
         WallFrame frame;
-        if (system.Raycast(scene, input.ray, hit) && hit.tag.wall >= 0 &&
-            HostFrame(scene, hit.entity, static_cast<WallSide>(hit.tag.wall), std::max<int>(0, hit.tag.segment), frame)) {
+        WallSide side = WallSide::PosZ;
+        int segment = 0;
+        if (system.Raycast(scene, input.ray, hit) && OpeningFace(scene, hit, side, segment, frame)) {
             m_hoverValid = true;
             m_hoverHost = hit.entity;
-            m_hoverWall = static_cast<WallSide>(hit.tag.wall);
-            m_hoverSegment = std::max<int>(0, hit.tag.segment);
+            m_hoverWall = side;
+            m_hoverSegment = segment;
             m_hoverLocal = hit.localPoint;
         }
     }

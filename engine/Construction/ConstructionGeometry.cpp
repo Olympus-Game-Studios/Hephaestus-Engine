@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <tuple>
 
 namespace Hephaestus::Construction {
@@ -986,6 +987,34 @@ bool GetWallSegmentFrame(const ConstructionShapeComponent& shape, int segment, W
 
 bool GetHostWallFrame(const ConstructionShapeComponent& host, WallSide side, int segment, WallFrame& out)
 {
+    if (host.source == SourceKind::EditableMesh) {
+        const EditableMesh& mesh = host.mesh;
+        if (segment < 0 || segment >= static_cast<int>(mesh.faces.size())) {
+            return false;
+        }
+        const Vec3 n = FaceNormal(mesh, segment);
+        const Vec3 flat(n.x, 0.0f, n.z);
+        // Doors and windows go in faces that stand roughly upright.
+        if (vlen(flat) < 0.7f) {
+            return false;
+        }
+        out.normal = vnorm(flat);
+        out.u = vcross(Vec3(0.0f, 1.0f, 0.0f), out.normal);
+        const Vec3 centre = FaceCentre(mesh, segment);
+        out.center = Vec3(centre.x, 0.0f, centre.z);
+        out.halfLength = 0.0f;
+        out.height = 0.0f;
+        for (int index : mesh.faces[static_cast<size_t>(segment)]) {
+            const Vec3& p = mesh.vertices[static_cast<size_t>(index)];
+            out.halfLength = std::max(out.halfLength, std::fabs(vdot(vsub(p, out.center), out.u)));
+            out.height = std::max(out.height, p.y);
+        }
+        out.thickness = 0.0f;
+        for (const Vec3& p : mesh.vertices) {
+            out.thickness = std::max(out.thickness, vdot(vsub(out.center, p), out.normal));
+        }
+        return true;
+    }
     if (host.recipe != Recipe::Wall) {
         out = GetWallFrame(host.box, side);
         return true;
@@ -1222,52 +1251,272 @@ bool EvaluateBalcony(const BoxParams& size, EvaluatedGeometry& out, const std::v
     return !out.mesh.indices.empty();
 }
 
-bool EvaluateEditableMesh(const EditableMesh& mesh, EvaluatedGeometry& out)
+namespace {
+
+// Constructive solid geometry by BSP trees (the csg.js method): polygons are convex and planar, and a closed solid's
+// polygons face outwards.
+constexpr float kCsgEpsilon = 1e-4f;
+
+struct CsgPolygon {
+    std::vector<Vec3> points;
+    Vec3 normal;
+    float w = 0.0f;
+    FaceTag tag;
+};
+
+bool MakeCsgPolygon(std::vector<Vec3> points, FaceTag tag, CsgPolygon& out)
+{
+    const Vec3 n = vcross(vsub(points[1], points[0]), vsub(points[2], points[0]));
+    if (vlen(n) < 1e-9f) return false;
+    out.normal = vnorm(n);
+    out.w = vdot(out.normal, points[0]);
+    out.points = std::move(points);
+    out.tag = tag;
+    return true;
+}
+
+void FlipCsgPolygon(CsgPolygon& polygon)
+{
+    std::reverse(polygon.points.begin(), polygon.points.end());
+    polygon.normal = vscale(polygon.normal, -1.0f);
+    polygon.w = -polygon.w;
+}
+
+void SplitCsgPolygon(const Vec3& n, float w, const CsgPolygon& polygon, std::vector<CsgPolygon>& coplanarFront,
+                     std::vector<CsgPolygon>& coplanarBack, std::vector<CsgPolygon>& front, std::vector<CsgPolygon>& back)
+{
+    enum { Coplanar = 0, Front = 1, Back = 2, Spanning = 3 };
+    int polygonType = 0;
+    std::vector<int> types;
+    types.reserve(polygon.points.size());
+    for (const Vec3& p : polygon.points) {
+        const float t = vdot(n, p) - w;
+        const int type = t < -kCsgEpsilon ? Back : t > kCsgEpsilon ? Front : Coplanar;
+        polygonType |= type;
+        types.push_back(type);
+    }
+    switch (polygonType) {
+    case Coplanar:
+        (vdot(n, polygon.normal) > 0.0f ? coplanarFront : coplanarBack).push_back(polygon);
+        break;
+    case Front:
+        front.push_back(polygon);
+        break;
+    case Back:
+        back.push_back(polygon);
+        break;
+    default: {
+        std::vector<Vec3> f;
+        std::vector<Vec3> b;
+        const size_t count = polygon.points.size();
+        for (size_t i = 0; i < count; ++i) {
+            const size_t j = (i + 1) % count;
+            const Vec3& vi = polygon.points[i];
+            const Vec3& vj = polygon.points[j];
+            if (types[i] != Back) f.push_back(vi);
+            if (types[i] != Front) b.push_back(vi);
+            if ((types[i] | types[j]) == Spanning) {
+                const float t = (w - vdot(n, vi)) / vdot(n, vsub(vj, vi));
+                const Vec3 v = vadd(vi, vscale(vsub(vj, vi), t));
+                f.push_back(v);
+                b.push_back(v);
+            }
+        }
+        if (f.size() >= 3) front.push_back(CsgPolygon{std::move(f), polygon.normal, polygon.w, polygon.tag});
+        if (b.size() >= 3) back.push_back(CsgPolygon{std::move(b), polygon.normal, polygon.w, polygon.tag});
+        break;
+    }
+    }
+}
+
+struct CsgNode {
+    bool hasPlane = false;
+    Vec3 n;
+    float w = 0.0f;
+    std::unique_ptr<CsgNode> front;
+    std::unique_ptr<CsgNode> back;
+    std::vector<CsgPolygon> polygons;
+
+    void Invert()
+    {
+        for (CsgPolygon& polygon : polygons) FlipCsgPolygon(polygon);
+        n = vscale(n, -1.0f);
+        w = -w;
+        if (front) front->Invert();
+        if (back) back->Invert();
+        std::swap(front, back);
+    }
+
+    std::vector<CsgPolygon> ClipPolygons(const std::vector<CsgPolygon>& list) const
+    {
+        if (!hasPlane) return list;
+        std::vector<CsgPolygon> f;
+        std::vector<CsgPolygon> b;
+        for (const CsgPolygon& polygon : list) SplitCsgPolygon(n, w, polygon, f, b, f, b);
+        if (front) f = front->ClipPolygons(f);
+        if (back) {
+            b = back->ClipPolygons(b);
+        } else {
+            b.clear();
+        }
+        f.insert(f.end(), b.begin(), b.end());
+        return f;
+    }
+
+    void ClipTo(const CsgNode& bsp)
+    {
+        polygons = bsp.ClipPolygons(polygons);
+        if (front) front->ClipTo(bsp);
+        if (back) back->ClipTo(bsp);
+    }
+
+    void AllPolygons(std::vector<CsgPolygon>& out) const
+    {
+        out.insert(out.end(), polygons.begin(), polygons.end());
+        if (front) front->AllPolygons(out);
+        if (back) back->AllPolygons(out);
+    }
+
+    void Build(const std::vector<CsgPolygon>& list)
+    {
+        if (list.empty()) return;
+        if (!hasPlane) {
+            n = list[0].normal;
+            w = list[0].w;
+            hasPlane = true;
+        }
+        std::vector<CsgPolygon> f;
+        std::vector<CsgPolygon> b;
+        for (const CsgPolygon& polygon : list) SplitCsgPolygon(n, w, polygon, polygons, polygons, f, b);
+        if (!f.empty()) {
+            if (!front) front = std::make_unique<CsgNode>();
+            front->Build(f);
+        }
+        if (!b.empty()) {
+            if (!back) back = std::make_unique<CsgNode>();
+            back->Build(b);
+        }
+    }
+};
+
+std::vector<CsgPolygon> CsgSubtract(const std::vector<CsgPolygon>& solid, const std::vector<CsgPolygon>& cutter)
+{
+    CsgNode a;
+    CsgNode b;
+    a.Build(solid);
+    b.Build(cutter);
+    a.Invert();
+    a.ClipTo(b);
+    b.ClipTo(a);
+    b.Invert();
+    b.ClipTo(a);
+    b.Invert();
+    std::vector<CsgPolygon> inside;
+    b.AllPolygons(inside);
+    a.Build(inside);
+    a.Invert();
+    std::vector<CsgPolygon> result;
+    a.AllPolygons(result);
+    return result;
+}
+
+// The six outward faces of the box origin + [0,1] ax + [0,1] ay + [0,1] az.
+std::vector<CsgPolygon> CsgBox(const Vec3& origin, const Vec3& ax, const Vec3& ay, const Vec3& az)
+{
+    const Vec3 centre = vadd(origin, vscale(vadd(ax, vadd(ay, az)), 0.5f));
+    const Vec3 axes[3] = {ax, ay, az};
+    std::vector<CsgPolygon> faces;
+    for (int k = 0; k < 3; ++k) {
+        const Vec3& a = axes[(k + 1) % 3];
+        const Vec3& b = axes[(k + 2) % 3];
+        for (int side = 0; side < 2; ++side) {
+            const Vec3 base = vadd(origin, vscale(axes[k], static_cast<float>(side)));
+            std::vector<Vec3> points{base, vadd(base, a), vadd(base, vadd(a, b)), vadd(base, b)};
+            const Vec3 faceCentre = vadd(base, vscale(vadd(a, b), 0.5f));
+            CsgPolygon polygon;
+            if (!MakeCsgPolygon(points, FaceTag{FaceGroup::Reveal, -1, -1}, polygon)) continue;
+            if (vdot(polygon.normal, vsub(faceCentre, centre)) < 0.0f) FlipCsgPolygon(polygon);
+            faces.push_back(std::move(polygon));
+        }
+    }
+    return faces;
+}
+
+} // namespace
+
+bool EvaluateEditableMesh(const ConstructionShapeComponent& shape, const std::vector<OpeningParams>& openings,
+                          const std::vector<LocalBox>& cuts, EvaluatedGeometry& out)
 {
     out = EvaluatedGeometry{};
+    const EditableMesh& mesh = shape.mesh;
     if (mesh.vertices.size() < 4 || mesh.faces.empty()) {
         return false;
     }
+    std::vector<CsgPolygon> polygons;
     for (size_t f = 0; f < mesh.faces.size(); ++f) {
         const std::vector<int>& face = mesh.faces[f];
-        Vec3 normal(0.0f, 0.0f, 0.0f);
-        for (size_t k = 0; k < face.size(); ++k) {
-            const Vec3& a = mesh.vertices[static_cast<size_t>(face[k])];
-            const Vec3& b = mesh.vertices[static_cast<size_t>(face[(k + 1) % face.size()])];
-            normal = vadd(normal, Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)));
-        }
-        normal = vnorm(normal);
+        const Vec3 normal = FaceNormal(mesh, static_cast<int>(f));
         const float ax = std::fabs(normal.x), ay = std::fabs(normal.y), az = std::fabs(normal.z);
         const FaceGroup group = ay >= ax && ay >= az ? (normal.y > 0.0f ? FaceGroup::Top : FaceGroup::Bottom)
             : ax >= az ? (normal.x > 0.0f ? FaceGroup::PosX : FaceGroup::NegX)
                        : (normal.z > 0.0f ? FaceGroup::PosZ : FaceGroup::NegZ);
         const FaceTag tag{group, -1, static_cast<std::int16_t>(f)};
         for (size_t k = 1; k + 1 < face.size(); ++k) {
-            const Vec3& a = mesh.vertices[static_cast<size_t>(face[0])];
-            const Vec3& b = mesh.vertices[static_cast<size_t>(face[k])];
-            const Vec3& c = mesh.vertices[static_cast<size_t>(face[k + 1])];
-            const Vec3 own = vcross(vsub(b, a), vsub(c, a));
-            if (vlen(own) < 1e-8f) continue;
             // A face bent by a dragged corner shades each triangle by its own facing.
-            PushFacing(out, a, b, c, vnorm(own), tag);
+            CsgPolygon triangle;
+            if (MakeCsgPolygon({mesh.vertices[static_cast<size_t>(face[0])], mesh.vertices[static_cast<size_t>(face[k])],
+                                mesh.vertices[static_cast<size_t>(face[k + 1])]}, tag, triangle)) {
+                polygons.push_back(std::move(triangle));
+            }
+        }
+    }
+    constexpr float kMargin = 0.05f;
+    const Vec3 up(0.0f, 1.0f, 0.0f);
+    for (const OpeningParams& opening : openings) {
+        WallFrame frame;
+        if (!GetHostWallFrame(shape, opening.side, opening.segment, frame)) continue;
+        const Vec3 origin = vadd(vadd(frame.center, vscale(frame.u, opening.offset - opening.width * 0.5f)),
+                                 vadd(vscale(up, opening.sill), vscale(frame.normal, kMargin)));
+        polygons = CsgSubtract(polygons, CsgBox(origin, vscale(frame.u, opening.width), vscale(up, opening.height),
+                                                vscale(frame.normal, -(frame.thickness + 2.0f * kMargin))));
+    }
+    for (const LocalBox& cut : cuts) {
+        const Vec3 size = vsub(cut.max, cut.min);
+        polygons = CsgSubtract(polygons, CsgBox(cut.min, Vec3(size.x, 0.0f, 0.0f), Vec3(0.0f, size.y, 0.0f),
+                                                Vec3(0.0f, 0.0f, size.z)));
+    }
+    for (const CsgPolygon& polygon : polygons) {
+        for (size_t k = 1; k + 1 < polygon.points.size(); ++k) {
+            const Vec3& a = polygon.points[0];
+            const Vec3& b = polygon.points[k];
+            const Vec3& c = polygon.points[k + 1];
+            if (vlen(vcross(vsub(b, a), vsub(c, a))) < 1e-8f) continue;
+            PushFacing(out, a, b, c, polygon.normal, polygon.tag);
         }
     }
     out.collideAsMesh = true;
-    const LocalBox bounds = BoundsOfPoints(mesh.vertices);
+    if (out.mesh.indices.empty()) {
+        return false;
+    }
+    std::vector<Vec3> points;
+    points.reserve(out.mesh.vertices.size());
+    for (const Vertex& v : out.mesh.vertices) points.push_back(Vec3(v.pos[0], v.pos[1], v.pos[2]));
+    const LocalBox bounds = BoundsOfPoints(points);
     out.mesh.bounds = AABB(bounds.min, bounds.max);
     MeshData::Submesh all;
     all.indexCount = static_cast<uint32_t>(out.mesh.indices.size());
     all.name = "Construction";
     all.bounds = out.mesh.bounds;
     out.mesh.submeshes.push_back(all);
-    return !out.mesh.indices.empty();
+    return true;
 }
 
 bool EvaluateShape(const ConstructionShapeComponent& shape, std::vector<OpeningParams> openings,
                    EvaluatedGeometry& out, const std::vector<LocalBox>& cuts)
 {
     if (shape.source == SourceKind::EditableMesh) {
-        return EvaluateEditableMesh(shape.mesh, out);
+        SortOpenings(openings);
+        return EvaluateEditableMesh(shape, openings, cuts, out);
     }
     if (shape.recipe == Recipe::Wall) {
         SortOpenings(openings);

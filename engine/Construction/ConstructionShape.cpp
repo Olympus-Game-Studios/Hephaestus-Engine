@@ -728,6 +728,9 @@ bool IsCutter(const ConstructionShapeComponent& shape)
 
 bool CanHostOpenings(const ConstructionShapeComponent& shape)
 {
+    if (shape.source == SourceKind::EditableMesh) {
+        return shape.operation == Operation::Add;
+    }
     return shape.source == SourceKind::Recipe &&
            ((shape.recipe == Recipe::Box && !IsCutter(shape)) || shape.recipe == Recipe::Wall);
 }

@@ -151,7 +151,7 @@ An editable mesh also has a handle in the middle of every edge and every face:
 - `Shift`-drag a face handle outwards to pull out a new part from that face, with sides joining it to the rest, such as a step on a platform or a buttress on a wall. `Shift`-drag it inwards to push in a recess, such as an alcove in a wall or a pit in a floor.
 - `Alt`-click a face handle to split the face in two across its middle. Split the top of a block, then pull out one half, to make an L shape.
 
-Handles snap to the grid, each edit is one undo step and `Esc` cancels a drag. An editable mesh collides exactly as it is drawn, so an L shape collides as an L, a recess can be walked into and a corner pulled inwards collides where it is. Bots use the same shape. To start again, press **Turn Back Into Block** (or **Turn Back Into Ramp**): the mesh becomes a plain block that fits around it, in the same place.
+Handles snap to the grid, each edit is one undo step and `Esc` cancels a drag. An editable mesh collides exactly as it is drawn, so an L shape collides as an L, a recess can be walked into and a corner pulled inwards collides where it is. Bots use the same shape. Doors and windows work on an editable mesh's upright faces just as on blocks: use **Draw Opening** on a face, and the opening is cut right through the mesh. Subtract blocks cut editable meshes too. To start again, press **Turn Back Into Block** (or **Turn Back Into Ramp**): the mesh becomes a plain block that fits around it, in the same place.
 
 ### Dressing walls with a kit
 

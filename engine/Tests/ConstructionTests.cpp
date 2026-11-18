@@ -2050,6 +2050,85 @@ void TestMeshTools()
           "bots can stand in the recess and on the top beside it (" + error + ")");
 }
 
+void TestMeshOpenings()
+{
+    Scene scene("Mesh Openings");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams groundSize;
+    groundSize.width = 30.0f;
+    groundSize.height = 0.2f;
+    groundSize.depth = 30.0f;
+    AddBox(scene, "Ground", groundSize, Vec3(0.0f, -0.2f, 0.0f));
+    BoxParams slabSize;
+    slabSize.width = 20.0f;
+    slabSize.height = 3.0f;
+    slabSize.depth = 0.4f;
+    Entity slab = AddBox(scene, "Slab", slabSize);
+    auto& slabShape = slab.GetComponent<ConstructionShapeComponent>();
+    MakeEditable(slabShape);
+    Check(CanHostOpenings(slabShape), "an editable mesh takes doors and windows");
+    WallFrame frame;
+    Check(GetHostWallFrame(slabShape, WallSide::PosZ, 3, frame) && std::fabs(frame.normal.z - 1.0f) < 1e-5f &&
+              std::fabs(frame.halfLength - 10.0f) < 1e-4f && std::fabs(frame.thickness - 0.4f) < 1e-4f &&
+              !GetHostWallFrame(slabShape, WallSide::PosZ, 0, frame),
+          "an upright face is an opening frame through the whole mesh; the top face is not");
+
+    // The tool puts a door where a click lands near the bottom of the mesh's +Z face.
+    ConstructionTool tool;
+    entt::entity selected = slab;
+    ToolHost host;
+    host.pushUndo = [](const std::string&) {};
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+    system.Update(scene);
+    tool.SetMode(ToolMode::DrawOpening);
+    tool.OnPress(scene, system, camera.At(Vec3(0.0f, 0.5f, 0.2f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(0.0f, 0.5f, 0.2f)));
+    std::vector<OpeningParams> openings = ConstructionSystem::CollectOpenings(scene, slab);
+    Check(openings.size() == 1 && openings[0].segment == 3 && openings[0].sill < 0.01f,
+          "clicking low on an editable mesh's face places a door in that face");
+    Check(system.Update(scene) >= 1, "the door re-evaluates the mesh");
+
+    const EvaluatedGeometry* geometry = system.Geometry(slab);
+    const float expected = 20.0f * 3.0f * 0.4f - (openings.empty() ? 0.0f : openings[0].width * openings[0].height * 0.4f);
+    Check(geometry && geometry->collideAsMesh && std::fabs(EnclosedVolume(*geometry) - expected) < 1e-2f,
+          "the door is cut through the mesh, leaving it closed (volume " +
+              std::to_string(geometry ? EnclosedVolume(*geometry) : 0.0f) + ", expected " + std::to_string(expected) + ")");
+    ConstructionHit hit;
+    Check(!system.Raycast(scene, Ray(Vec3(0.0f, 1.0f, 5.0f), Vec3(0.0f, 0.0f, -1.0f)), hit) || hit.entity != slab,
+          "a ray through the doorway passes the mesh");
+    Check(system.Raycast(scene, Ray(Vec3(3.0f, 1.0f, 5.0f), Vec3(0.0f, 0.0f, -1.0f)), hit) && hit.entity == slab,
+          "a ray beside the doorway hits the mesh");
+
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    std::vector<Vec3> path;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(scene),
+                                 Hephaestus::Navigation::SettingsForScene(scene), error);
+    float pathLength = 0.0f;
+    const bool found = built && nav.FindPath(Vec3(0.0f, 0.0f, 3.0f), Vec3(0.0f, 0.0f, -3.0f), path) && !path.empty();
+    for (size_t n = 1; n < path.size(); ++n) pathLength += vlen(vsub(path[n], path[n - 1]));
+    Check(found && pathLength < 8.0f && std::fabs(path.back().z + 3.0f) < 0.3f,
+          "bots walk straight through the door in the mesh (path " + std::to_string(pathLength) + " m)");
+
+    // A subtract block cuts an editable mesh as it cuts a block.
+    BoxParams holeSize;
+    holeSize.width = 1.0f;
+    holeSize.height = 1.0f;
+    holeSize.depth = 2.0f;
+    Entity hole = AddBox(scene, "Hole", holeSize, Vec3(6.0f, 1.0f, 0.0f));
+    hole.GetComponent<ConstructionShapeComponent>().operation = Operation::Subtract;
+    system.Update(scene);
+    Check(std::fabs(EnclosedVolume(*system.Geometry(slab)) - (expected - 0.4f)) < 1e-2f,
+          "a subtract block cuts a window through the mesh (volume " + std::to_string(EnclosedVolume(*system.Geometry(slab))) + ")");
+}
+
 void TestEditableMesh()
 {
     ConstructionShapeComponent room;
@@ -2082,8 +2161,8 @@ void TestEditableMesh()
     system.Update(scene);
     auto& shape = block.GetComponent<ConstructionShapeComponent>();
     Check(MakeEditable(shape) && shape.source == SourceKind::EditableMesh && shape.mesh.vertices.size() == 8 &&
-              HasOwnGeometry(shape) && !CanHostOpenings(shape) && !MakeEditable(shape),
-          "a block becomes eight corners, keeps its geometry, takes no openings and converts once");
+              HasOwnGeometry(shape) && CanHostOpenings(shape) && !MakeEditable(shape),
+          "a block becomes eight corners, keeps its geometry, still takes openings and converts once");
     Check(system.Update(scene) == 1, "making it editable re-evaluates it");
     const EvaluatedGeometry* geometry = system.Geometry(block);
     int top = 0;
@@ -2325,6 +2404,7 @@ int main()
     TestCopyPaste();
     TestResizeSnapsToNeighbours();
     TestMeshTools();
+    TestMeshOpenings();
     TestRampsAndTurns();
     TestFaceMaterials();
     TestKits();

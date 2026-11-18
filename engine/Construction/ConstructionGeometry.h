@@ -57,7 +57,8 @@ struct WallFrame {
 };
 
 WallFrame GetWallFrame(const BoxParams& box, WallSide side);
-// The face of a box or wall host an opening is placed on: a box side, or the PosZ or NegZ face of a wall segment.
+// The face of a host an opening is placed on: a box side, the PosZ or NegZ face of a wall segment, or face number
+// segment of an editable mesh (side unused) when that face stands roughly upright.
 bool GetHostWallFrame(const ConstructionShapeComponent& host, WallSide side, int segment, WallFrame& out);
 // Height of the top of the host's floor above its base, where doors stand.
 float HostFloorTop(const ConstructionShapeComponent& host);
@@ -73,8 +74,10 @@ bool EvaluateStairs(const BoxParams& size, int steps, EvaluatedGeometry& out, co
 
 // A solid slope from the ground at -Z up to height at +Z; it collides as one convex hull.
 bool EvaluateRamp(const BoxParams& size, EvaluatedGeometry& out);
-// Fan-triangulates each face; collision is the convex hull of all the points.
-bool EvaluateEditableMesh(const EditableMesh& mesh, EvaluatedGeometry& out);
+// Fan-triangulates each face, then cuts the openings (on faces that stand roughly upright, segment being the face
+// index) and subtract blocks out of it; it collides as its own triangles.
+bool EvaluateEditableMesh(const ConstructionShapeComponent& shape, const std::vector<OpeningParams>& openings,
+                          const std::vector<LocalBox>& cuts, EvaluatedGeometry& out);
 // neighbours: the floors of other balconies it touches, in its frame; railings are left out where one continues.
 bool EvaluateBalcony(const BoxParams& size, EvaluatedGeometry& out, const std::vector<LocalBox>& neighbours = {});
 
