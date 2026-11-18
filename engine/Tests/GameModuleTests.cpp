@@ -1,5 +1,7 @@
 #include "Assets/ArchiveFileSystem.h"
 #include "Core/SimulationStep.h"
+#include "Assets/MeshAsset.h"
+#include "Scene/Components.h"
 #include "Scene/Scene.h"
 #include "Scripting/LuaScriptEngine.h"
 #include "Scripting/PluginScriptHost.h"
@@ -202,6 +204,16 @@ int main(int argc, char** argv)
         Scene scene("GameModules");
         LuaScriptEngine lua;
         PluginScriptHost host;
+        std::vector<size_t> uploads;
+        std::vector<size_t> releases;
+        std::size_t uploadedIndices = 0;
+        host.SetMeshSink(PluginScriptHost::MeshSink{
+            [&](const std::string&, const MeshData& mesh) {
+                uploadedIndices = mesh.indices.size();
+                uploads.push_back(40 + uploads.size());
+                return uploads.back();
+            },
+            [&](size_t handle) { releases.push_back(handle); }});
         lua.Initialize(&scene, nullptr);
         lua.SetProjectRoot(root / "project");
         lua.SetPluginScriptHost(&host);
@@ -220,11 +232,20 @@ int main(int argc, char** argv)
                       "a game module mounts an archive and reads from it through the host API");
         pass &= Check(stats.refusals == 1 && stats.refusedCalls == 0 && host.GameSessionCount() == 1,
                       "a module that refuses to start gets no update or endPlay");
+        const auto meshEntity = static_cast<entt::entity>(static_cast<uint32_t>(stats.meshEntity - 1));
+        const auto* renderer = stats.meshEntity ? scene.GetRegistry().try_get<MeshRendererComponent>(meshEntity) : nullptr;
+        pass &= Check(renderer && uploads.size() == 1 && uploadedIndices == 3 && renderer->meshHandle == 40 &&
+                          renderer->submeshCount == 1 && renderer->appliedMaterialPaths.size() == 1 &&
+                          renderer->appliedMaterialPaths[0] == "materials/floor.hematerial" &&
+                          renderer->localBounds.min.z == -1.0f && renderer->localBounds.max.x == 1.0f,
+                      "a game module creates a mesh entity with its material slots and bounds");
+        pass &= Check(stats.badMeshRejected == 1 && uploads.size() == 1, "a mesh with an index past its vertices is rejected");
 
         host.OnSimulationStopped();
         lua.OnSimulationStopped();
         pass &= Check(stats.ends == 1 && host.GameSessionCount() == 0 && host.Archives().MountCount() == 0,
                       "stopping play ends the session and unmounts its archives");
+        pass &= Check(releases == std::vector<size_t>{40}, "stopping play frees the session's meshes");
 
         lua.OnSimulationStarted();
         Hephaestus::RunSimulationStep(step, 0.25f);

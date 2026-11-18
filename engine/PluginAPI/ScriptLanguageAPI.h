@@ -148,6 +148,28 @@ typedef enum HPUIProperty {
     HP_UI_IMAGE_TINT = 34        /* VEC4 */
 } HPUIProperty;
 
+/* A vertex of a mesh made at runtime (HPScriptHostAPI.meshCreate). Positions
+   are in the entity's local space, metres; colour is linear RGB. */
+typedef struct HPMeshVertex {
+    float position[3];
+    float normal[3];
+    float color[3];
+    float uv[2];
+} HPMeshVertex;
+
+/* One material slot of a runtime mesh: triangles (three indices each,
+   counter-clockwise front faces) into `vertices`, drawn with the material
+   asset at `material` (a .hematerial path, absolute or project relative; NULL
+   or empty for the default material). */
+typedef struct HPMeshSection {
+    uint32_t structSize;
+    const HPMeshVertex* vertices;
+    uint32_t vertexCount;
+    const uint32_t* indices;
+    uint32_t indexCount;
+    const char* material;
+} HPMeshSection;
+
 typedef enum HPLogLevel {
     HP_LOG_INFO = 0,
     HP_LOG_WARNING = 1,
@@ -365,6 +387,13 @@ typedef struct HPScriptHostAPI {
     int32_t (*archiveReadFile)(void* host, const char* virtualPath,
                                void (*sink)(void* user, const void* data, size_t size), void* user,
                                char* error, size_t errorSize);
+
+    /* Runtime meshes, added with game modules: check structSize. meshCreate
+       makes an entity named `name` at the origin that draws the sections, one
+       material slot each, and returns it, or 0 with a message in `error`. The
+       mesh's GPU buffers are freed when play stops. */
+    HPEntityId (*meshCreate)(void* host, const char* name, const HPMeshSection* sections, uint32_t sectionCount,
+                             char* error, size_t errorSize);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity: its Script

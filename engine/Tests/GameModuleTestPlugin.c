@@ -38,6 +38,19 @@ static void* BeginPlay(const HPScriptHostAPI* host) {
     if (host->archiveReadFile(host->host, "SCRIPTS/test.txt", CountBytes, &size, error, sizeof error)) {
         g_Stats.scriptBytes = (int)size;
     }
+    {
+        static const HPMeshVertex vertices[3] = {
+            {{0, 0, 0}, {0, 1, 0}, {1, 1, 1}, {0, 0}},
+            {{1, 0, 0}, {0, 1, 0}, {1, 1, 1}, {1, 0}},
+            {{0, 0, -1}, {0, 1, 0}, {1, 1, 1}, {0, 1}}};
+        static const uint32_t indices[3] = {0, 1, 2};
+        static const uint32_t badIndices[3] = {0, 1, 3};
+        HPMeshSection section = {sizeof(HPMeshSection), vertices, 3, indices, 3, "materials/floor.hematerial"};
+        g_Stats.meshEntity = host->meshCreate(host->host, "Floor", &section, 1, error, sizeof error);
+        section.indices = badIndices;
+        g_Stats.badMeshRejected = host->meshCreate(host->host, "Bad", &section, 1, error, sizeof error) == 0 &&
+                                  strstr(error, "index") != NULL;
+    }
     return &g_Session;
 }
 

@@ -3452,6 +3452,16 @@ void QtEditorEngine::StartPlayMode()
     }
     m_pluginScriptHost->SetLuaEngine(m_luaScriptEngine.get());
     m_pluginScriptHost->SetInputSystem(&m_gameplayInput);
+    m_pluginScriptHost->SetMeshSink(PluginScriptHost::MeshSink{
+        [this](const std::string& name, const MeshData& mesh) {
+            return m_frameRenderer ? m_frameRenderer->UploadDynamicMesh(MeshRendererComponent::InvalidMesh, name, mesh)
+                                   : MeshRendererComponent::InvalidMesh;
+        },
+        [this](size_t handle) {
+            if (m_frameRenderer) {
+                m_frameRenderer->ReleaseDynamicMesh(handle);
+            }
+        }});
     m_luaScriptEngine->SetPluginScriptHost(m_pluginScriptHost.get());
     populateGameplayInput();
 

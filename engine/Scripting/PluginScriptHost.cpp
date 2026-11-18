@@ -4,6 +4,7 @@
 #include "LuaScriptEngine.h"
 #include "ScriptLanguageRegistry.h"
 #include "../Animation/CharacterPlayback.h"
+#include "../Assets/MeshAsset.h"
 #include "../Audio/AudioEngine.h"
 #include "../Core/EngineLog.h"
 #include "../Input/InputMap.h"
@@ -15,6 +16,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -922,6 +924,7 @@ struct PluginScriptHost::HostApi {
         api.archiveFileCount = &ArchiveFileCount;
         api.archiveFileName = &ArchiveFileName;
         api.archiveReadFile = &ArchiveReadFile;
+        api.meshCreate = &MeshCreate;
     }
 
     // Archives
@@ -969,6 +972,92 @@ struct PluginScriptHost::HostApi {
         }
         sink(user, bytes.data(), bytes.size());
         return 1;
+    }
+
+    // Runtime meshes
+
+    static void Grow(AABB& box, bool& empty, const Vec3& p) {
+        if (empty) {
+            box = AABB(p, p);
+            empty = false;
+            return;
+        }
+        box.min = Vec3(std::min(box.min.x, p.x), std::min(box.min.y, p.y), std::min(box.min.z, p.z));
+        box.max = Vec3(std::max(box.max.x, p.x), std::max(box.max.y, p.y), std::max(box.max.z, p.z));
+    }
+
+    static HPEntityId MeshCreate(void* host, const char* name, const HPMeshSection* sections, uint32_t sectionCount,
+                                 char* error, size_t errorSize) {
+        PluginScriptHost& self = Host(host);
+        if (!self.m_Scene || !self.m_MeshSink.upload) {
+            WriteError("runtime meshes are not available here", error, errorSize);
+            return 0;
+        }
+        if (!sections || sectionCount == 0) {
+            WriteError("meshCreate needs at least one section", error, errorSize);
+            return 0;
+        }
+        MeshData mesh;
+        std::vector<std::string> materials;
+        bool meshEmpty = true;
+        for (uint32_t s = 0; s < sectionCount; ++s) {
+            const HPMeshSection& section = sections[s];
+            if (section.structSize < sizeof(HPMeshSection) || (!section.vertices && section.vertexCount > 0) ||
+                (!section.indices && section.indexCount > 0) || section.indexCount % 3 != 0) {
+                WriteError("section " + std::to_string(s) + " is malformed", error, errorSize);
+                return 0;
+            }
+            const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+            if (section.vertexCount > std::numeric_limits<uint32_t>::max() - base) {
+                WriteError("the mesh has too many vertices", error, errorSize);
+                return 0;
+            }
+            for (uint32_t i = 0; i < section.indexCount; ++i) {
+                if (section.indices[i] >= section.vertexCount) {
+                    WriteError("section " + std::to_string(s) + " has an index past its vertices", error, errorSize);
+                    return 0;
+                }
+            }
+            MeshData::Submesh submesh;
+            submesh.indexOffset = static_cast<uint32_t>(mesh.indices.size());
+            submesh.indexCount = section.indexCount;
+            submesh.materialSlot = static_cast<int>(s);
+            bool sectionEmpty = true;
+            for (uint32_t v = 0; v < section.vertexCount; ++v) {
+                const HPMeshVertex& in = section.vertices[v];
+                Vertex out{};
+                std::memcpy(out.pos, in.position, sizeof out.pos);
+                std::memcpy(out.normal, in.normal, sizeof out.normal);
+                std::memcpy(out.color, in.color, sizeof out.color);
+                std::memcpy(out.texCoord, in.uv, sizeof out.texCoord);
+                mesh.vertices.push_back(out);
+                const Vec3 p(in.position[0], in.position[1], in.position[2]);
+                Grow(submesh.bounds, sectionEmpty, p);
+                Grow(mesh.bounds, meshEmpty, p);
+            }
+            for (uint32_t i = 0; i < section.indexCount; ++i) {
+                mesh.indices.push_back(base + section.indices[i]);
+            }
+            mesh.submeshes.push_back(std::move(submesh));
+            materials.emplace_back(section.material ? section.material : "");
+        }
+        if (mesh.indices.empty()) {
+            WriteError("the mesh has no triangles", error, errorSize);
+            return 0;
+        }
+        const std::string entityName = name && *name ? name : "Runtime Mesh";
+        const size_t handle = self.m_MeshSink.upload(entityName, mesh);
+        if (handle == MeshRendererComponent::InvalidMesh) {
+            WriteError("the mesh could not be uploaded", error, errorSize);
+            return 0;
+        }
+        self.m_SessionMeshes.push_back(handle);
+        Entity entity = self.m_Scene->CreateEntity(entityName);
+        auto& renderer = entity.AddComponent<MeshRendererComponent>();
+        renderer.SetMesh(handle, mesh.bounds, {}, false, static_cast<int>(sectionCount));
+        renderer.appliedMaterialPaths = std::move(materials);
+        renderer.materialIndices.assign(sectionCount, -1);
+        return ToHandle(static_cast<uint32_t>(static_cast<entt::entity>(entity)));
     }
 };
 
@@ -1315,6 +1404,12 @@ void PluginScriptHost::StopGameModules() {
     }
     m_GameModulesStarted = false;
     m_Archives.Clear();
+    for (size_t handle : m_SessionMeshes) {
+        if (m_MeshSink.release) {
+            m_MeshSink.release(handle);
+        }
+    }
+    m_SessionMeshes.clear();
 }
 
 void PluginScriptHost::OnSimulationStopped() {

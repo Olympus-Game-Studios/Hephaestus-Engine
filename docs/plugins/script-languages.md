@@ -161,3 +161,5 @@ HP_GetGameModules(uint32_t hostApiVersion, uint32_t* count) {
 `BeginPlay` receives the `HPScriptHostAPI` table and returns the module's session state (or `NULL` to sit the session out). `Update` runs once per frame before any script, and `EndPlay` runs when play stops, in reverse start order. A module may export languages, game modules or both; it fails to load only when it exports neither.
 
 Game modules, like scripts, can mount read only ZIP or PK3 archives with `archiveMount` and read their files with `archiveReadFile`. Mounted files share one namespace that ignores case, a later mount wins for the same path, and every mount is removed when play stops. A game that reads content the player owns (an install folder outside the project) mounts it this way at runtime, so it is never packaged.
+
+`meshCreate` builds an entity from triangle sections (`HPMeshSection`, one material slot each, counter-clockwise front faces, positions in metres). Its GPU buffers are freed when play stops, together with the session's archives.

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -14,6 +15,7 @@
 
 class LuaScriptEngine;
 class Scene;
+struct MeshData;
 enum class LuaScriptSlot : uint8_t;
 
 namespace Hephaestus {
@@ -43,6 +45,13 @@ public:
     /// Lua resolves script paths and receives cross-language calls.
     void SetLuaEngine(LuaScriptEngine* lua) { m_Lua = lua; }
     void SetInputSystem(Hephaestus::InputSystem* input) { m_Input = input; }
+
+    /// GPU upload for meshes game modules create (the renderer's dynamic mesh slots).
+    struct MeshSink {
+        std::function<size_t(const std::string& name, const MeshData& mesh)> upload;
+        std::function<void(size_t handle)> release;
+    };
+    void SetMeshSink(MeshSink sink) { m_MeshSink = std::move(sink); }
 
     void Update(Scene& scene, float deltaTime);
     void LateUpdate(Scene& scene, float deltaTime);
@@ -134,5 +143,7 @@ private:
     std::vector<uint64_t> m_UpdateOrder;
     std::vector<GameSession> m_GameSessions;
     bool m_GameModulesStarted = false;
+    MeshSink m_MeshSink;
+    std::vector<size_t> m_SessionMeshes;
     Hephaestus::ArchiveFileSystem m_Archives;
 };
