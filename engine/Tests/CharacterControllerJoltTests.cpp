@@ -1025,23 +1025,35 @@ int main()
                   && character.GetComponent<CharacterComponent>().externalPose,
               "The ragdoll replaces the character controller and its children's colliders and stops the animation");
         const float headStartX = BoneWorld(session, character, 4).x;
-        session.Step(240);
+        // How long a fall takes to settle is chaotic (Debug and Release builds differ by seconds), so wait for rest.
+        int restFrames = 0;
+        for (; restFrames < 600; ++restFrames) {
+            bool anyAwake = false;
+            for (JPH::BodyID part : ragdolls.PartBodies(id)) {
+                anyAwake = anyAwake || session.engine.GetBodyInterface().IsActive(part);
+            }
+            if (!anyAwake) break;
+            session.Step(1);
+        }
         const Vec3 hips = BoneWorld(session, character, 0);
         const Vec3 head = BoneWorld(session, character, 4);
         float lowest = 1e9f;
         bool finite = true;
         bool settled = true;
+        int awake = 0;
         JPH::BodyInterface& bodies = session.engine.GetBodyInterface();
         for (JPH::BodyID part : ragdolls.PartBodies(id)) {
             const JPH::RVec3 position = bodies.GetCenterOfMassPosition(part);
             lowest = std::min(lowest, static_cast<float>(position.GetY()));
             finite = finite && std::isfinite(static_cast<float>(position.GetY()));
             settled = settled && !bodies.IsActive(part);
+            awake += bodies.IsActive(part) ? 1 : 0;
         }
         Check(finite && settled && hips.y < 0.4f && head.y < 1.0f && lowest > -0.02f,
               "The ragdoll collapses onto the floor and comes to rest without falling through it (hips y=" +
                   std::to_string(hips.y) + ", head y=" + std::to_string(head.y) + ", lowest part=" +
-                  std::to_string(lowest) + ")");
+                  std::to_string(lowest) + ", " + std::to_string(awake) + " parts still moving after " +
+                  std::to_string(restFrames) + " frames)");
         Check(head.x > headStartX + 0.3f, "An impulse at the head pushes the body that way (head x=" + std::to_string(head.x) + ")");
         Physics::RaycastHit hit;
         session.system.Raycast(entt::null, Vec3(hips.x, 3.0f, hips.z), Vec3(0.0f, -1.0f, 0.0f), 5.0f, hit);
