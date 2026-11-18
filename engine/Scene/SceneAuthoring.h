@@ -4,6 +4,7 @@
 
 #include <entt/entt.hpp>
 #include <cstddef>
+#include <functional>
 #include <unordered_set>
 #include <vector>
 
@@ -28,6 +29,10 @@ AABB TransformBounds(const AABB& localBounds, const Mat4& worldTransform);
 // (touching it, or flush with it) when one is within reach: the smallest such move per axis, zero where none is. A
 // neighbour counts on an axis only if the boxes overlap, or nearly do, on the other two.
 Vec3 SnapBoundsToNeighbours(const AABB& moving, const std::vector<AABB>& neighbours, float reach);
+// World bounds of the visible meshes within reach of a box, for SnapBoundsToNeighbours. Leaves out construction
+// helpers and every entity for which skip is true, along with its descendants.
+std::vector<AABB> NeighbourBounds(Scene& scene, const AABB& around, float reach,
+                                  const std::function<bool(entt::entity)>& skip);
 
 bool RaycastBounds(Scene& scene,
                    const Ray& ray,

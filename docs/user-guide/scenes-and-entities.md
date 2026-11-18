@@ -66,7 +66,7 @@ Every component has its own page in this guide: [Materials](materials.md), [Ligh
 - In scale mode, drag an end cube to stretch along one axis, or the cube in the middle to scale evenly.
 - **Snapping** lives in the tool row, with separate steps for move, rotate and scale. Hold `Ctrl` while dragging to ignore snapping for a moment.
 - Hold `Shift` while moving to slide the object along whatever surface is under it.
-- When you move an object near another one, its sides snap flush to the other's: a side within 20 cm of touching a neighbour's side, or of lining up with it, jumps the rest of the way. It only snaps along the directions you're dragging, and `Ctrl` turns it off. This is how a wall meets the side of a block without a sliver between them.
+- When you move an object near another one, its sides snap flush to the other's: a side within 20 cm of touching a neighbour's side, or of lining up with it, jumps the rest of the way. It only snaps along the directions you're dragging, and `Ctrl` turns it off. This is how a wall meets the side of a block without a sliver between them. Dragging a shape's size handles does the same for the face you're dragging.
 - Hold `Alt` while dragging the gizmo to drag out a copy.
 - Transform values in the Inspector are **local**, meaning relative to the parent.
 

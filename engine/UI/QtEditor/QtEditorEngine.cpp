@@ -2029,31 +2029,12 @@ void QtEditorEngine::SnapMovedFacesToNeighbours(Scene& scene, entt::entity prima
     if (!any) {
         return;
     }
-    const auto& selection = m_editorContext.GetSelectedEntities();
-    auto movesWithSelection = [&](entt::entity handle) {
-        for (Entity entity(handle, &scene); entity; entity = scene.GetParent(entity)) {
-            if (std::find(selection.begin(), selection.end(), static_cast<entt::entity>(entity)) != selection.end()) {
-                return true;
-            }
-        }
-        return false;
-    };
-    std::vector<AABB> neighbours;
-    auto view = registry.view<TransformComponent, MeshRendererComponent>();
-    for (entt::entity handle : view) {
-        if (registry.all_of<ConstructionGeneratedComponent>(handle) || !m_editorContext.IsEditorEntityShown(handle) ||
-            movesWithSelection(handle)) {
-            continue;
-        }
-        const AABB bounds = Hephaestus::SceneAuthoring::TransformBounds(
-            view.get<MeshRendererComponent>(handle).localBounds, scene.GetWorldTransform(Entity(handle, &scene)));
-        if (bounds.min.x > moving.max.x + kReach || bounds.max.x < moving.min.x - kReach ||
-            bounds.min.y > moving.max.y + kReach || bounds.max.y < moving.min.y - kReach ||
-            bounds.min.z > moving.max.z + kReach || bounds.max.z < moving.min.z - kReach) {
-            continue;
-        }
-        neighbours.push_back(bounds);
-    }
+    const auto selection = m_editorContext.GetSelectedEntities();
+    const std::vector<AABB> neighbours = Hephaestus::SceneAuthoring::NeighbourBounds(
+        scene, moving, kReach, [&](entt::entity handle) {
+            return !m_editorContext.IsEditorEntityShown(handle) ||
+                   std::find(selection.begin(), selection.end(), handle) != selection.end();
+        });
     const Vec3 offset = Hephaestus::SceneAuthoring::SnapBoundsToNeighbours(moving, neighbours, kReach);
     // Only along axes the drag moves, so a single-axis drag never slides sideways.
     const float snap[3] = {offset.x, offset.y, offset.z};

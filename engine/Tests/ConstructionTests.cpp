@@ -810,6 +810,48 @@ void TestWalls()
           "nothing walkable lies within the sloped wall or an agent's radius of it");
 }
 
+void TestResizeSnapsToNeighbours()
+{
+    Scene scene("Resize Snapping");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    ConstructionTool tool;
+    entt::entity selected = entt::null;
+    ToolHost host;
+    host.pushUndo = [](const std::string&) {};
+    host.discardUndo = [] {};
+    host.select = [&](entt::entity e) { selected = e; };
+    host.selected = [&]() { return selected; };
+    host.changed = [] {};
+    tool.SetHost(host);
+    const ToolCamera camera;
+    BoxParams params;
+    params.width = 2.0f;
+    params.height = 3.0f;
+    params.depth = 2.0f;
+    Entity block = AddBox(scene, "Block", params);
+    AddBox(scene, "Neighbour", params, Vec3(3.93f, 0.0f, 0.0f));
+    system.Update(scene);
+    selected = block;
+    auto& shape = block.GetComponent<ConstructionShapeComponent>();
+
+    // The grid alone would stop the face at 2.75, 18 cm short of the neighbour's face at 2.93.
+    tool.OnPress(scene, system, camera.At(Vec3(1.0f, 1.5f, 0.0f)));
+    tool.OnMove(scene, system, camera.At(Vec3(2.8f, 1.5f, 0.0f)));
+    tool.OnRelease(scene, system, camera.At(Vec3(2.8f, 1.5f, 0.0f)));
+    Check(std::fabs(shape.box.width - 3.93f) < 1e-3f &&
+              std::fabs(block.GetComponent<TransformComponent>().position.x - 0.965f) < 1e-3f,
+          "a resized face snaps onto a nearby face (width " + std::to_string(shape.box.width) + ")");
+
+    ToolInput far = camera.At(Vec3(2.2f, 1.5f, 0.0f));
+    tool.OnPress(scene, system, camera.At(Vec3(2.93f, 1.5f, 0.0f)));
+    tool.OnMove(scene, system, far);
+    tool.OnRelease(scene, system, far);
+    Check(std::fabs(shape.box.width - 3.25f) < 1e-3f, "out of reach, the face stays on the grid (width " +
+                                                          std::to_string(shape.box.width) + ")");
+}
+
 void TestCopyPaste()
 {
     Scene scene("Copy Paste");
@@ -2088,6 +2130,7 @@ int main()
     TestWallTool();
     TestWallsLineUp();
     TestCopyPaste();
+    TestResizeSnapsToNeighbours();
     TestRampsAndTurns();
     TestFaceMaterials();
     TestKits();

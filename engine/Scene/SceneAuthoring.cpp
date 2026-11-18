@@ -1,6 +1,7 @@
 #include "SceneAuthoring.h"
 
 #include "Components.h"
+#include "../Construction/ConstructionShape.h"
 #include "Entity.h"
 #include "Scene.h"
 
@@ -114,6 +115,34 @@ bool RaycastBounds(Scene& scene,
         found = true;
     }
     return found;
+}
+
+std::vector<AABB> NeighbourBounds(Scene& scene, const AABB& around, float reach,
+                                  const std::function<bool(entt::entity)>& skip)
+{
+    entt::registry& registry = scene.GetRegistry();
+    auto skipped = [&](entt::entity handle) {
+        for (Entity entity(handle, &scene); entity; entity = scene.GetParent(entity)) {
+            if (skip(static_cast<entt::entity>(entity))) return true;
+        }
+        return false;
+    };
+    std::vector<AABB> neighbours;
+    auto view = registry.view<TransformComponent, MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        const auto& renderer = view.get<MeshRendererComponent>(handle);
+        if (!renderer.visible || !renderer.HasValidMesh() || registry.all_of<ConstructionGeneratedComponent>(handle)) {
+            continue;
+        }
+        const AABB bounds = TransformBounds(renderer.localBounds, scene.GetWorldTransform(Entity(handle, &scene)));
+        if (bounds.min.x > around.max.x + reach || bounds.max.x < around.min.x - reach ||
+            bounds.min.y > around.max.y + reach || bounds.max.y < around.min.y - reach ||
+            bounds.min.z > around.max.z + reach || bounds.max.z < around.min.z - reach || skipped(handle)) {
+            continue;
+        }
+        neighbours.push_back(bounds);
+    }
+    return neighbours;
 }
 
 Vec3 SnapBoundsToNeighbours(const AABB& moving, const std::vector<AABB>& neighbours, float reach)

@@ -5,6 +5,7 @@
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
+#include "../Scene/SceneAuthoring.h"
 
 #include <algorithm>
 #include <cmath>
@@ -742,14 +743,53 @@ void ConstructionTool::UpdateHandleDrag(Scene& scene, const ToolInput& input)
     const bool symmetric = input.shift && m_handle.axis != 1;
     const float minSize = input.gridStep > 0.0f && !input.ctrl ? input.gridStep : kMinDimension;
     const float wanted = start + (symmetric ? 2.0f : 1.0f) * localDelta;
+    auto resize = [&](float value) {
+        *size = value;
+        transform.position = m_startPosition;
+        if (!symmetric && m_handle.axis != 1) {
+            const Vec3 outward = vscale(Axis(m_handle.axis), static_cast<float>(m_handle.dir) * (value - start) * 0.5f);
+            transform.position = vadd(m_startPosition, Mat4::TransformDirection(transform.GetLocalMatrix(), outward));
+        }
+    };
     const float snapped = std::max(Snap(wanted, input), minSize);
-    *size = snapped;
-    transform.position = m_startPosition;
-    if (!symmetric && m_handle.axis != 1) {
-        const Vec3 outward = vscale(Axis(m_handle.axis), static_cast<float>(m_handle.dir) * (snapped - start) * 0.5f);
-        transform.position = vadd(m_startPosition, Mat4::TransformDirection(transform.GetLocalMatrix(), outward));
+    resize(snapped);
+    if (!symmetric && !input.ctrl) {
+        const float faceSnap = FaceSnapDistance(scene);
+        if (faceSnap != 0.0f && snapped + faceSnap >= minSize) {
+            resize(snapped + faceSnap);
+        }
     }
     Sanitize(shape);
+}
+
+float ConstructionTool::FaceSnapDistance(Scene& scene) const
+{
+    constexpr float kReach = 0.2f;
+    const float axisLength = vlen(m_handleWorldAxis);
+    const float along[3] = {m_handleWorldAxis.x, m_handleWorldAxis.y, m_handleWorldAxis.z};
+    int k = 0;
+    for (int i = 1; i < 3; ++i) {
+        if (std::fabs(along[i]) > std::fabs(along[k])) k = i;
+    }
+    // Only a face that stands square to the world can sit flush on a neighbour's bounds.
+    if (axisLength < 1e-6f || std::fabs(along[k]) < axisLength * 0.999f) {
+        return 0.0f;
+    }
+    const BoxParams& box = scene.GetRegistry().get<ConstructionShapeComponent>(m_target).box;
+    Vec3 lo(-box.width * 0.5f, 0.0f, -box.depth * 0.5f);
+    Vec3 hi(box.width * 0.5f, box.height, box.depth * 0.5f);
+    const float face = m_handle.axis == 1 ? box.height
+                                          : static_cast<float>(m_handle.dir) * (m_handle.axis == 0 ? box.width : box.depth) * 0.5f;
+    (m_handle.axis == 0 ? lo.x : m_handle.axis == 1 ? lo.y : lo.z) = face;
+    (m_handle.axis == 0 ? hi.x : m_handle.axis == 1 ? hi.y : hi.z) = face;
+    const AABB faceBounds = SceneAuthoring::TransformBounds(AABB(lo, hi), scene.GetWorldTransform(Entity(m_target, &scene)));
+    const entt::entity self = m_target;
+    const std::vector<AABB> neighbours = SceneAuthoring::NeighbourBounds(
+        scene, faceBounds, kReach, [self](entt::entity handle) { return handle == self; });
+    const Vec3 offset = SceneAuthoring::SnapBoundsToNeighbours(faceBounds, neighbours, kReach);
+    const float worldMove = k == 0 ? offset.x : k == 1 ? offset.y : offset.z;
+    // The handle axis is one local unit long, so this is the change in size along it.
+    return worldMove / along[k];
 }
 
 bool ConstructionTool::WallPointFromRay(Scene& scene, const ToolInput& input, Vec3& outLocal) const

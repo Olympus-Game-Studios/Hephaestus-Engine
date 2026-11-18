@@ -97,6 +97,8 @@ private:
     void CommitWall(Scene& scene, bool closed);
     float DefaultHeight() const;
     void UpdateHandleDrag(Scene& scene, const ToolInput& input);
+    // How much more to grow the dragged size so its face sits flush on a nearby object's face (0 when none in reach).
+    float FaceSnapDistance(Scene& scene) const;
     bool WallPointFromRay(Scene& scene, const ToolInput& input, Vec3& outLocal) const;
     void UpdateOpeningDraw(Scene& scene, const ToolInput& input);
     void UpdateOpeningMove(Scene& scene, const ToolInput& input);
