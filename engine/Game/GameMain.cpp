@@ -761,9 +761,9 @@ int main(int argc, char* argv[]) {
     for (const fs::path& module : Hephaestus::Plugins::StagedRuntimeModules(g_RuntimeRoot)) {
         std::string moduleError;
         if (ScriptLanguageRegistry::Instance().LoadModule(module, moduleError)) {
-            HP_LOG(Info, "Loaded script language module: " + module.filename().string());
+            HP_LOG(Info, "Loaded runtime module: " + module.filename().string());
         } else {
-            HP_LOG(Error, "Script language module failed to load: " + moduleError);
+            HP_LOG(Error, "Runtime module failed to load: " + moduleError);
         }
     }
     bool sceneReloadRequested = false;

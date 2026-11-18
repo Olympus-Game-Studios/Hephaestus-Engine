@@ -918,6 +918,57 @@ struct PluginScriptHost::HostApi {
         api.audioSetVolume = &AudioSetVolume;
         api.audioIsPlaying = &AudioIsPlaying;
         api.audioStopAll = &AudioStopAll;
+        api.archiveMount = &ArchiveMount;
+        api.archiveFileCount = &ArchiveFileCount;
+        api.archiveFileName = &ArchiveFileName;
+        api.archiveReadFile = &ArchiveReadFile;
+    }
+
+    // Archives
+
+    static void WriteError(const std::string& message, char* error, size_t errorSize) {
+        if (error && errorSize > 0) {
+            std::snprintf(error, errorSize, "%s", message.c_str());
+        }
+    }
+
+    static int32_t ArchiveMount(void* host, const char* path, char* error, size_t errorSize) {
+        std::string message;
+        if (!path || !*path) {
+            WriteError("no archive path given", error, errorSize);
+            return 0;
+        }
+        if (!Host(host).m_Archives.Mount(std::filesystem::u8path(path), message)) {
+            WriteError(message, error, errorSize);
+            return 0;
+        }
+        return 1;
+    }
+
+    static uint32_t ArchiveFileCount(void* host) {
+        return static_cast<uint32_t>(Host(host).m_Archives.Files().size());
+    }
+
+    static size_t ArchiveFileName(void* host, uint32_t index, char* buffer, size_t bufferSize) {
+        const auto& files = Host(host).m_Archives.Files();
+        return index < files.size() ? CopyOut(files[index], buffer, bufferSize) : 0;
+    }
+
+    static int32_t ArchiveReadFile(void* host, const char* virtualPath,
+                                   void (*sink)(void* user, const void* data, size_t size), void* user,
+                                   char* error, size_t errorSize) {
+        if (!virtualPath || !sink) {
+            WriteError("archiveReadFile needs a path and a sink", error, errorSize);
+            return 0;
+        }
+        std::vector<uint8_t> bytes;
+        std::string message;
+        if (!Host(host).m_Archives.Read(virtualPath, bytes, message)) {
+            WriteError(message, error, errorSize);
+            return 0;
+        }
+        sink(user, bytes.data(), bytes.size());
+        return 1;
     }
 };
 
@@ -1027,6 +1078,7 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
     if (m_Lua) {
         m_Lua->BeginScriptPass();
     }
+    UpdateGameModules(deltaTime);
     std::vector<uint64_t> stale;
     for (const auto& [key, instance] : m_Instances) {
         const ScriptSource source = SourceFor(registry, static_cast<entt::entity>(EntityOf(key)), SlotOf(key));
@@ -1234,7 +1286,39 @@ void PluginScriptHost::DispatchAnimationFinished(Scene& scene) {
     }
 }
 
+void PluginScriptHost::UpdateGameModules(float deltaTime) {
+    if (!m_GameModulesStarted) {
+        m_GameModulesStarted = true;
+        for (const HPGameModule* module : ScriptLanguageRegistry::Instance().GameModules()) {
+            void* handle = module->beginPlay(&m_Api);
+            if (handle) {
+                m_GameSessions.push_back({module, handle});
+            } else {
+                Log(HP_LOG_ERROR, std::string("Game module '") + module->displayName + "' failed to start");
+            }
+        }
+    }
+    for (const GameSession& session : m_GameSessions) {
+        if (ReloadPending()) {
+            return;
+        }
+        session.module->update(session.handle, deltaTime);
+    }
+}
+
+void PluginScriptHost::StopGameModules() {
+    // Reverse start order, so a module started later never outlives one it may depend on.
+    while (!m_GameSessions.empty()) {
+        const GameSession session = m_GameSessions.back();
+        m_GameSessions.pop_back();
+        session.module->endPlay(session.handle);
+    }
+    m_GameModulesStarted = false;
+    m_Archives.Clear();
+}
+
 void PluginScriptHost::OnSimulationStopped() {
+    StopGameModules();
     while (!m_Instances.empty()) {
         DestroyInstance(m_Instances.begin()->first);
     }

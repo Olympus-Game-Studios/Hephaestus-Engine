@@ -167,6 +167,8 @@ bool ScriptLanguageRegistry::LoadModule(const std::filesystem::path& path, std::
     }
     auto getLanguages = reinterpret_cast<HPGetScriptLanguagesFn>(
         GetProcAddress(module, HP_SCRIPT_LANGUAGES_EXPORT_NAME));
+    auto getGameModules = reinterpret_cast<HPGetGameModulesFn>(
+        GetProcAddress(module, HP_GAME_MODULES_EXPORT_NAME));
 #else
     void* module = dlopen(normalized.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) {
@@ -175,28 +177,63 @@ bool ScriptLanguageRegistry::LoadModule(const std::filesystem::path& path, std::
     }
     auto getLanguages = reinterpret_cast<HPGetScriptLanguagesFn>(
         dlsym(module, HP_SCRIPT_LANGUAGES_EXPORT_NAME));
+    auto getGameModules = reinterpret_cast<HPGetGameModulesFn>(
+        dlsym(module, HP_GAME_MODULES_EXPORT_NAME));
 #endif
     m_LoadedModules.push_back(normalized);
-    if (!getLanguages) {
-        error = normalized.filename().string() + " does not export " HP_SCRIPT_LANGUAGES_EXPORT_NAME;
+    if (!getLanguages && !getGameModules) {
+        error = normalized.filename().string() + " exports neither " HP_SCRIPT_LANGUAGES_EXPORT_NAME
+                " nor " HP_GAME_MODULES_EXPORT_NAME;
         return false;
     }
     uint32_t count = 0;
-    const HPScriptLanguage* const* languages = getLanguages(HP_SCRIPT_LANGUAGE_API_VERSION, &count);
-    if (!languages || count == 0) {
-        error = normalized.filename().string() + " provides no script language for API version " +
-                std::to_string(HP_SCRIPT_LANGUAGE_API_VERSION);
+    const HPScriptLanguage* const* languages =
+        getLanguages ? getLanguages(HP_SCRIPT_LANGUAGE_API_VERSION, &count) : nullptr;
+    const uint32_t languageCount = languages ? count : 0;
+    count = 0;
+    const HPGameModule* const* gameModules =
+        getGameModules ? getGameModules(HP_GAME_MODULE_API_VERSION, &count) : nullptr;
+    const uint32_t gameModuleCount = gameModules ? count : 0;
+    if (languageCount == 0 && gameModuleCount == 0) {
+        error = normalized.filename().string() + " provides no script language or game module for this engine's API versions";
         return false;
     }
     bool ok = true;
-    for (uint32_t i = 0; i < count; ++i) {
+    for (uint32_t i = 0; i < languageCount; ++i) {
         std::string languageError;
         if (!Register(languages[i], languageError)) {
             error += (error.empty() ? "" : "; ") + languageError;
             ok = false;
         }
     }
+    for (uint32_t i = 0; i < gameModuleCount; ++i) {
+        std::string moduleError;
+        if (!RegisterGameModule(gameModules[i], moduleError)) {
+            error += (error.empty() ? "" : "; ") + moduleError;
+            ok = false;
+        }
+    }
     return ok;
+}
+
+bool ScriptLanguageRegistry::RegisterGameModule(const HPGameModule* module, std::string& error) {
+    if (!module || module->structSize < sizeof(HPGameModule) || module->apiVersion != HP_GAME_MODULE_API_VERSION) {
+        error = "game module table is missing or built for another API version";
+        return false;
+    }
+    const std::string id = module->id ? module->id : "";
+    if (id.empty() || !module->displayName || !module->beginPlay || !module->update || !module->endPlay) {
+        error = "game module '" + id + "' is missing a required member";
+        return false;
+    }
+    for (const HPGameModule* existing : m_GameModules) {
+        if (id == existing->id) {
+            error = "game module '" + id + "' is already registered";
+            return false;
+        }
+    }
+    m_GameModules.push_back(module);
+    return true;
 }
 
 const HPScriptLanguage* ScriptLanguageRegistry::FindForPath(std::string_view scriptPath) const {
@@ -324,4 +361,5 @@ bool ScriptLanguageRegistry::DescribeFields(const HPScriptLanguage& language,
 
 void ScriptLanguageRegistry::Clear() {
     m_Languages.clear();
+    m_GameModules.clear();
 }

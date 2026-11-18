@@ -355,6 +355,7 @@ add_library(HephaestusRuntime STATIC
     engine/Audio/AudioEngine.cpp
     engine/Audio/AudioMath.cpp
     engine/Audio/MiniaudioImplementation.c
+    engine/Assets/ArchiveFileSystem.cpp
     engine/Assets/GltfDocument.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/MeshGeometryCache.cpp
@@ -2331,6 +2332,23 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${LUA_DLL_PATH}"
                     "$<TARGET_FILE_DIR:ScriptLanguagePluginTests>/${PHYSICS_LUA_DLL_NAME}"
+            )
+        endif()
+
+        # Game modules and archive mounts, with a C game module linked in and also loaded as a module.
+        add_library(GameModuleTestPlugin SHARED engine/Tests/GameModuleTestPlugin.c)
+        add_executable(GameModuleTests
+            engine/Tests/GameModuleTests.cpp
+            engine/Tests/GameModuleTestPlugin.c
+        )
+        target_link_libraries(GameModuleTests PRIVATE HephaestusRuntime)
+        add_dependencies(GameModuleTests GameModuleTestPlugin)
+        add_test(NAME GameModules COMMAND GameModuleTests $<TARGET_FILE:GameModuleTestPlugin>)
+        if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+            add_custom_command(TARGET GameModuleTests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${LUA_DLL_PATH}"
+                    "$<TARGET_FILE_DIR:GameModuleTests>/${PHYSICS_LUA_DLL_NAME}"
             )
         endif()
 

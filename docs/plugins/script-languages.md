@@ -138,3 +138,26 @@ New services are only appended to the table. Check `structSize` before using a m
 - Languages stay registered until the editor restarts, even if their plugin is disabled.
 
 `engine/Tests/ScriptLanguageTestPlugin.c` is a complete minimal language written in C, used by `ScriptLanguagePluginTests` and `PackageLayoutTests`. `Plugins/CppScripting` is a full first-party language: it compiles each `.cpp` script into a DLL with the user's Visual Studio and implements every optional callback.
+
+## Game modules
+
+A runtime module can also export native game modules: gameplay code that runs for the whole play session rather than per entity. See [GameModuleAPI.h](../../engine/PluginAPI/GameModuleAPI.h).
+
+```c
+static const HPGameModule g_game = {
+    sizeof(HPGameModule), HP_GAME_MODULE_API_VERSION,
+    "com.example.mygame", "My Game", BeginPlay, Update, EndPlay
+};
+static const HPGameModule* const g_games[] = { &g_game };
+
+HP_SCRIPT_LANGUAGE_EXPORT const HPGameModule* const*
+HP_GetGameModules(uint32_t hostApiVersion, uint32_t* count) {
+    if (hostApiVersion != HP_GAME_MODULE_API_VERSION) return NULL;
+    *count = 1;
+    return g_games;
+}
+```
+
+`BeginPlay` receives the `HPScriptHostAPI` table and returns the module's session state (or `NULL` to sit the session out). `Update` runs once per frame before any script, and `EndPlay` runs when play stops, in reverse start order. A module may export languages, game modules or both; it fails to load only when it exports neither.
+
+Game modules, like scripts, can mount read only ZIP or PK3 archives with `archiveMount` and read their files with `archiveReadFile`. Mounted files share one namespace that ignores case, a later mount wins for the same path, and every mount is removed when play stops. A game that reads content the player owns (an install folder outside the project) mounts it this way at runtime, so it is never packaged.

@@ -1,6 +1,8 @@
 #pragma once
 
+#include "../Assets/ArchiveFileSystem.h"
 #include "../Core/PropertyValue.h"
+#include "../PluginAPI/GameModuleAPI.h"
 #include "../PluginAPI/ScriptLanguageAPI.h"
 
 #include <cstdint>
@@ -23,11 +25,13 @@ struct PhysicsContactEvent;
 
 /**
  * Runs scripts written in plugin languages (see ScriptLanguageAPI.h) next to
- * the built-in Lua engine. A script component whose file extension a plugin
+ * the built-in Lua engine, and the play sessions of game modules (see
+ * GameModuleAPI.h). A script component whose file extension a plugin
  * language claims is run here; every other script stays with Lua.
  *
- * Scripts are created lazily on the first Update of a play session, reloaded
- * when their file changes, and torn down by OnSimulationStopped.
+ * Game modules and scripts start on the first Update of a play session,
+ * scripts reload when their file changes, and OnSimulationStopped tears both
+ * down along with the session's archive mounts.
  */
 class PluginScriptHost {
 public:
@@ -56,6 +60,9 @@ public:
                             const std::vector<PropertyValue>& args, LuaScriptSlot slot);
 
     std::size_t InstanceCount() const { return m_Instances.size(); }
+    /// Game modules whose beginPlay succeeded this session.
+    std::size_t GameSessionCount() const { return m_GameSessions.size(); }
+    const Hephaestus::ArchiveFileSystem& Archives() const { return m_Archives; }
 
 private:
     struct HostApi;
@@ -72,12 +79,18 @@ private:
         std::filesystem::file_time_type writeTime{};
         bool awake = false;
     };
+    struct GameSession {
+        const HPGameModule* module = nullptr;
+        void* handle = nullptr;
+    };
     struct FailedScript {
         std::string scriptPath;
         std::filesystem::file_time_type writeTime{};
     };
 
     void* RuntimeFor(const HPScriptLanguage* language);
+    void UpdateGameModules(float deltaTime);
+    void StopGameModules();
     static uint64_t Key(uint32_t entityId, LuaScriptSlot slot);
     static uint32_t EntityOf(uint64_t key);
     static LuaScriptSlot SlotOf(uint64_t key);
@@ -119,4 +132,7 @@ private:
     std::unordered_map<uint64_t, Instance> m_Instances;
     std::unordered_map<uint64_t, FailedScript> m_Failed;
     std::vector<uint64_t> m_UpdateOrder;
+    std::vector<GameSession> m_GameSessions;
+    bool m_GameModulesStarted = false;
+    Hephaestus::ArchiveFileSystem m_Archives;
 };

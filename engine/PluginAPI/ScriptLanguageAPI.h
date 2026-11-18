@@ -351,6 +351,20 @@ typedef struct HPScriptHostAPI {
        script (Lua's entity:CallController). */
     int32_t (*callControllerFunction)(void* host, HPEntityId entity, const char* function,
                                       const HPValue* args, uint32_t argCount);
+
+    /* Read only archives (ZIP and PK3), added with game modules: check
+       structSize. Mounted archives share one virtual namespace that ignores
+       case; when two hold the same path the later mount wins. Mounts last
+       until play stops. archiveMount and archiveReadFile return 1, or 0 with a
+       message in `error`. archiveFileName copies the index'th virtual path
+       (sorted) with the getEntityName convention. archiveReadFile hands the
+       whole file to `sink` once; the bytes are valid only during that call. */
+    int32_t (*archiveMount)(void* host, const char* path, char* error, size_t errorSize);
+    uint32_t (*archiveFileCount)(void* host);
+    size_t (*archiveFileName)(void* host, uint32_t index, char* buffer, size_t bufferSize);
+    int32_t (*archiveReadFile)(void* host, const char* virtualPath,
+                               void (*sink)(void* user, const void* data, size_t size), void* user,
+                               char* error, size_t errorSize);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity: its Script
