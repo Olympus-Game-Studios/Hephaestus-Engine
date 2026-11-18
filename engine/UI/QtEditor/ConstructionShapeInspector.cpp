@@ -14,6 +14,7 @@
 #include "../../Scene/Scene.h"
 
 #include <QFileInfo>
+#include <QSignalBlocker>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <cmath>
@@ -716,25 +717,27 @@ void ConstructionShapeInspector::rebuildFaceList()
     if (shape && Construction::HasOwnGeometry(*shape)) {
         faces = shape->faceMaterials;
     }
-    const bool same = faces.size() == m_shownFaces.size() &&
+    const bool same = faces.size() == m_shownFaces.size() && faces.size() == m_faceRows.size() &&
         std::equal(faces.begin(), faces.end(), m_shownFaces.begin(), [](const auto& a, const auto& b) {
             return Construction::SameFace(a.face, b.face) && a.material == b.material;
         });
     m_facesGroup->setVisible(shape && Construction::HasOwnGeometry(*shape));
     if (same && m_facesList->count() > 0) {
+        // Only the alignment can differ, for example after an undo; keep the fields so editing them keeps focus.
+        for (size_t n = 0; n < faces.size(); ++n) showFaceAlignment(m_faceRows[n], faces[n]);
+        m_shownFaces = faces;
         return;
     }
     m_shownFaces = faces;
-    while (QLayoutItem* item = m_facesList->takeAt(0)) {
-        if (QWidget* widget = item->widget()) widget->deleteLater();
-        if (QLayout* row = item->layout()) {
-            while (QLayoutItem* child = row->takeAt(0)) {
-                if (QWidget* widget = child->widget()) widget->deleteLater();
-                delete child;
-            }
+    m_faceRows.clear();
+    std::function<void(QLayout*)> clear = [&clear](QLayout* layout) {
+        while (QLayoutItem* item = layout->takeAt(0)) {
+            if (QWidget* widget = item->widget()) widget->deleteLater();
+            if (QLayout* nested = item->layout()) clear(nested);
+            delete item;
         }
-        delete item;
-    }
+    };
+    clear(m_facesList);
     if (faces.empty()) {
         auto* hint = new QLabel(tr("None. Drag a material onto a face in the viewport; Shift paints the whole shape."));
         hint->setWordWrap(true);
@@ -762,7 +765,78 @@ void ConstructionShapeInspector::rebuildFaceList()
         row->addWidget(label, 1);
         row->addWidget(clear);
         m_facesList->addLayout(row);
+
+        FaceAlignmentRow fields;
+        auto spin = [](double minimum, double maximum, double step, int decimals, const QString& tip) {
+            auto* box = new QDoubleSpinBox();
+            box->setRange(minimum, maximum);
+            box->setSingleStep(step);
+            box->setDecimals(decimals);
+            box->setToolTip(tip);
+            box->setKeyboardTracking(false);
+            return box;
+        };
+        fields.offsetU = spin(-100.0, 100.0, 0.05, 3, tr("Moves the texture across the face, in texture repeats."));
+        fields.offsetV = spin(-100.0, 100.0, 0.05, 3, tr("Moves the texture up the face, in texture repeats."));
+        fields.scaleU = spin(0.01, 100.0, 0.1, 2, tr("How wide one repeat of the texture is, in metres (or as a "
+                                                     "share of the face when Fit is on)."));
+        fields.scaleV = spin(0.01, 100.0, 0.1, 2, tr("How tall one repeat of the texture is, in metres (or as a "
+                                                     "share of the face when Fit is on)."));
+        fields.rotation = spin(-360.0, 360.0, 15.0, 1, tr("Turns the texture on the face, in degrees."));
+        fields.fit = new QCheckBox(tr("Fit"));
+        fields.fit->setToolTip(tr("Stretch the texture once across the whole face; scale then sets how many times "
+                                  "it repeats."));
+        showFaceAlignment(fields, face);
+        auto* alignment = new QFormLayout();
+        auto pairRow = [](QWidget* a, QWidget* b) {
+            auto* pair = new QHBoxLayout();
+            pair->addWidget(a);
+            pair->addWidget(b);
+            return pair;
+        };
+        alignment->addRow(tr("Offset"), pairRow(fields.offsetU, fields.offsetV));
+        alignment->addRow(tr("Scale"), pairRow(fields.scaleU, fields.scaleV));
+        alignment->addRow(tr("Turn"), pairRow(fields.rotation, fields.fit));
+        m_facesList->addLayout(alignment);
+        const FaceAlignmentRow captured = fields;
+        auto apply = [this, tag, captured]() {
+            BeginEdit("Align face texture");
+            ForEachTarget<ConstructionShapeComponent>([&](ConstructionShapeComponent& target, entt::entity) {
+                for (Construction::FaceMaterial& painted : target.faceMaterials) {
+                    if (!Construction::SameFace(painted.face, tag)) continue;
+                    painted.offsetU = static_cast<float>(captured.offsetU->value());
+                    painted.offsetV = static_cast<float>(captured.offsetV->value());
+                    painted.scaleU = static_cast<float>(captured.scaleU->value());
+                    painted.scaleV = static_cast<float>(captured.scaleV->value());
+                    painted.rotation = static_cast<float>(captured.rotation->value());
+                    painted.fit = captured.fit->isChecked();
+                }
+            });
+            EndEdit();
+            Refresh();
+        };
+        for (QDoubleSpinBox* box : {fields.offsetU, fields.offsetV, fields.scaleU, fields.scaleV, fields.rotation}) {
+            connect(box, qOverload<double>(&QDoubleSpinBox::valueChanged), this, apply);
+        }
+        connect(fields.fit, &QCheckBox::toggled, this, apply);
+        m_faceRows.push_back(fields);
     }
+}
+
+void ConstructionShapeInspector::showFaceAlignment(const FaceAlignmentRow& row, const Construction::FaceMaterial& face)
+{
+    const QSignalBlocker blockOffsetU(row.offsetU);
+    const QSignalBlocker blockOffsetV(row.offsetV);
+    const QSignalBlocker blockScaleU(row.scaleU);
+    const QSignalBlocker blockScaleV(row.scaleV);
+    const QSignalBlocker blockRotation(row.rotation);
+    const QSignalBlocker blockFit(row.fit);
+    row.offsetU->setValue(face.offsetU);
+    row.offsetV->setValue(face.offsetV);
+    row.scaleU->setValue(face.scaleU);
+    row.scaleV->setValue(face.scaleV);
+    row.rotation->setValue(face.rotation);
+    row.fit->setChecked(face.fit);
 }
 
 } // namespace QtEditor

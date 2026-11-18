@@ -130,6 +130,15 @@ The navmesh is split into chunks about 38 m across. The first measurement or lev
 
 To **paint a face**, drag a material from the Assets panel onto it in the viewport: only that face changes, such as one side of a block, the inside of one room wall, a room's floor, or one side of one wall segment. Hold `Shift` while you drop to paint the whole shape instead. Painted faces keep their material when you resize the shape or cut doors into it, and the **Painted Faces** list in the Construction settings shows them, each with a **Clear** button. Dropping a material on any other mesh puts it in its first material slot.
 
+Each painted face in that list also lines up its texture:
+
+- **Offset** moves the texture across and up the face, in texture repeats.
+- **Scale** sets how wide and tall one repeat is, in metres. A texture is normally one metre across, lined up with the world.
+- **Turn** rotates the texture on the face, in degrees.
+- **Fit** stretches the texture once across the whole face, such as a sign or a door texture. Scale then sets how many times it repeats.
+
+The alignment is saved with the scene and kept in prefabs and copies.
+
 To cut a hole of any size anywhere (a window through two rooms at once, a gap in a floor), use a **subtract** block: press the Cube button in the tool row, or select any block, and set **Mode** to **Subtract** in its Construction settings. A Cube dropped onto a wall or floor is centred on the surface, so it cuts into it straight away. A subtract block shows as a see-through red box, cuts every block and room it overlaps, moves the hole wherever you move it, has no collision and is hidden in the game. Set Mode back to Add to make it a solid block again.
 
 The Plane, Cylinder and Sphere buttons make construction shapes too. Their size, segments and collision are in the same Construction settings, and their face handles resize them. They can't subtract yet.

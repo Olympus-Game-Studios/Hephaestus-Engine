@@ -86,7 +86,18 @@ struct FaceTag {
 struct FaceMaterial {
     FaceTag face;
     std::string material;  // project material asset path
+    // Texture placement: the face's UVs (metres across it, or 0 to 1 over it when fit) are turned by rotation
+    // degrees, divided by scale and moved by offset, in texture repeats.
+    float offsetU = 0.0f;
+    float offsetV = 0.0f;
+    float scaleU = 1.0f;
+    float scaleV = 1.0f;
+    float rotation = 0.0f;
+    bool fit = false;
 };
+
+// True when a painted face moves, scales, turns or fits its texture.
+bool HasTextureAlignment(const FaceMaterial& face);
 
 // A shape edited corner by corner: points in the shape's local frame and faces as loops of point indices, wound
 // anticlockwise seen from outside. Made from a block or ramp with MakeEditable.

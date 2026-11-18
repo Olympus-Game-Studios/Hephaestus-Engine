@@ -1575,6 +1575,8 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
         h.Int(face.face.segment);
         h.Bytes(face.material.data(), face.material.size());
         h.Int(0);
+        for (float value : {face.offsetU, face.offsetV, face.scaleU, face.scaleV, face.rotation}) h.Float(value);
+        h.Int(face.fit);
     }
     h.Bytes(shape.kit.data(), shape.kit.size());
     h.Int(0);
@@ -1619,6 +1621,52 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
         h.Float(cut.max.x); h.Float(cut.max.y); h.Float(cut.max.z);
     }
     return h.value;
+}
+
+void AlignFaceTextures(const std::vector<FaceMaterial>& faces, EvaluatedGeometry& geometry)
+{
+    const size_t triangles = geometry.mesh.indices.size() / 3;
+    if (geometry.triangleTags.size() != triangles) {
+        return;
+    }
+    std::vector<bool> done(geometry.mesh.vertices.size(), false);
+    for (const FaceMaterial& face : faces) {
+        if (!HasTextureAlignment(face)) continue;
+        std::vector<uint32_t> vertices;
+        for (size_t t = 0; t < triangles; ++t) {
+            if (!SameFace(face.face, geometry.triangleTags[t])) continue;
+            for (size_t k = 0; k < 3; ++k) {
+                const uint32_t index = geometry.mesh.indices[t * 3 + k];
+                if (!done[index]) {
+                    done[index] = true;
+                    vertices.push_back(index);
+                }
+            }
+        }
+        if (vertices.empty()) continue;
+        float minU = 1e30f, minV = 1e30f, maxU = -1e30f, maxV = -1e30f;
+        for (uint32_t index : vertices) {
+            const float* uv = geometry.mesh.vertices[index].texCoord;
+            minU = std::min(minU, uv[0]);
+            maxU = std::max(maxU, uv[0]);
+            minV = std::min(minV, uv[1]);
+            maxV = std::max(maxV, uv[1]);
+        }
+        const float angle = face.rotation * 3.14159265f / 180.0f;
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        for (uint32_t index : vertices) {
+            float* uv = geometry.mesh.vertices[index].texCoord;
+            float u = uv[0];
+            float v = uv[1];
+            if (face.fit) {
+                u = maxU - minU > 1e-6f ? (u - minU) / (maxU - minU) : 0.0f;
+                v = maxV - minV > 1e-6f ? (v - minV) / (maxV - minV) : 0.0f;
+            }
+            uv[0] = (c * u - s * v) / face.scaleU + face.offsetU;
+            uv[1] = (s * u + c * v) / face.scaleV + face.offsetV;
+        }
+    }
 }
 
 std::vector<std::string> AssignFaceMaterials(const std::vector<FaceMaterial>& faces, EvaluatedGeometry& geometry)

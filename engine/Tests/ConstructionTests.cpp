@@ -1132,6 +1132,75 @@ void TestRampsAndTurns()
           "clicking with Draw Ramp drops a 2 x 4 m ramp 1 m high");
 }
 
+void TestFaceTextureAlignment()
+{
+    Scene scene("Texture Alignment");
+    FakeSink fake;
+    ConstructionSystem system;
+    system.SetMeshSink(fake.Make());
+    BoxParams size;
+    size.width = 4.0f;
+    size.height = 2.0f;
+    size.depth = 1.0f;
+    Entity block = AddBox(scene, "Block", size);
+    auto& shape = block.GetComponent<ConstructionShapeComponent>();
+    FaceMaterial front{FaceTag{FaceGroup::PosZ, static_cast<std::int8_t>(WallSide::PosZ), -1}, "assets/materials/Brick.hematerial"};
+    front.fit = true;
+    shape.faceMaterials.push_back(front);
+    system.Update(scene);
+    // The UV range of the painted face's triangles.
+    auto range = [&](Vec3& lo, Vec3& hi) {
+        const EvaluatedGeometry* geometry = system.Geometry(block);
+        lo = Vec3(1e9f, 1e9f, 0.0f);
+        hi = Vec3(-1e9f, -1e9f, 0.0f);
+        int count = 0;
+        for (size_t t = 0; geometry && t < geometry->triangleTags.size(); ++t) {
+            if (!SameFace(geometry->triangleTags[t], front.face)) continue;
+            for (size_t k = 0; k < 3; ++k) {
+                const float* uv = geometry->mesh.vertices[geometry->mesh.indices[t * 3 + k]].texCoord;
+                lo = Vec3(std::min(lo.x, uv[0]), std::min(lo.y, uv[1]), 0.0f);
+                hi = Vec3(std::max(hi.x, uv[0]), std::max(hi.y, uv[1]), 0.0f);
+                ++count;
+            }
+        }
+        return count > 0;
+    };
+    Vec3 lo;
+    Vec3 hi;
+    const bool fitted = range(lo, hi);
+    Check(fitted && std::fabs(lo.x) < 1e-4f && std::fabs(lo.y) < 1e-4f && std::fabs(hi.x - 1.0f) < 1e-4f &&
+              std::fabs(hi.y - 1.0f) < 1e-4f,
+          "Fit stretches the texture once across the face");
+
+    shape.faceMaterials[0].rotation = 90.0f;
+    shape.faceMaterials[0].scaleU = 2.0f;
+    shape.faceMaterials[0].scaleV = 2.0f;
+    shape.faceMaterials[0].offsetU = 0.5f;
+    shape.faceMaterials[0].offsetV = 0.5f;
+    Check(system.Update(scene) == 1, "changing the alignment re-evaluates the shape");
+    const bool turned = range(lo, hi);
+    Check(turned && std::fabs(lo.x) < 1e-4f && std::fabs(hi.x - 0.5f) < 1e-4f && std::fabs(lo.y - 0.5f) < 1e-4f &&
+              std::fabs(hi.y - 1.0f) < 1e-4f,
+          "the fitted texture is turned a quarter, made twice as big and moved by half a repeat (u " +
+              std::to_string(lo.x) + " to " + std::to_string(hi.x) + ", v " + std::to_string(lo.y) + " to " +
+              std::to_string(hi.y) + ")");
+
+    Scene reopened("Reopened");
+    SceneSerializer::DeserializeFromString(reopened, SceneSerializer(scene).SerializeToString());
+    Entity loaded = reopened.FindEntityByName("Block");
+    const auto* loadedShape = loaded ? reopened.GetRegistry().try_get<ConstructionShapeComponent>(loaded) : nullptr;
+    Check(loadedShape && loadedShape->faceMaterials.size() == 1 && loadedShape->faceMaterials[0].fit &&
+              std::fabs(loadedShape->faceMaterials[0].rotation - 90.0f) < 1e-4f &&
+              std::fabs(loadedShape->faceMaterials[0].scaleV - 2.0f) < 1e-4f &&
+              std::fabs(loadedShape->faceMaterials[0].offsetU - 0.5f) < 1e-4f,
+          "texture alignment is saved with the scene and read back");
+    ConstructionShapeComponent copied;
+    std::string error;
+    Check(ApplyShapeJson(copied, ShapeToJson(shape), error) && copied.faceMaterials.size() == 1 &&
+              std::fabs(copied.faceMaterials[0].scaleU - 2.0f) < 1e-4f && copied.faceMaterials[0].fit,
+          "texture alignment survives prefabs and copy and paste (" + error + ")");
+}
+
 void TestFaceMaterials()
 {
     Scene scene("Faces");
@@ -2407,6 +2476,7 @@ int main()
     TestMeshOpenings();
     TestRampsAndTurns();
     TestFaceMaterials();
+    TestFaceTextureAlignment();
     TestKits();
     TestLevelChecks();
     TestJumpChecks();

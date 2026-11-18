@@ -134,6 +134,12 @@ bool SameFace(const FaceTag& a, const FaceTag& b)
     return a.group == b.group && a.wall == b.wall && a.segment == b.segment;
 }
 
+bool HasTextureAlignment(const FaceMaterial& face)
+{
+    return face.offsetU != 0.0f || face.offsetV != 0.0f || face.scaleU != 1.0f || face.scaleV != 1.0f ||
+           face.rotation != 0.0f || face.fit;
+}
+
 const char* FaceGroupName(FaceGroup group)
 {
     switch (group) {
@@ -329,7 +335,13 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
             if (face.face.segment >= 0) {
                 oss << ", \"segment\": " << face.face.segment;
             }
-            oss << ", \"material\": \"" << Escape(face.material) << "\"}";
+            oss << ", \"material\": \"" << Escape(face.material) << "\"";
+            if (HasTextureAlignment(face)) {
+                oss << ", \"offset\": [" << Number(face.offsetU) << ", " << Number(face.offsetV) << "], \"scale\": ["
+                    << Number(face.scaleU) << ", " << Number(face.scaleV) << "], \"rotation\": " << Number(face.rotation)
+                    << ", \"fit\": " << (face.fit ? "true" : "false");
+            }
+            oss << "}";
         }
         oss << "]";
     }
@@ -474,6 +486,21 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
                 entry.objectValue["segment"] = number(face.face.segment);
             }
             entry.objectValue["material"] = text(face.material);
+            if (HasTextureAlignment(face)) {
+                JsonValue offset;
+                offset.type = JsonValue::Type::Array;
+                offset.arrayValue = {number(face.offsetU), number(face.offsetV)};
+                JsonValue scale;
+                scale.type = JsonValue::Type::Array;
+                scale.arrayValue = {number(face.scaleU), number(face.scaleV)};
+                JsonValue fit;
+                fit.type = JsonValue::Type::Bool;
+                fit.boolValue = face.fit;
+                entry.objectValue["offset"] = std::move(offset);
+                entry.objectValue["scale"] = std::move(scale);
+                entry.objectValue["rotation"] = number(face.rotation);
+                entry.objectValue["fit"] = std::move(fit);
+            }
             faces.arrayValue.push_back(std::move(entry));
         }
         out.objectValue["faces"] = std::move(faces);
@@ -671,6 +698,31 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
                 face.face.segment = static_cast<std::int16_t>(segment->AsNumber());
             }
             face.material = material->AsString();
+            auto pair = [&](const char* key, float& a, float& b) {
+                const JsonValue* value = entry.Find(key);
+                if (!value) return true;
+                if (!value->IsArray() || value->AsArray().size() != 2 || !value->AsArray()[0].IsNumber() ||
+                    !value->AsArray()[1].IsNumber()) {
+                    outError = std::string("ConstructionShape face ") + key + " is [u, v] numbers.";
+                    return false;
+                }
+                a = static_cast<float>(value->AsArray()[0].AsNumber());
+                b = static_cast<float>(value->AsArray()[1].AsNumber());
+                return true;
+            };
+            if (!pair("offset", face.offsetU, face.offsetV) || !pair("scale", face.scaleU, face.scaleV)) {
+                return false;
+            }
+            if (std::fabs(face.scaleU) < 1e-4f || std::fabs(face.scaleV) < 1e-4f) {
+                outError = "ConstructionShape face scale cannot be 0.";
+                return false;
+            }
+            if (const JsonValue* rotation = entry.Find("rotation"); rotation && rotation->IsNumber()) {
+                face.rotation = static_cast<float>(rotation->AsNumber());
+            }
+            if (const JsonValue* fit = entry.Find("fit"); fit && fit->IsBool()) {
+                face.fit = fit->AsBool();
+            }
             read.push_back(std::move(face));
         }
         shape.faceMaterials = std::move(read);

@@ -102,6 +102,8 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
 // Groups the triangles of painted faces into one submesh per material, slot 0 keeping the shape's own material.
 // Returns the material of each slot (slot 0 is empty).
 std::vector<std::string> AssignFaceMaterials(const std::vector<FaceMaterial>& faces, EvaluatedGeometry& geometry);
+// Moves, scales, turns or fits the texture coordinates of painted faces that ask for it (FaceMaterial alignment).
+void AlignFaceTextures(const std::vector<FaceMaterial>& faces, EvaluatedGeometry& geometry);
 
 // Byte-level hash of an evaluation result, used to prove regeneration is deterministic.
 std::uint64_t HashGeometry(const EvaluatedGeometry& geometry);

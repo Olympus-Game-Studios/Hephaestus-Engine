@@ -424,6 +424,7 @@ void ConstructionSystem::Evaluate(Scene& scene, entt::entity entity, ShapeState&
     state.inputHash = hash;
     ++m_stats.evaluations;
     const bool hasGeometry = EvaluateShape(shape, CollectOpenings(scene, entity), state.geometry, cuts);
+    AlignFaceTextures(shape.faceMaterials, state.geometry);
     state.slotMaterials = AssignFaceMaterials(shape.faceMaterials, state.geometry);
     RebuildPieces(scene, entity, state);
 

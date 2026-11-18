@@ -84,6 +84,17 @@ private:
     QGroupBox* m_facesGroup = nullptr;
     QVBoxLayout* m_facesList = nullptr;
     std::vector<Hephaestus::Construction::FaceMaterial> m_shownFaces;
+    // Texture alignment fields of each listed face, updated in place when only the alignment changed.
+    struct FaceAlignmentRow {
+        QDoubleSpinBox* offsetU = nullptr;
+        QDoubleSpinBox* offsetV = nullptr;
+        QDoubleSpinBox* scaleU = nullptr;
+        QDoubleSpinBox* scaleV = nullptr;
+        QDoubleSpinBox* rotation = nullptr;
+        QCheckBox* fit = nullptr;
+    };
+    std::vector<FaceAlignmentRow> m_faceRows;
+    void showFaceAlignment(const FaceAlignmentRow& row, const Hephaestus::Construction::FaceMaterial& face);
 
     QGroupBox* m_kitGroup = nullptr;
     QComboBox* m_kit = nullptr;
