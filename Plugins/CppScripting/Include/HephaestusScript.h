@@ -73,8 +73,9 @@ public:
     Value() = default;
     Value(bool value) { m_Raw.type = HP_VALUE_BOOL; m_Raw.boolean = value ? 1 : 0; }
     Value(double value) { m_Raw.type = HP_VALUE_NUMBER; m_Raw.number = value; }
-    Value(float value) : Value(static_cast<double>(value)) {}
-    Value(int value) : Value(static_cast<double>(value)) {}
+    /// Any other number (float, unsigned, 64-bit, size_t, hp::Sound) becomes a number.
+    template <class T, std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>, int> = 0>
+    Value(T value) : Value(static_cast<double>(value)) {}
     Value(const char* value) : Value(std::string(value ? value : "")) {}
     Value(std::string value) : m_String(std::move(value)) { m_Raw.type = HP_VALUE_STRING; }
     Value(Vec2 v) { SetVector(HP_VALUE_VEC2, v.x, v.y, 0.0f, 0.0f); }

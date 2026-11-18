@@ -294,7 +294,8 @@ int main(int argc, char** argv) {
         Write(languagePlugin / "com.test.language.hpplugin",
               R"({"version":1,"apiVersion":1,"id":"com.test.language","name":"Language","author":"Tests",)"
               R"("pluginVersion":"1.0.0","engineVersion":">=2026.9.0","type":"runtime",)"
-              R"("runtimeEntry":"bin/ScriptLanguageTestPlugin.dll"})");
+              R"("runtimeEntry":"bin/ScriptLanguageTestPlugin.dll","content":"Content"})");
+        Write(languagePlugin / "Content" / "Scripts" / "plugin.tscript", "ok");
         // Built beside the player, as CMake does for first-party plugins, not in the plugin's folder.
         const fs::path builtPlugin = runtime / "Plugins" / "com.test.language";
         fs::create_directories(builtPlugin / "bin");
@@ -303,9 +304,10 @@ int main(int argc, char** argv) {
         Write(project / "scripts" / "mover.tscript", "ok");
         result = stager.stage(request, artifacts);
         ok &= Check(result.success && fs::exists(content / "mover.tscript.packaged") &&
+                        fs::exists(content / "plugin.tscript.packaged") &&
                         fs::exists(content / "Plugins" / "com.test.language" / "bin" / testModule.filename()) &&
                         HasStage(stages, "Preparing Test Language script mover.tscript"),
-                    "a script language prepares its scripts while packaging");
+                    "a script language prepares project and plugin scripts while packaging");
         Write(project / "scripts" / "broken.tscript", "fail");
         result = stager.stage(request, artifacts);
         ok &= Check(!result.success && HasProblem(result.problems, "PACKAGE_SCRIPT_PREPARE_FAILED"),

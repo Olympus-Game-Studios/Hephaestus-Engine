@@ -77,7 +77,7 @@ public:
     HP_FIELD(float, speed, 1.0f);
     HP_FIELD(hp::Vec3, offset, 0, 1.5f, 0);
     HP_FIELD(std::string, label, "mover, the first");
-    HP_FIELD(bool, active, true);
+    HP_FIELD(bool, active, true); // on (by default)
     // HP_FIELD(float, commentedOut, 3.0f);
 
     void OnAwake() override { hp::Scene::Find("LuaTarget").Call("onPing", 7); }
@@ -253,7 +253,7 @@ public:
                                                                         .Set("padding", 6)) &&
                         panel.ApplyThemeStyle("Danger"));
         Report("missingTheme", !panel.ApplyThemeStyle("Nope"));
-        hp::Scene::Find("LuaTarget").Call("remember", static_cast<double>(text.Handle()));
+        hp::Scene::Find("LuaTarget").Call("remember", text.Handle());
 
         hp::Screen shown = hp::UI::Display(layout);
         Report("displayed", static_cast<bool>(shown));
@@ -311,6 +311,34 @@ public:
 };
 
 HP_SCRIPT(Life)
+)cpp";
+
+const char* kDoomed = R"cpp(#include "HephaestusScript.h"
+
+class Doomed : public hp::Script {
+public:
+    HP_FIELD(bool, killer, false);
+    std::string name;
+    void OnAwake() override { name = GetEntity().GetName(); }
+    void OnUpdate(float) override {
+        if (killer) hp::Scene::Destroy(hp::Scene::Find("Victim"));
+    }
+    void OnLateUpdate(float) override { hp::Log("late:" + name); }
+    void OnDestroy() override { hp::Log("destroyed script"); }
+};
+
+HP_SCRIPT(Doomed)
+)cpp";
+
+const char* kReloader = R"cpp(#include "HephaestusScript.h"
+
+class Reloader : public hp::Script {
+public:
+    void OnAwake() override { hp::Log(hp::Scene::Reload() ? "reload accepted" : "reload refused"); }
+    void OnUpdate(float) override { hp::Log("updated after reload"); }
+};
+
+HP_SCRIPT(Reloader)
 )cpp";
 
 } // namespace
@@ -716,6 +744,43 @@ end
         hero.GetComponent<CharacterComponent>().runController = false;
         Hephaestus::RunSimulationStep(step, 0.5f);
         pass &= Check(host.InstanceCount() == 0, "turning the controller off destroys its script");
+
+        host.OnSimulationStopped();
+        lua.OnSimulationStopped();
+        lua.Shutdown();
+    }
+
+    {
+        log.clear();
+        WriteFile(root / "scripts" / "doomed.cpp", kDoomed);
+        WriteFile(root / "scripts" / "reloader.cpp", kReloader);
+        Scene scene("Lifetimes");
+        scene.CreateEntity("Killer").AddComponent<LuaScriptComponent>("scripts/doomed.cpp").variables["killer"] =
+            PropertyValue(true);
+        scene.CreateEntity("Victim").AddComponent<LuaScriptComponent>("scripts/doomed.cpp");
+
+        LuaScriptEngine lua;
+        PluginScriptHost host;
+        lua.Initialize(&scene, nullptr);
+        lua.SetProjectRoot(root);
+        lua.SetPluginScriptHost(&host);
+        host.SetLuaEngine(&lua);
+        lua.SetSceneReloadCallback([](const std::string&) { return true; });
+        lua.OnSimulationStarted();
+        Hephaestus::SimulationStepContext step;
+        step.scene = &scene;
+        step.lua = &lua;
+        step.pluginScripts = &host;
+        Hephaestus::RunSimulationStep(step, 0.1f);
+        pass &= Check(logged("late:Killer") && !logged("late:Victim") && logged("destroyed script") &&
+                      host.InstanceCount() == 1,
+                      "a script destroyed during the update pass gets no later callbacks");
+
+        log.clear();
+        scene.CreateEntity("Reloader").AddComponent<LuaScriptComponent>("scripts/reloader.cpp");
+        Hephaestus::RunSimulationStep(step, 0.1f);
+        pass &= Check(logged("reload accepted") && !logged("updated after reload"),
+                      "no script updates in a scene that is being reloaded");
 
         host.OnSimulationStopped();
         lua.OnSimulationStopped();

@@ -1024,6 +1024,9 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
     auto& registry = scene.GetRegistry();
     const ScriptLanguageRegistry& languages = ScriptLanguageRegistry::Instance();
 
+    if (m_Lua) {
+        m_Lua->BeginScriptPass();
+    }
     std::vector<uint64_t> stale;
     for (const auto& [key, instance] : m_Instances) {
         const ScriptSource source = SourceFor(registry, static_cast<entt::entity>(EntityOf(key)), SlotOf(key));
@@ -1035,6 +1038,10 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
         DestroyInstance(key);
     }
     if (languages.Languages().empty()) {
+        if (m_Lua) {
+            m_Lua->EndScriptPass(scene);
+        }
+        PruneDestroyed();
         return;
     }
 
@@ -1048,11 +1055,11 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
     }
     for (uint64_t key : candidates) {
         const uint32_t entityId = EntityOf(key);
-        const ScriptSource source = SourceFor(registry, static_cast<entt::entity>(entityId), SlotOf(key));
+        ScriptSource source = SourceFor(registry, static_cast<entt::entity>(entityId), SlotOf(key));
         if (!source.path) {
             continue;
         }
-        const std::string& scriptPath = *source.path;
+        const std::string scriptPath = *source.path;
         const HPScriptLanguage* language = languages.FindForPath(scriptPath);
         if (!language) {
             continue;
@@ -1066,6 +1073,11 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
         if (existing != m_Instances.end() && existing->second.writeTime != writeTime) {
             DestroyInstance(key);
             existing = m_Instances.end();
+            // The old script's teardown may have spawned, which can move component storage.
+            source = SourceFor(registry, static_cast<entt::entity>(entityId), SlotOf(key));
+            if (!source.path || *source.path != scriptPath) {
+                continue;
+            }
         }
         if (existing == m_Instances.end()) {
             const auto failed = m_Failed.find(key);
@@ -1104,10 +1116,10 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
         m_UpdateOrder.push_back(key);
     }
 
-    if (m_Lua) {
-        m_Lua->BeginScriptPass();
-    }
     for (uint64_t key : m_UpdateOrder) {
+        if (ReloadPending()) {
+            break;
+        }
         auto it = m_Instances.find(key);
         if (it == m_Instances.end() || it->second.awake) {
             continue;
@@ -1118,6 +1130,9 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
         }
     }
     for (uint64_t key : m_UpdateOrder) {
+        if (ReloadPending()) {
+            break;
+        }
         auto it = m_Instances.find(key);
         if (it != m_Instances.end() && it->second.language->update) {
             it->second.language->update(it->second.runtime, it->second.handle, deltaTime);
@@ -1126,14 +1141,39 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
     if (m_Lua) {
         m_Lua->EndScriptPass(scene);
     }
+    PruneDestroyed();
+}
+
+bool PluginScriptHost::ReloadPending() const {
+    return m_Lua && m_Lua->IsSceneReloadRequested();
+}
+
+bool PluginScriptHost::EntityAlive(uint32_t entityId) const {
+    return m_Scene && m_Scene->GetRegistry().valid(static_cast<entt::entity>(entityId));
+}
+
+void PluginScriptHost::PruneDestroyed() {
+    std::vector<uint64_t> gone;
+    for (const auto& [key, instance] : m_Instances) {
+        if (!EntityAlive(EntityOf(key))) {
+            gone.push_back(key);
+        }
+    }
+    for (uint64_t key : gone) {
+        DestroyInstance(key);
+    }
 }
 
 void PluginScriptHost::LateUpdate(Scene& scene, float deltaTime) {
     m_Scene = &scene;
     m_DeltaTime = deltaTime;
+    PruneDestroyed();
     for (uint64_t key : m_UpdateOrder) {
+        if (ReloadPending()) {
+            break;
+        }
         auto it = m_Instances.find(key);
-        if (it != m_Instances.end() && it->second.language->lateUpdate) {
+        if (it != m_Instances.end() && EntityAlive(EntityOf(key)) && it->second.language->lateUpdate) {
             it->second.language->lateUpdate(it->second.runtime, it->second.handle, deltaTime);
         }
     }
@@ -1142,7 +1182,11 @@ void PluginScriptHost::LateUpdate(Scene& scene, float deltaTime) {
 void PluginScriptHost::DispatchContactEvents(Scene& scene,
                                              const std::vector<Physics::PhysicsContactEvent>& events) {
     m_Scene = &scene;
+    PruneDestroyed();
     for (const Physics::PhysicsContactEvent& event : events) {
+        if (ReloadPending()) {
+            break;
+        }
         HPContactEvent contact{};
         contact.kind = static_cast<uint32_t>(event.kind);
         contact.other = event.otherAlive ? ToHandle(event.other) : 0;
@@ -1153,7 +1197,7 @@ void PluginScriptHost::DispatchContactEvents(Scene& scene,
         contact.penetration = event.penetration;
         for (LuaScriptSlot slot : {LuaScriptSlot::CharacterController, LuaScriptSlot::Gameplay}) {
             auto it = m_Instances.find(Key(event.receiver, slot));
-            if (it != m_Instances.end() && it->second.language->contact) {
+            if (it != m_Instances.end() && EntityAlive(event.receiver) && it->second.language->contact) {
                 it->second.language->contact(it->second.runtime, it->second.handle, &contact);
             }
         }
@@ -1162,15 +1206,22 @@ void PluginScriptHost::DispatchContactEvents(Scene& scene,
 
 void PluginScriptHost::DispatchAnimationFinished(Scene& scene) {
     m_Scene = &scene;
+    PruneDestroyed();
+    // Callbacks can destroy characters, so the finished clips are read before any runs.
+    std::vector<std::pair<uint32_t, std::string>> finished;
     auto view = scene.GetRegistry().view<CharacterComponent>();
     for (entt::entity handle : view) {
         const CharacterComponent& character = view.get<CharacterComponent>(handle);
-        if (!character.player.finishedThisFrame || character.player.finishedClip.empty()) {
-            continue;
+        if (character.player.finishedThisFrame && !character.player.finishedClip.empty()) {
+            finished.emplace_back(static_cast<uint32_t>(handle), character.player.finishedClip);
         }
-        const std::string clip = character.player.finishedClip;
+    }
+    for (const auto& [entityId, clip] : finished) {
         for (LuaScriptSlot slot : {LuaScriptSlot::CharacterController, LuaScriptSlot::Gameplay}) {
-            auto it = m_Instances.find(Key(static_cast<uint32_t>(handle), slot));
+            if (ReloadPending() || !EntityAlive(entityId)) {
+                break;
+            }
+            auto it = m_Instances.find(Key(entityId, slot));
             if (it == m_Instances.end()) {
                 continue;
             }

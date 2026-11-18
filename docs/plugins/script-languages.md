@@ -94,18 +94,18 @@ The debugger (breakpoints, stepping, call stack, locals and watches) works with 
 
 ### New script template
 
-Set `newScriptTemplate` to the contents of a new file and the Content Browser's create menu gets **New <displayName> Script**, which writes a file with your first extension. Every `$NAME` in the template becomes the name the user typed; the editor only accepts names that are identifiers (letters, digits and `_`, not starting with a digit), so the name can be used as a class name.
+Set `newScriptTemplate` to the contents of a new file and the Content Browser's create menu gets **New `<displayName>` Script**, which writes a file with your first extension. Every `$NAME` in the template becomes the name the user typed; the editor only accepts names that are identifiers (letters, digits and `_`, not starting with a digit), so the name can be used as a class name.
 
 ## Packaging
 
-When a game is packaged, the packager loads each enabled plugin's `runtimeEntry` module (the plugin's own copy, not the staged one) and calls `packageScript` once for every file under the package's `assets` and `scripts` folders whose extension the language claims:
+When a game is packaged, the packager loads each enabled plugin's `runtimeEntry` module (the copy built beside the player, or the plugin's own, never the staged one). Once everything is staged, it calls `packageScript` once for every file whose extension the language claims under the package's `assets` and `scripts` folders and every enabled plugin's staged content folder:
 
 ```c
 static int32_t PackageScript(const char* projectRoot, const char* scriptPath, const char* packageRoot,
                              char* error, size_t errorSize);
 ```
 
-`scriptPath` is the source file in the project and `packageRoot` is the staged game's root, which the packaged game sees as its project root (`getProjectRoot`). Write anything the script needs at runtime under `packageRoot`, such as compiled code. Return 0 with a message in `error` to fail the package; the message appears in the build's problems. Leave `packageScript` `NULL` when the source file is all a script needs. The packager runs in the editor and in `HephaestusBuild`, so the callback must not rely on a play session.
+`scriptPath` is the staged copy of the script inside `packageRoot`, so what you prepare always matches the source that ships, and `projectRoot` is the project being packaged, for caches. `packageRoot` is the staged game's root, which the packaged game sees as its project root (`getProjectRoot`). Write anything the script needs at runtime under `packageRoot`, such as compiled code. Return 0 with a message in `error` to fail the package; the message appears in the build's problems. A module that exists but cannot be loaded fails the package with `PACKAGE_PLUGIN_RUNTIME_LOAD_FAILED`. Leave `packageScript` `NULL` when the source file is all a script needs. The packager runs in the editor and in `HephaestusBuild`, so the callback must not rely on a play session.
 
 ## Lifecycle
 

@@ -552,6 +552,10 @@ add_library(HephaestusBuildCore STATIC
 )
 target_include_directories(HephaestusBuildCore PUBLIC engine extern)
 target_link_libraries(HephaestusBuildCore PUBLIC HephaestusPluginCore)
+if(UNIX)
+    # PackageStager loads script language modules with dlopen.
+    target_link_libraries(HephaestusBuildCore PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 add_executable(HephaestusBuildCli engine/BuildCli.cpp)
 target_link_libraries(HephaestusBuildCli PRIVATE HephaestusBuildCore)

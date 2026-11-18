@@ -358,6 +358,7 @@ public:
     /// destroys are deferred and spawned characters are bound, as in Lua.
     void BeginScriptPass();
     void EndScriptPass(Scene& scene);
+    bool IsSceneReloadRequested() const { return m_SceneReloadRequested; }
     Entity FindActiveCamera() const;
     bool SetCameraActive(uint32_t entityId, bool active);
     bool EvaluateSocket(uint32_t entityId, const std::string& socketName, bool sceneWorld,

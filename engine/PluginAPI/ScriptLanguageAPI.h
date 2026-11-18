@@ -485,11 +485,13 @@ typedef struct HPScriptLanguage {
                     char* buffer, size_t bufferSize);
 
     /* Packaging, read only when structSize covers it. Called once for every
-       file of this language a package contains, with absolute paths, before
-       the package is committed. Write whatever the script needs at runtime
-       (for example compiled code) under packageRoot, which becomes the
-       game's project root. Return 0 and write a message into `error` to fail
-       the build. */
+       file of this language a package contains (project scripts and enabled
+       plugins' content), with absolute paths, before the package is
+       committed. scriptPath is the staged copy inside packageRoot, which
+       becomes the game's project root, so prepare that copy; projectRoot is
+       the project being packaged, for caches. Write whatever the script needs
+       at runtime (for example compiled code) under packageRoot. Return 0 and
+       write a message into `error` to fail the build. */
     int32_t (*packageScript)(const char* projectRoot, const char* scriptPath, const char* packageRoot,
                              char* error, size_t errorSize);
 

@@ -714,6 +714,29 @@ bool FieldValue(const std::string& type, const std::vector<std::string>& values,
     return true;
 }
 
+// The `)` closing a call whose arguments start at `from`, skipping nested brackets and string literals.
+size_t MatchingParen(const std::string& line, size_t from) {
+    int depth = 1;
+    bool quoted = false;
+    for (size_t i = from; i < line.size(); ++i) {
+        const char c = line[i];
+        if (quoted) {
+            if (c == '\\') {
+                ++i;
+            } else if (c == '"') {
+                quoted = false;
+            }
+        } else if (c == '"') {
+            quoted = true;
+        } else if (c == '(') {
+            ++depth;
+        } else if (c == ')' && --depth == 0) {
+            return i;
+        }
+    }
+    return std::string::npos;
+}
+
 int32_t DescribeFields(const char* resolvedPath, HPFieldCallback callback, void* user) {
     const auto text = ReadText(fs::path(resolvedPath ? resolvedPath : ""));
     if (!text) {
@@ -739,8 +762,8 @@ int32_t DescribeFields(const char* resolvedPath, HPFieldCallback callback, void*
             line.find("#define") != std::string::npos) {
             continue;
         }
-        const size_t close = line.rfind(')');
-        if (close == std::string::npos || close < at) continue;
+        const size_t close = MatchingParen(line, at + 9);
+        if (close == std::string::npos) continue;
         const auto parts = SplitArguments(std::string_view(line).substr(at + 9, close - at - 9));
         if (parts.size() < 3 || parts[1].empty()) continue;
         HPValue value{};
@@ -765,20 +788,22 @@ int32_t PackageScript(const char* projectRoot, const char* scriptPath, const cha
     if (!DeclaresScript(*text)) {
         return 1;
     }
-    const std::string name = CacheName(root, source, *text);
+    // Keyed by the path inside the package, which matches the project path the editor's cache uses.
+    const fs::path package(packageRoot);
+    const std::string name = CacheName(package, source, *text);
     const fs::path dll = root / kCacheFolder / name;
     std::string message;
     std::string diagnostics;
-    const std::string displayPath = source.lexically_normal().lexically_relative(root).generic_string();
+    const std::string displayPath = source.lexically_normal().lexically_relative(package).generic_string();
     if (!fs::exists(dll)) {
         const auto report = [&](uint32_t, const std::string& line) { diagnostics += line + "\n"; };
-        if (!Compile(source, dll, CacheStem(root, source), displayPath, message, report)) {
+        if (!Compile(source, dll, CacheStem(package, source), displayPath, message, report)) {
             WriteError(error, errorSize, diagnostics + message);
             return 0;
         }
     }
     std::error_code ec;
-    const fs::path target = fs::path(packageRoot) / kCacheFolder / name;
+    const fs::path target = package / kCacheFolder / name;
     fs::create_directories(target.parent_path(), ec);
     fs::copy_file(dll, target, fs::copy_options::overwrite_existing, ec);
     if (ec) {

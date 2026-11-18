@@ -82,6 +82,11 @@ private:
     static uint32_t EntityOf(uint64_t key);
     static LuaScriptSlot SlotOf(uint64_t key);
     void DestroyInstance(uint64_t key);
+    /// Tears down scripts whose entity is gone, before any further callback reaches them.
+    void PruneDestroyed();
+    bool EntityAlive(uint32_t entityId) const;
+    /// A script asked for a scene reload this pass, so no further script may run in the outgoing scene.
+    bool ReloadPending() const;
     void Log(HPLogLevel level, const std::string& message) const;
     bool ForwardCall(uint32_t entityId, const char* functionName, const HPValue* args, uint32_t argCount,
                      LuaScriptSlot slot);
