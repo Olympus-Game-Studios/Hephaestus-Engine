@@ -39,12 +39,78 @@ function Logic.sprintAllowed(forwardAxis, crouched)
     return (forwardAxis or 0) > 0.5 and not crouched
 end
 
+-- Speed scale for the direction of the move input: 1 straight ahead, strafeScale sideways and backScale straight
+-- back, blended by the angle so diagonals fall in between.
+function Logic.directionSpeedScale(forwardAxis, rightAxis, strafeScale, backScale)
+    local f, r = forwardAxis or 0, rightAxis or 0
+    local length = math.sqrt(f * f + r * r)
+    if length < 1e-4 then
+        return 1
+    end
+    local along = f / length
+    local towards = along >= 0 and 1 or backScale
+    return strafeScale + (towards - strafeScale) * along * along
+end
+
+-- Spends a tactical sprint's charge while it is active and refills it otherwise (empty to full in
+-- rechargeSeconds). Returns whether it is still active and the charge left, in seconds of tactical sprint.
+function Logic.stepTacticalSprint(active, charge, maxSeconds, rechargeSeconds, dt)
+    if active then
+        charge = math.max(0, charge - dt)
+        return charge > 0, charge
+    end
+    return false, math.min(maxSeconds, charge + dt * maxSeconds / math.max(rechargeSeconds, 1e-3))
+end
+
+-- Sideways head offset for a lean of -1 (left) to 1 (right). wallDistance(side, distance) returns how far a wall is
+-- on that side within distance, or nil; the head stops 0.2 m short of it.
+function Logic.leanOffset(lean, distance, wallDistance)
+    if math.abs(lean) < 1e-4 then
+        return 0
+    end
+    local side = lean > 0 and 1 or -1
+    local reach = distance
+    local wall = wallDistance and wallDistance(side, distance + 0.2)
+    if wall then
+        reach = math.max(0, math.min(distance, wall - 0.2))
+    end
+    return side * math.min(math.abs(lean) * distance, reach)
+end
+
+-- Speed scale through a slide: from startScale, easing down to endScale by the end of duration.
+function Logic.slideSpeedScale(elapsed, duration, startScale, endScale)
+    local t = duration > 0 and math.min(1, math.max(0, elapsed / duration)) or 1
+    return startScale + (endScale - startScale) * t * t * (3 - 2 * t)
+end
+
+-- Speed scale after a hard landing: starts at slowScale and eases back to 1 over seconds.
+function Logic.landingSpeedScale(elapsed, seconds, slowScale)
+    if not elapsed or seconds <= 0 or elapsed >= seconds then
+        return 1
+    end
+    local t = math.max(0, elapsed) / seconds
+    return slowScale + (1 - slowScale) * t * t * (3 - 2 * t)
+end
+
+-- Rounds the weapon holds: the magazine plus a chambered round.
+function Logic.loadedRounds(state)
+    return (state.magazine or 0) + (state.chamber or 0)
+end
+
+-- A fresh weapon holds magazineSize rounds: one chambered and the rest in the magazine.
+function Logic.fillWeapon(state)
+    local size = state.magazineSize or 0
+    state.chamber = size > 0 and 1 or 0
+    state.magazine = math.max(0, size - 1)
+end
+
 function Logic.tickFire(state, dt, held, pressed)
     state.now = (state.now or 0) + dt
     state.nextFire = state.nextFire or 0
     local isHeld = held == true or held == 1
     local isPressed = pressed == true or pressed == 1
-    if (state.reloadRemaining or 0) > 0 or (state.magazine or 0) <= 0
+    if (state.reloadRemaining or 0) > 0 or (state.chamber or 0) <= 0
+        or (state.fireBlockedRemaining or 0) > 0
         or (state.fireMode == "auto" and not isHeld) then
         state.nextFire = math.max(state.nextFire, state.now)
         return 0
@@ -70,41 +136,168 @@ function Logic.tickFire(state, dt, held, pressed)
     return shots
 end
 
-function Logic.tryStartReload(state)
+-- "tactical" swaps a magazine with a round chambered, "empty" also chambers one, "chamber" only racks
+-- the action when a magazine is in but the chamber is empty (an empty reload interrupted after insert).
+-- A weapon with a shellReload table (a pump shotgun) loads one round at a time instead: "shell", until it holds
+-- magazineSize rounds counting the chambered one or the reserve runs out, then pumps one in if the chamber was empty.
+function Logic.reloadKind(state)
+    local chamber = state.chamber or 0
+    local magazine = state.magazine or 0
     if (state.reloadRemaining or 0) > 0 then
+        return nil
+    end
+    if chamber <= 0 and magazine > 0 then
+        return "chamber"
+    end
+    if state.shellReload then
+        if (state.reserve or 0) <= 0 or chamber + magazine >= (state.magazineSize or 0) then
+            return nil
+        end
+        return "shell"
+    end
+    if (state.reserve or 0) <= 0 or magazine >= (state.magazineSize or 0) then
+        return nil
+    end
+    return chamber > 0 and "tactical" or "empty"
+end
+
+-- shellReload: start (until the first shell goes in), perShell, pump (racking a round into an empty chamber) and
+-- finish (back to ready), in seconds.
+local function shellPlan(state, kind)
+    local s = state.shellReload
+    local pump = s.pump or 0.5
+    if kind == "chamber" then
+        return pump, { { name = "chamber", time = pump * 0.5 } }
+    end
+    local start, per = s.start or 0.4, s.perShell or 0.5
+    local shells = math.min((state.magazineSize or 0) - Logic.loadedRounds(state), state.reserve or 0)
+    local events = {}
+    for i = 1, shells do
+        events[i] = { name = "shell", time = start + i * per }
+    end
+    local seconds = start + shells * per
+    if (state.chamber or 0) <= 0 then
+        events[#events + 1] = { name = "chamber", time = seconds + pump * 0.5 }
+        seconds = seconds + pump
+    end
+    return seconds + (s.finish or 0.3), events
+end
+
+-- Event times in seconds from the start of the action. Weapons without authored times get fixed fractions.
+local function reloadPlan(state, kind)
+    if state.shellReload then
+        return shellPlan(state, kind)
+    end
+    if kind == "tactical" then
+        local t = state.tacticalReload or {}
+        local seconds = t.seconds or state.reloadSeconds or 0
+        return seconds, { { name = "detach", time = t.detach or seconds * 0.2 },
+                          { name = "insert", time = t.insert or seconds * 0.55 } }
+    end
+    local e = state.emptyReload or {}
+    local seconds = e.seconds or state.reloadEmptySeconds or state.reloadSeconds or 0
+    local chamberTime = e.chamber or seconds * 0.8
+    if kind == "chamber" then
+        local lead = math.min(0.2, chamberTime)
+        return seconds - chamberTime + lead, { { name = "chamber", time = lead } }
+    end
+    return seconds, { { name = "detach", time = e.detach or seconds * 0.2 },
+                      { name = "insert", time = e.insert or seconds * 0.5 },
+                      { name = "chamber", time = chamberTime } }
+end
+
+function Logic.tryStartReload(state)
+    local kind = Logic.reloadKind(state)
+    if not kind then
         return false
     end
-    if (state.magazine or 0) >= (state.magazineSize or 0) then
-        return false
-    end
-    if (state.reserve or 0) <= 0 then
-        return false
-    end
-    state.reloadRemaining = state.reloadSeconds or 0
+    local seconds, events = reloadPlan(state, kind)
+    state.reload = { kind = kind, events = events, nextEvent = 1 }
+    state.reloadRemaining = seconds
+    state.reloadTotal = seconds
+    state.reloadElapsed = 0
+    state.reloadFromEmpty = kind ~= "tactical" and (kind ~= "shell" or (state.chamber or 0) <= 0)
     return true
 end
 
+local function applyReloadEvent(state, name)
+    if name == "insert" then
+        -- Rounds left in the old magazine go back to the reserve.
+        state.reserve = (state.reserve or 0) + (state.magazine or 0)
+        local taken = math.min(state.magazineSize or 0, state.reserve)
+        state.magazine = taken
+        state.reserve = state.reserve - taken
+    elseif name == "shell" and (state.reserve or 0) > 0 then
+        state.magazine = (state.magazine or 0) + 1
+        state.reserve = state.reserve - 1
+    elseif name == "chamber" and (state.chamber or 0) <= 0 and (state.magazine or 0) > 0 then
+        state.magazine = state.magazine - 1
+        state.chamber = 1
+    end
+end
+
+-- Returns whether the action finished and the names of the events it crossed, in order.
 function Logic.advanceReload(state, dt)
-    if (state.reloadRemaining or 0) <= 0 then
-        return false
+    local reload = state.reload
+    if not reload or (state.reloadRemaining or 0) <= 0 then
+        return false, {}
     end
-    state.reloadRemaining = state.reloadRemaining - dt
+    state.reloadElapsed = (state.reloadElapsed or 0) + dt
+    local crossed = {}
+    while reload.events[reload.nextEvent] and reload.events[reload.nextEvent].time <= state.reloadElapsed do
+        local event = reload.events[reload.nextEvent]
+        applyReloadEvent(state, event.name)
+        crossed[#crossed + 1] = event.name
+        reload.nextEvent = reload.nextEvent + 1
+    end
+    state.reloadRemaining = state.reloadTotal - state.reloadElapsed
     if state.reloadRemaining > 0 then
+        return false, crossed
+    end
+    while reload.events[reload.nextEvent] do
+        applyReloadEvent(state, reload.events[reload.nextEvent].name)
+        crossed[#crossed + 1] = reload.events[reload.nextEvent].name
+        reload.nextEvent = reload.nextEvent + 1
+    end
+    state.reload = nil
+    state.reloadRemaining = 0
+    return true, crossed
+end
+
+-- Stops an action where it is. Events already crossed stay applied, so an empty reload cut after
+-- the insert leaves the chamber empty and the next reload is a "chamber" action.
+function Logic.interruptReload(state)
+    if not state.reload then
         return false
     end
+    state.reload = nil
     state.reloadRemaining = 0
-    local space = (state.magazineSize or 0) - (state.magazine or 0)
-    local moved = math.min(space, state.reserve or 0)
-    state.magazine = (state.magazine or 0) + moved
-    state.reserve = (state.reserve or 0) - moved
     return true
 end
 
-function Logic.spendShot(state)
-    if (state.magazine or 0) <= 0 then
+-- Fire pressed during a shell-by-shell reload: stops it (shells already in stay in) so the weapon can fire. With
+-- an empty chamber it starts the pump instead. Returns whether a reload was cut.
+function Logic.cutShellReload(state)
+    if not (state.reload and state.reload.kind == "shell") then
         return false
     end
-    state.magazine = state.magazine - 1
+    Logic.interruptReload(state)
+    if (state.chamber or 0) <= 0 and (state.magazine or 0) > 0 then
+        Logic.tryStartReload(state)
+    end
+    return true
+end
+
+-- Fires the chambered round and feeds the next one from the magazine.
+function Logic.spendShot(state)
+    if (state.chamber or 0) <= 0 then
+        return false
+    end
+    state.chamber = 0
+    if (state.magazine or 0) > 0 then
+        state.magazine = state.magazine - 1
+        state.chamber = 1
+    end
     return true
 end
 

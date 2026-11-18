@@ -40,6 +40,7 @@
 #include "BuildSettingsDialog.h"
 #include "../../PluginAPI/PluginFirstParty.h"
 #include <memory>
+#include <optional>
 #include <atomic>
 #include <filesystem>
 #include <unordered_set>
@@ -281,7 +282,11 @@ private slots:
     void onPackageAndRun();
     void onRunLastPackage();
     void onCleanPackage();
-    void startBuild(Hephaestus::Build::BuildAction action);
+    void startBuild(Hephaestus::Build::BuildAction action,
+                    std::optional<Hephaestus::Build::BuildConfiguration> quickRun = std::nullopt);
+    void onBuildAndRun();
+    void openPlayWindow();
+    void onPresentationTargetChanged(QtViewportWindow* target);
 
     // Engine callbacks
     void onViewportReady();
@@ -322,6 +327,8 @@ private:
     void saveEditorViewState();
     void hideSelectedInEditor();
     void isolateSelectedInEditor();
+    /// The hierarchy eye: click hides or shows an entity in the editor, Alt+click isolates it (again to exit).
+    void toggleOutlinerVisibility(entt::entity entity, bool isolate);
     void toggleLockSelectedInEditor();
     void alignSelection(int axis);
     void distributeSelection(int axis);
@@ -357,6 +364,9 @@ private:
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;
     QAction* m_stepAction = nullptr;
+    QAction* m_playInWindowAction = nullptr;
+    QAction* m_buildRunReleaseAction = nullptr;
+    QtViewportWindow* m_playWindow = nullptr;
     QAction* m_selectAction = nullptr;
     QAction* m_translateAction = nullptr;
     QAction* m_rotateAction = nullptr;

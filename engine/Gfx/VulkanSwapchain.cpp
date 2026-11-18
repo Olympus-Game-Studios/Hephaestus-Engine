@@ -236,7 +236,8 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     depthImageView = createImageView(device, depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     createImage2D(device, allocator, extent.width, extent.height, kHdrFormat,
-                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+                      VK_IMAGE_USAGE_SAMPLED_BIT,
                   hdrImage, hdrAllocation);
     hdrImageView = createImageView(device, hdrImage, kHdrFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 
@@ -327,10 +328,10 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    deps[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT |
+    // Not by region: the tone map's scope lens samples the HDR image away from the pixel it writes.
+    deps[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT |
                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    deps[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
     deps[2].srcSubpass = VK_SUBPASS_EXTERNAL;
     deps[2].dstSubpass = kOverlaySubpass;
@@ -352,6 +353,25 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
 
     if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
         throw std::runtime_error("Failed to create render pass");
+
+    // Only load/store ops and layouts differ, so these stay compatible with renderPass.
+    VkAttachmentDescription sceneOnly[3] = { colorAttachment, depthAttachment, hdrAttachment };
+    sceneOnly[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    sceneOnly[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    sceneOnly[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    sceneOnly[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    renderPassInfo.pAttachments = sceneOnly;
+    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &sceneOnlyRenderPass) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create scene-only render pass");
+
+    VkAttachmentDescription resume[3] = { colorAttachment, depthAttachment, hdrAttachment };
+    resume[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    resume[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    resume[2].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    resume[2].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    renderPassInfo.pAttachments = resume;
+    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &resumeRenderPass) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create resume render pass");
 
     // ── Create framebuffers (color + depth + HDR) ─────────────────────
     framebuffers.resize(imageViews.size());
@@ -378,6 +398,8 @@ void VulkanSwapchain::Cleanup()
     for (auto fb : framebuffers) vkDestroyFramebuffer(device, fb, nullptr);
     framebuffers.clear();
     if (renderPass) { vkDestroyRenderPass(device, renderPass, nullptr); renderPass = VK_NULL_HANDLE; }
+    if (sceneOnlyRenderPass) { vkDestroyRenderPass(device, sceneOnlyRenderPass, nullptr); sceneOnlyRenderPass = VK_NULL_HANDLE; }
+    if (resumeRenderPass) { vkDestroyRenderPass(device, resumeRenderPass, nullptr); resumeRenderPass = VK_NULL_HANDLE; }
     for (auto view : imageViews) vkDestroyImageView(device, view, nullptr);
     imageViews.clear();
     if (swapchain) { vkDestroySwapchainKHR(device, swapchain, nullptr); swapchain = VK_NULL_HANDLE; }

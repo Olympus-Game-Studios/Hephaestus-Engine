@@ -1,4 +1,8 @@
 #include "Assets/RecoveryStore.h"
+#include "Core/EditorContext.h"
+#include "Scene/Entity.h"
+#include "Scene/Scene.h"
+#include "Scene/SceneSerializer.h"
 
 #include <chrono>
 #include <filesystem>
@@ -205,6 +209,65 @@ bool TestPrune(const fs::path& tempRoot) {
     return ok;
 }
 
+std::string ReadText(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+bool HasEntityNamed(Scene& scene, const std::string& name) {
+    for (auto handle : scene.GetEntitiesWith<TagComponent>()) {
+        if (scene.GetRegistry().get<TagComponent>(handle).tag == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A snapshot of one scene must come back in that scene, never in the one that happens to be open.
+bool TestRestoreIntoOwnScene(const fs::path& base) {
+    bool ok = true;
+    const fs::path project = MakeTempProject(base);
+    const fs::path a = project / "assets" / "scenes" / "A.hpscene";
+    const fs::path b = project / "assets" / "scenes" / "B.hpscene";
+    {
+        Scene sceneA("A");
+        sceneA.CreateEntity("OnlyInA");
+        Scene sceneB("B");
+        sceneB.CreateEntity("OnlyInB");
+        std::string error;
+        ok &= Check(SceneSerializer(sceneA).Serialize(a, error) && SceneSerializer(sceneB).Serialize(b, error),
+                    "write the two scenes");
+    }
+    Scene edited("A");
+    edited.CreateEntity("OnlyInA");
+    edited.CreateEntity("RecoveredEdit");
+    SceneSerializer serializer(edited);
+    const std::string snapshot = serializer.SerializeToString();
+    const std::string bOnDisk = ReadText(b);
+
+    Hephaestus::EditorContext context;
+    ok &= Check(context.LoadScene(b.string()), "open B");
+    bool openedSource = false;
+    std::string error;
+    ok &= Check(context.RestoreSceneSnapshot(a.string(), snapshot, openedSource, error), "restore A's snapshot: " + error);
+    ok &= Check(openedSource && fs::path(context.GetScenePath()) == a, "the snapshot reopens its own scene, not B");
+    ok &= Check(context.GetActiveScene() && HasEntityNamed(*context.GetActiveScene(), "RecoveredEdit")
+                    && !HasEntityNamed(*context.GetActiveScene(), "OnlyInB"),
+                "the restored scene holds the snapshot");
+    ok &= Check(context.IsDirty(), "the restored scene is unsaved");
+    ok &= Check(ReadText(b) == bOnDisk, "B's file is untouched");
+
+    fs::remove(a);
+    ok &= Check(context.LoadScene(b.string()), "open B again");
+    ok &= Check(context.RestoreSceneSnapshot(a.string(), snapshot, openedSource, error) && !openedSource
+                    && context.GetScenePath().empty(),
+                "a snapshot whose scene file is gone goes into a new unsaved scene");
+    ok &= Check(ReadText(b) == bOnDisk, "B's file is still untouched");
+
+    fs::remove_all(project);
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -216,6 +279,7 @@ int main() {
     ok &= TestSnapshotRoundtripAndNoAssetWrite(tempRoot);
     ok &= TestUncleanDetectionAndCandidates(tempRoot);
     ok &= TestPrune(tempRoot);
+    ok &= TestRestoreIntoOwnScene(tempRoot);
 
     if (ok) {
         std::cout << "[PASS] RecoveryStoreTests\n";

@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -82,6 +83,10 @@ public:
                            const std::string& socketName,
                            CharacterSocket& outSocket,
                            std::string& outError);
+
+    /// Calls fn with the skinned meshes of a loaded character; false when it is not loaded.
+    static bool VisitSkinnedMeshes(const std::string& portableCharacterPath,
+                                   const std::function<void(const std::vector<SkinnedMeshPart>&)>& fn);
 
 private:
     static std::unordered_map<std::string, CharacterRuntimeData> s_cache;

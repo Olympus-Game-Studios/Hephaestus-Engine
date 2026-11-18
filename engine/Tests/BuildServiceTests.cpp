@@ -78,6 +78,15 @@ int main() {
     ok &= Check(!fs::exists(root / "output" / "BuildServiceFixture"),
                 "clean action removes the previous successful package");
 
+    const int callsBeforeDevelopment = builder->calls;
+    request.action = BuildAction::Package;
+    request.configuration = BuildConfiguration::Development;
+    request.enableRuntimeAutomation = true;
+    request.outputRoot = root / "development-automation";
+    service.execute(request);
+    ok &= Check(builder->calls == callsBeforeDevelopment + 1 && builder->lastAutomation,
+                "automation packaging builds its runtime once and does not rebuild the shared runtime");
+
     const int callsBeforeAutomation = builder->calls;
     request.action = BuildAction::Package;
     request.configuration = BuildConfiguration::Release;

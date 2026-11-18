@@ -4,9 +4,14 @@
 #include "EditorDockTitleBar.h"
 #include "EditorAssetServices.h"
 #include "EditorUndoCommand.h"
+#include "../../Assets/AssetIntake.h"
 #include "../../Assets/AssetPathPolicy.h"
+#include "../../Automation/PluginToolBridge.h"
+#include "AssetBrowserWidget.h"
 #include "../../Core/EditorContext.h"
+#include "../../Core/EngineLog.h"
 #include "../../Core/ProjectContext.h"
+#include "../MaterialEditor/MaterialNodeDefinitions.h"
 #include "../../Plugins/PluginSystem.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Scene.h"
@@ -19,6 +24,11 @@
 #include <QMenuBar>
 #include <QSettings>
 #include <QToolBar>
+#include <QToolButton>
+#include <QImage>
+#include <QPainter>
+#include <QSvgRenderer>
+#include "EditorTheme.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstring>
@@ -32,11 +42,62 @@ struct EditorPluginHost::AssetType { std::string owner, id, extension, name, ico
 struct EditorPluginHost::Importer { std::string owner, id, extensions, result; Plugins::ImportCallback callback=nullptr; void* userData=nullptr; };
 struct EditorPluginHost::ContextAction { std::string owner, location, command; };
 struct EditorPluginHost::Setting { std::string owner,id,name,description,defaultValue; Plugins::SettingScope scope; mutable std::string cache; };
+struct EditorPluginHost::HeaderButton { std::string owner, command; QString toolTip; QPointer<QToolButton> button; };
+
+namespace {
+/// A plugin logo drawn like the editor's own icons: cropped to its visible shape and filled with the secondary icon
+/// colour (logos are expected to be one-colour shapes on transparency).
+QPixmap HeaderLogo(const QString& path, int height) {
+    QImage image;
+    if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+        QSvgRenderer svg(path);
+        if (!svg.isValid()) {
+            return {};
+        }
+        QSize size = svg.defaultSize();
+        size.scale(512, 512, Qt::KeepAspectRatio);
+        image = QImage(size, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        svg.render(&painter);
+    } else {
+        image = QImage(path).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    }
+    if (image.isNull()) {
+        return {};
+    }
+    QRect shape;
+    for (int y = 0; y < image.height(); ++y) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            if (qAlpha(line[x]) > 8) {
+                shape |= QRect(x, y, 1, 1);
+            }
+        }
+    }
+    if (shape.isEmpty()) {
+        return {};
+    }
+    image = image.copy(shape);
+    {
+        QPainter painter(&image);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(image.rect(), Theme::Color(Theme::Token::TextSecondary));
+    }
+    // Wide logos (a word mark) keep their height and get up to twice the width of a square icon.
+    const QSize box(height * 2, height);
+    return QPixmap::fromImage(image.scaled(box, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+QString HeaderButtonHiddenKey(const std::string& owner, const std::string& command) {
+    return QString("plugins/%1/headerButtonHidden/%2").arg(QString::fromStdString(owner), QString::fromStdString(command));
+}
+}
 
 class EditorPluginHost::Context final : public Plugins::IPluginContext,
  public Plugins::ICommandService, public Plugins::IUIService, public Plugins::IAssetService,
  public Plugins::ISceneService, public Plugins::IUndoService, public Plugins::IProjectService,
- public Plugins::ISettingsService {
+ public Plugins::ISettingsService, public Plugins::IAutomationToolService, public Plugins::IMaterialNodeService {
 public:
  Context(EditorPluginHost& h, Plugins::PluginManifest m):host(h),manifest(std::move(m)){}
  ~Context() override { host.RemoveOwner(manifest.id); }
@@ -45,6 +106,11 @@ public:
  Plugins::IAssetService& Assets()override{return *this;} Plugins::ISceneService& Scene()override{return *this;}
  Plugins::IUndoService& Undo()override{return *this;} Plugins::IProjectService& Project()override{return *this;}
  Plugins::ISettingsService& Settings()override{return *this;}
+ Plugins::IAutomationToolService* AutomationTools()override{return host.toolBridge_?this:nullptr;}
+ Plugins::IMaterialNodeService* MaterialNodes()override{return this;}
+ bool RegisterNode(const Plugins::MaterialNodeDescriptor&d)override{return host.RegisterMaterialNode(manifest.id,d);}
+ bool RegisterTool(const Plugins::AutomationToolDescriptor&d)override{std::string e;return host.toolBridge_&&host.toolBridge_->Register(manifest.id,d,e);}
+ bool CompleteCall(std::uint64_t id,bool ok,const char*json)override{return host.toolBridge_&&host.toolBridge_->Complete(id,ok,json);}
  bool Register(const Plugins::CommandDescriptor&d)override{return host.RegisterCommand(manifest.id,d);}
  bool Execute(const char*id)override{if(auto*a=host.FindCommand(id?id:"")){a->trigger();return true;}return false;}
  bool RegisterPanel(const Plugins::PanelDescriptor&d)override{return host.RegisterPanel(manifest.id,d);}
@@ -52,8 +118,10 @@ public:
  bool RegisterToolbarAction(const Plugins::ToolbarActionDescriptor&d)override{return host.RegisterToolbar(manifest.id,d);}
  bool RegisterContextAction(const Plugins::ContextActionDescriptor&d)override{return host.RegisterContext(manifest.id,d);}
  bool ShowPanel(const char*id)override{return host.ShowPanel(id?id:"");}
+ bool RegisterHeaderButton(const Plugins::HeaderButtonDescriptor&d)override{return host.RegisterHeaderButton(manifest,d);}
  bool RegisterAssetType(const Plugins::AssetTypeDescriptor&d)override{return host.RegisterAssetType(manifest.id,d);}
  bool RegisterImporter(const Plugins::ImporterDescriptor&d)override{return host.RegisterImporter(manifest.id,d);}
+ bool ImportAssetPack(const Plugins::AssetPackImportRequest&r,Plugins::AssetPackImportResult&out)override{return host.ImportAssetPack(r,out);}
  bool HasScene()const override{auto*c=host.editorContext_();return c&&c->HasActiveScene();}
  std::uint64_t CreatePrimitive(Plugins::PrimitiveKind k,const char*n)override{return host.CreatePrimitive(k,n);}
  bool DeleteEntity(std::uint64_t id)override{auto*c=host.editorContext_();if(!c||!c->HasActiveScene()||id==0)return false;auto&e=c->GetActiveScene()->GetRegistry();auto h=static_cast<entt::entity>(id-1);if(!e.valid(h))return false;c->GetActiveScene()->DestroyEntity(Entity(h,c->GetActiveScene()));c->MarkDirty();host.sceneChanged_();return true;}
@@ -70,7 +138,7 @@ public:
 private: EditorPluginHost&host;Plugins::PluginManifest manifest;mutable std::string projectCache,pluginCache;
 };
 
-EditorPluginHost::EditorPluginHost(QMainWindow*w,Plugins::PluginSystem*s,std::function<EditorContext*()>e,ProjectContext*p,std::function<void()>c):window_(w),system_(s),editorContext_(std::move(e)),projectContext_(p),sceneChanged_(std::move(c)){
+EditorPluginHost::EditorPluginHost(QMainWindow*w,Plugins::PluginSystem*s,std::function<EditorContext*()>e,ProjectContext*p,std::function<void()>c,Automation::ToolRegistry*tools):window_(w),system_(s),editorContext_(std::move(e)),projectContext_(p),sceneChanged_(std::move(c)),toolBridge_(tools?std::make_shared<Automation::PluginToolBridge>(*tools):nullptr){
  auto&docs=EditorAssetServices::Instance().Documents();
  saveListener_=docs.AddSaveListener([this](const OpenDocumentInfo&doc,std::string*){if(doc.kind!=DocumentKind::Plugin)return false;for(auto&a:assetTypes_)if(QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()&&a->save){bool ok=a->save(doc.portablePath.c_str(),a->userData);if(ok)EditorAssetServices::Instance().Documents().SetDirty(doc.portablePath,false);return ok;}return false;});
  retargetListener_=docs.AddRetargetListener([this](const OpenDocumentInfo&before,const OpenDocumentInfo&after){if(before.kind!=DocumentKind::Plugin)return;for(auto&a:assetTypes_)if(QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(after.portablePath)).suffix().toLower()&&a->retarget){a->retarget(before.portablePath.c_str(),after.portablePath.c_str(),a->userData);return;}});
@@ -87,6 +155,130 @@ bool EditorPluginHost::ShowPanel(const std::string&id){auto*d=window_->findChild
 bool EditorPluginHost::RegisterAssetType(const std::string&o,const Plugins::AssetTypeDescriptor&d){if(!d.typeId||!d.extension||!d.displayName)return false;std::string ext=d.extension;if(!ext.starts_with('.'))ext.insert(ext.begin(),'.');std::ranges::transform(ext,ext.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});for(auto&a:assetTypes_)if(a->id==d.typeId||a->extension==ext)return false;auto a=std::make_unique<AssetType>();a->owner=o;a->id=d.typeId;a->extension=ext;a->name=d.displayName;a->icon=d.icon?d.icon:"";a->create=d.create;a->open=d.openEditor;a->dirty=d.isDirty;a->save=d.saveEditor;a->close=d.closeEditor;a->retarget=d.retargetEditor;a->userData=d.userData;assetTypes_.push_back(std::move(a));return true;}
 bool EditorPluginHost::RegisterImporter(const std::string&o,const Plugins::ImporterDescriptor&d){if(!d.id||!d.sourceExtensions||!d.resultAssetTypeId||!d.import)return false;auto x=std::make_unique<Importer>();x->owner=o;x->id=d.id;x->extensions=d.sourceExtensions;x->result=d.resultAssetTypeId;x->callback=d.import;x->userData=d.userData;importers_.push_back(std::move(x));return true;}
 bool EditorPluginHost::RegisterSetting(const std::string&o,const Plugins::SettingDescriptor&d){if(!d.id||!d.displayName)return false;auto s=std::make_unique<Setting>();s->owner=o;s->id=d.id;s->name=d.displayName;s->description=d.description?d.description:"";s->defaultValue=d.defaultValue?d.defaultValue:"";s->scope=d.scope;settings_.push_back(std::move(s));return true;}
+bool EditorPluginHost::RegisterHeaderButton(const Plugins::PluginManifest& manifest,
+                                            const Plugins::HeaderButtonDescriptor& d) {
+    if (d.structSize < sizeof(Plugins::HeaderButtonDescriptor) || !d.commandId || !FindCommand(d.commandId) ||
+        !d.iconPath) {
+        return false;
+    }
+    auto* strip = window_->findChild<QWidget*>(QStringLiteral("PluginHeaderButtons"));
+    if (!strip || !strip->layout()) {
+        return false;
+    }
+    std::filesystem::path icon = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(d.iconPath)));
+    if (icon.is_relative()) {
+        icon = manifest.root / icon;
+    }
+    auto entry = std::make_unique<HeaderButton>();
+    entry->owner = manifest.id;
+    entry->command = d.commandId;
+    entry->toolTip = QString::fromUtf8(d.toolTip ? d.toolTip : d.commandId);
+    auto* button = new QToolButton(strip);
+    button->setObjectName(QStringLiteral("PluginHeaderButton"));
+    const qreal ratio = button->devicePixelRatioF();
+    const int height = button->iconSize().height();
+    QPixmap logo = HeaderLogo(QString::fromStdU16String(icon.u16string()), qRound(height * ratio));
+    if (logo.isNull()) {
+        delete button;
+        return false;
+    }
+    logo.setDevicePixelRatio(ratio);
+    button->setIcon(QIcon(logo));
+    button->setIconSize(logo.deviceIndependentSize().toSize());
+    button->setToolTip(entry->toolTip);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setAutoRaise(true);
+    button->setContextMenuPolicy(Qt::CustomContextMenu);
+    const std::string owner = entry->owner;
+    const std::string command = entry->command;
+    QObject::connect(button, &QToolButton::clicked, button, [this, command] {
+        if (QAction* action = FindCommand(command)) {
+            action->trigger();
+        }
+    });
+    QObject::connect(button, &QWidget::customContextMenuRequested, button, [this, button, owner, command] {
+        QMenu menu(button);
+        menu.addAction(QObject::tr("Hide this icon"), [this, owner, command] { SetHeaderButtonShown(owner, command, false); });
+        menu.addSection(QObject::tr("Show it again from Edit > Plugins (right-click the plugin)"));
+        menu.exec(QCursor::pos());
+    });
+    strip->layout()->addWidget(button);
+    button->setVisible(IsHeaderButtonShown(owner, command));
+    entry->button = button;
+    headerButtons_.push_back(std::move(entry));
+    return true;
+}
+
+std::vector<std::pair<std::string, QString>> EditorPluginHost::HeaderButtons(const std::string& pluginId) const {
+    std::vector<std::pair<std::string, QString>> out;
+    for (const auto& entry : headerButtons_) {
+        if (entry->owner == pluginId) {
+            out.emplace_back(entry->command, entry->toolTip);
+        }
+    }
+    return out;
+}
+
+bool EditorPluginHost::IsHeaderButtonShown(const std::string& pluginId, const std::string& commandId) const {
+    return !QSettings("Hephaestus", "Editor").value(HeaderButtonHiddenKey(pluginId, commandId), false).toBool();
+}
+
+void EditorPluginHost::SetHeaderButtonShown(const std::string& pluginId, const std::string& commandId, bool shown) {
+    QSettings settings("Hephaestus", "Editor");
+    if (shown) {
+        settings.remove(HeaderButtonHiddenKey(pluginId, commandId));
+    } else {
+        settings.setValue(HeaderButtonHiddenKey(pluginId, commandId), true);
+    }
+    for (const auto& entry : headerButtons_) {
+        if (entry->owner == pluginId && entry->command == commandId && entry->button) {
+            entry->button->setVisible(shown);
+        }
+    }
+}
+
+bool EditorPluginHost::ImportAssetPack(const Plugins::AssetPackImportRequest& r, Plugins::AssetPackImportResult& out) {
+    out = Plugins::AssetPackImportResult{};
+    auto text = [](const char* value) { return std::string(value ? value : ""); };
+    auto copy = [](char* target, std::size_t size, const std::string& value) {
+        const std::size_t length = std::min(value.size(), size - 1);
+        std::memcpy(target, value.data(), length);
+        target[length] = '\0';
+    };
+    if (r.structSize < sizeof(Plugins::AssetPackImportRequest) || !r.sourcePath || !r.targetFolder) {
+        copy(out.message, sizeof(out.message), "Invalid asset pack import request.");
+        return false;
+    }
+    if (!projectContext_ || !projectContext_->HasProject()) {
+        copy(out.message, sizeof(out.message), "Open a project before importing assets.");
+        return false;
+    }
+    AssetIntakeRequest request;
+    request.source = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(r.sourcePath)));
+    request.projectRoot = projectContext_->GetProjectRootDir();
+    request.targetFolder = r.targetFolder;
+    request.credit = {text(r.title), text(r.source), text(r.sourceUrl), text(r.author), text(r.authorUrl),
+                      text(r.license), text(r.licenseUrl)};
+    AssetIntakeResult result;
+    std::string error;
+    const bool ok = AssetIntake::Import(request, result, error);
+    std::string message = error;
+    for (const std::string& warning : result.warnings) {
+        message += (message.empty() ? "" : "\n") + warning;
+    }
+    copy(out.message, sizeof(out.message), message);
+    copy(out.folder, sizeof(out.folder), result.folder);
+    out.prefabCount = static_cast<std::uint32_t>(result.prefabs.size());
+    out.materialCount = static_cast<std::uint32_t>(result.materials.size());
+    out.warningCount = static_cast<std::uint32_t>(result.warnings.size());
+    if (ok) {
+        if (auto* browser = window_->findChild<AssetBrowserWidget*>()) {
+            const std::string& shown = !result.prefabs.empty() ? result.prefabs.front() : result.materials.front();
+            browser->RevealAsset(QString::fromStdString(shown));
+        }
+    }
+    return ok;
+}
 void EditorPluginHost::PopulateContextMenu(const char*l,QMenu&m,const QString&){bool sep=false;for(auto&x:contextActions_)if(x->location==(l?l:""))if(auto*a=FindCommand(x->command)){if(!sep){m.addSeparator();sep=true;}m.addAction(a);}}
 void EditorPluginHost::PopulateAssetCreationMenu(QMenu&m,const QString&dir){for(auto&a:assetTypes_)if(a->create){auto*x=m.addAction(QString::fromStdString(a->name));QObject::connect(x,&QAction::triggered,&m,[p=a.get(),dir]{p->create(dir.toUtf8().constData(),p->userData);});}}
 void EditorPluginHost::PopulateImporterMenu(QMenu&m,const QString&dir){for(auto&i:importers_){auto*x=m.addAction(QString::fromStdString(i->id));QObject::connect(x,&QAction::triggered,&m,[p=i.get(),dir]{QString filter=QStringLiteral("Supported files (%1)").arg(QString::fromStdString(p->extensions).replace(';',' '));QString source=QFileDialog::getOpenFileName(nullptr,QObject::tr("Import with %1").arg(QString::fromStdString(p->id)),{},filter);if(!source.isEmpty())p->callback(source.toUtf8().constData(),dir.toUtf8().constData(),p->userData);});}}
@@ -95,7 +287,43 @@ QString EditorPluginHost::CustomAssetDisplayName(const QString&p)const{auto id=C
 QIcon EditorPluginHost::CustomAssetIcon(const QString&p)const{auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&!a->icon.empty()){auto*m=system_->FindManifest(a->owner);if(m)return QIcon(QString::fromStdString((m->root/a->icon).string()));}return{};}
 bool EditorPluginHost::OpenCustomAsset(const QString&p){auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&a->open){bool ok=a->open(p.toUtf8().constData(),a->userData);if(ok)EditorAssetServices::Instance().Documents().Register(DocumentKind::Plugin,p.toStdString(),a->dirty&&a->dirty(p.toUtf8().constData(),a->userData));return ok;}return false;}
 std::uint64_t EditorPluginHost::CreatePrimitive(Plugins::PrimitiveKind k,const char*n){auto*c=editorContext_();if(!c||!c->HasActiveScene())return 0;Entity e=c->GetActiveScene()->CreateEntity(n&&*n?n:"Plugin Entity");if(k==Plugins::PrimitiveKind::Cube||k==Plugins::PrimitiveKind::Sphere||k==Plugins::PrimitiveKind::Plane){auto&m=e.AddComponent<MeshRendererComponent>();m.meshAssetPath=k==Plugins::PrimitiveKind::Cube?"builtin://Cube":k==Plugins::PrimitiveKind::Sphere?"builtin://Sphere":"builtin://Plane";}else if(k==Plugins::PrimitiveKind::PointLight)e.AddComponent<LightComponent>();c->SelectEntity(static_cast<entt::entity>(e));c->MarkDirty();sceneChanged_();return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e))+1;}
-void EditorPluginHost::RemoveOwner(const std::string&o){auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
+bool EditorPluginHost::RegisterMaterialNode(const std::string& owner, const Plugins::MaterialNodeDescriptor& descriptor) {
+    if (descriptor.structSize < sizeof(Plugins::MaterialNodeDescriptor) || !descriptor.typeName ||
+        (descriptor.inputCount > 0 && !descriptor.inputs) || (descriptor.outputCount > 0 && !descriptor.outputs)) {
+        return false;
+    }
+    auto text = [](const char* value) { return std::string(value ? value : ""); };
+    auto pins = [&](const Plugins::MaterialNodePin* source, std::uint32_t count,
+                    std::vector<MaterialEditor::CustomPinDefinition>& out) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto type = static_cast<std::uint32_t>(source[i].type);
+            if (type < 1 || type > 4) {
+                return false;
+            }
+            out.push_back({text(source[i].name), static_cast<MaterialEditor::ValueType>(type - 1), text(source[i].glsl)});
+        }
+        return true;
+    };
+    MaterialEditor::CustomNodeDefinition definition;
+    definition.owner = owner;
+    definition.typeName = text(descriptor.typeName);
+    definition.displayName = text(descriptor.displayName);
+    definition.category = text(descriptor.category);
+    definition.tooltip = text(descriptor.tooltip);
+    definition.functions = text(descriptor.glslFunctions);
+    if (!pins(descriptor.inputs, descriptor.inputCount, definition.inputs) ||
+        !pins(descriptor.outputs, descriptor.outputCount, definition.outputs)) {
+        return false;
+    }
+    std::string error;
+    if (!MaterialEditor::RegisterCustomNode(std::move(definition), error)) {
+        EngineLog::Warn("Plugin " + owner + ": " + error);
+        return false;
+    }
+    return true;
+}
+
+void EditorPluginHost::RemoveOwner(const std::string&o){MaterialEditor::UnregisterCustomNodes(o);if(toolBridge_)toolBridge_->RemoveOwner(o);auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=headerButtons_.begin();i!=headerButtons_.end();)if((*i)->owner==o){delete (*i)->button.data();i=headerButtons_.erase(i);}else++i;for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
 
 } // namespace Hephaestus::QtEditor
 #endif

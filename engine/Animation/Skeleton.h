@@ -49,6 +49,9 @@ struct Skeleton {
     int BoneCount() const { return static_cast<int>(bones.size()); }
 
     const SkeletonBone* FindBone(const std::string& name) const;
+    /// Index of the bone whose name, after any "prefix:" (such as Mixamo's "mixamorig:"), matches `baseName`
+    /// ignoring case; -1 when there is none.
+    int FindBoneByBaseName(const std::string& baseName) const;
 };
 
 class SkeletonBuilder {

@@ -13,6 +13,8 @@
 #include <QComboBox>
 
 #include <memory>
+#include <string>
+#include <unordered_set>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -81,6 +83,8 @@ private slots:
     void onHierarchyResetTransform(const std::string& nodeId);
     void onHierarchyFocusInViewport(const std::string& nodeId);
     void onHierarchyReparent(const std::string& nodeId, const std::string& newParentId);
+    void onHierarchyVisibilityToggled(const std::string& nodeId, bool isolate);
+    void onHierarchyShowAll();
 
     // Inspector callbacks
     void onInspectorNameChanged(const std::string& nodeId, const std::string& newName);
@@ -116,6 +120,7 @@ private:
 
     // Hierarchy helpers
     void rebuildHierarchy();
+    void applyEditorVisibility();
     void presentAddComponentPopup(const std::string& nodeId, const QPoint& globalPos);
 
     // Lifecycle
@@ -134,6 +139,9 @@ private:
 
     // Document and scene
     std::unique_ptr<Scene> m_previewScene;
+    // Editor-only: which nodes the preview hides, by node id so it survives preview rebuilds; never saved.
+    std::unordered_set<std::string> m_hiddenNodes;
+    std::string m_isolatedNode;
     std::unique_ptr<PrefabDocument> m_document;
     PrefabSavedCallback m_savedCallback;
 

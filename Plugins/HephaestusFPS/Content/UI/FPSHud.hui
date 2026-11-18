@@ -12,6 +12,17 @@
     },
     "children": [
       {
+        "type": "Image",
+        "id": "GasOverlay",
+        "properties": {
+          "anchor": "Stretch",
+          "imageScaleMode": "Stretch",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 0
+        }
+      },
+      {
         "type": "Panel",
         "id": "DamageFlash",
         "properties": {
@@ -45,16 +56,58 @@
       },
       {
         "type": "Text",
+        "id": "HitMarker",
+        "properties": {
+          "text": "X",
+          "textAlignment": "Center",
+          "anchor": "Center",
+          "size": [40, 40],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 26,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.85],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "KillMarker",
+        "properties": {
+          "text": "X",
+          "textAlignment": "Center",
+          "anchor": "Center",
+          "size": [40, 40],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 30,
+          "fontBold": true,
+          "textColor": [0.95, 0.2, 0.16, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.85],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
         "id": "HealthText",
         "properties": {
           "text": "100 / 100",
           "anchor": "BottomLeft",
-          "size": [240, 36],
-          "margin": [28, 0, 0, 28],
+          "size": [300, 44],
+          "margin": [64, 0, 0, 48],
           "zOrder": 2
         },
         "style": {
-          "fontSize": 18,
+          "fontSize": 30,
           "fontBold": true,
           "textColor": [0.95, 0.38, 0.34, 1.0],
           "textShadow": true,
@@ -68,15 +121,36 @@
         "properties": {
           "text": "12 / 48",
           "anchor": "BottomRight",
-          "size": [210, 36],
+          "size": [260, 48],
           "textAlignment": "Right",
-          "margin": [0, 0, 28, 28],
+          "margin": [0, 0, 64, 48],
+          "zOrder": 2
+        },
+        "style": {
+          "fontSize": 36,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.85],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "GrenadeText",
+        "properties": {
+          "text": "Frag 2   Smoke 2",
+          "anchor": "BottomRight",
+          "size": [320, 28],
+          "textAlignment": "Right",
+          "margin": [0, 0, 64, 134],
+          "visible": false,
           "zOrder": 2
         },
         "style": {
           "fontSize": 18,
           "fontBold": true,
-          "textColor": [1.0, 1.0, 1.0, 1.0],
+          "textColor": [1.0, 1.0, 1.0, 0.85],
           "textShadow": true,
           "textShadowColor": [0.0, 0.0, 0.0, 0.85],
           "textShadowOffset": [1, 1]
@@ -88,13 +162,13 @@
         "properties": {
           "text": "Pistol",
           "anchor": "BottomRight",
-          "size": [210, 24],
+          "size": [260, 30],
           "textAlignment": "Right",
-          "margin": [0, 0, 28, 70],
+          "margin": [0, 0, 64, 100],
           "zOrder": 2
         },
         "style": {
-          "fontSize": 14,
+          "fontSize": 20,
           "textColor": [0.88, 0.88, 0.88, 1.0],
           "textShadow": true,
           "textShadowColor": [0.0, 0.0, 0.0, 0.85],
@@ -107,18 +181,297 @@
         "properties": {
           "text": "",
           "anchor": "BottomCenter",
-          "size": [560, 32],
+          "size": [720, 40],
           "textAlignment": "Center",
-          "margin": [0, 0, 0, 96],
+          "margin": [0, 0, 0, 120],
           "zOrder": 2
         },
         "style": {
-          "fontSize": 16,
+          "fontSize": 22,
           "fontBold": true,
           "textColor": [1.0, 0.92, 0.4, 1.0],
           "textShadow": true,
           "textShadowColor": [0.0, 0.0, 0.0, 0.9],
           "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "PickupText",
+        "properties": {
+          "text": "",
+          "visible": false,
+          "anchor": "BottomCenter",
+          "size": [720, 40],
+          "textAlignment": "Center",
+          "margin": [0, 0, 0, 168],
+          "zOrder": 2
+        },
+        "style": {
+          "fontSize": 26,
+          "fontBold": true,
+          "textColor": [1.0, 0.92, 0.4, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "DevText",
+        "properties": {
+          "text": "DEV",
+          "visible": false,
+          "anchor": "TopLeft",
+          "position": [24, 18],
+          "size": [120, 30],
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 18,
+          "fontBold": true,
+          "textColor": [1.0, 0.45, 0.1, 0.95],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Image",
+        "id": "DamageArrow1",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "DamageArrow2",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "DamageArrow3",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "DamageArrow4",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning1",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow1",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning2",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow2",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning3",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow3",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning4",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow4",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Panel",
+        "id": "DeathFade",
+        "properties": {
+          "anchor": "Stretch",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 1
+        },
+        "style": {
+          "backgroundColor": [0.0, 0.0, 0.0, 0.55]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "Banner",
+        "properties": {
+          "text": "",
+          "textAlignment": "Center",
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "position": [0, -180],
+          "size": [1200, 76],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 5
+        },
+        "style": {
+          "fontSize": 56,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [2, 2]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "BannerSub",
+        "properties": {
+          "text": "",
+          "textAlignment": "Center",
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "position": [0, -112],
+          "size": [1200, 40],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 5
+        },
+        "style": {
+          "fontSize": 26,
+          "fontBold": false,
+          "textColor": [0.92, 0.92, 0.92, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [2, 2]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "WaveText",
+        "properties": {
+          "text": "",
+          "textAlignment": "Center",
+          "anchor": "TopCenter",
+          "position": [0, 24],
+          "size": [700, 40],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 28,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 0.95],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [2, 2]
         }
       }
     ]

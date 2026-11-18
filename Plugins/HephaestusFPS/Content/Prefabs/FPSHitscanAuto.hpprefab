@@ -49,15 +49,15 @@
       "exposed": []
     },
     { "id": "body", "name": "FPSHitscanAuto_Part_Body", "parentId": "root", "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [0.2,0.1,0.24] }, "components": [
-      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "viewModel": true, "meshSource": "builtin://cube", "meshImported": false } },
       { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
     ], "exposed": [] },
     { "id": "barrel", "name": "FPSHitscanAuto_Part_Barrel", "parentId": "root", "transform": { "position": [0.25,0,0], "rotation": [0,0,0], "scale": [0.35,0.05,0.05] }, "components": [
-      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "viewModel": true, "meshSource": "builtin://cube", "meshImported": false } },
       { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
     ], "exposed": [] },
     { "id": "grip", "name": "FPSHitscanAuto_Part_Grip", "parentId": "root", "transform": { "position": [0,-0.13,0.05], "rotation": [0,0,0], "scale": [0.08,0.18,0.08] }, "components": [
-      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "viewModel": true, "meshSource": "builtin://cube", "meshImported": false } },
       { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
     ], "exposed": [] }
   ]

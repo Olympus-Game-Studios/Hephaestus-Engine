@@ -327,6 +327,17 @@ bool CharacterRuntime::BindEntity(Entity entity,
     return true;
 }
 
+bool CharacterRuntime::VisitSkinnedMeshes(const std::string& portableCharacterPath,
+                                          const std::function<void(const std::vector<SkinnedMeshPart>&)>& fn) {
+    std::lock_guard<std::mutex> lock(g_cacheMutex);
+    auto it = s_cache.find(portableCharacterPath);
+    if (it == s_cache.end()) {
+        return false;
+    }
+    fn(it->second.imported.meshes);
+    return true;
+}
+
 bool CharacterRuntime::FindSocket(const std::string& portableCharacterPath,
                                   const std::string& socketName,
                                   CharacterSocket& outSocket,

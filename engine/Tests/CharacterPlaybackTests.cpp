@@ -359,6 +359,110 @@ bool TestCrossFadeMidpoint() {
     return ok;
 }
 
+// A Mixamo-style chain: Hips with a Spine > Spine1 branch and a LeftUpLeg branch.
+bool MakeBodySkeleton(Skeleton& skeleton, std::string& error) {
+    skeleton = {};
+    const char* names[] = {"mixamorig:Hips", "mixamorig:Spine", "mixamorig:Spine1", "mixamorig:LeftUpLeg"};
+    const int parents[] = {-1, 0, 1, 0};
+    for (int i = 0; i < 4; ++i) {
+        SkeletonBone bone;
+        bone.name = names[i];
+        bone.parentEval = parents[i];
+        bone.sourceJoint = i;
+        bone.restRotation = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        bone.restScale = Vec3(1.0f, 1.0f, 1.0f);
+        skeleton.bones.push_back(bone);
+    }
+    return SkeletonBuilder::Finalize(skeleton, error);
+}
+
+// Every bone of `skeleton` translated to `offset` for the whole clip.
+AnimationClip MakeOffsetClip(const Skeleton& skeleton, const std::string& id, Vec3 offset, float duration) {
+    AnimationClip clip;
+    clip.name = clip.id = clip.sourceClip = id;
+    clip.skeletonSignature = skeleton.signature;
+    clip.duration = clip.endTime = duration;
+    clip.loop = true;
+    for (const SkeletonBone& bone : skeleton.bones) {
+        AnimationChannel channel;
+        channel.evalBone = bone.evalIndex;
+        channel.path = AnimationPath::Translation;
+        channel.times = {0.0f, duration};
+        channel.vectors = {offset, offset};
+        clip.channels.push_back(channel);
+    }
+    return clip;
+}
+
+bool TestLayerMaskAndBlend() {
+    bool ok = true;
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeBodySkeleton(skeleton, error), "body skeleton");
+    const int hips = skeleton.FindBoneByBaseName("hips");
+    const int spine = skeleton.FindBoneByBaseName("Spine");
+    const int spine1 = skeleton.FindBoneByBaseName("Spine1");
+    const int leg = skeleton.FindBoneByBaseName("LeftUpLeg");
+    ok &= Check(hips >= 0 && spine >= 0 && spine1 >= 0 && leg >= 0 && skeleton.FindBoneByBaseName("Head") < 0,
+                "bones are found by their name without the mixamorig: prefix, ignoring case");
+
+    CharacterAnimationLayer lower;
+    lower.name = "Legs";
+    lower.maskRoot = "Hips";
+    lower.maskExclude = "Spine";
+    lower.excludeBlend = 0.5f;
+    std::vector<float> weights;
+    ok &= Check(CharacterAnimationSystem::BuildLayerMask(skeleton, lower, weights, error) &&
+                    AlmostEqual(weights[hips], 1.0f) && AlmostEqual(weights[leg], 1.0f) &&
+                    AlmostEqual(weights[spine], 0.5f) && AlmostEqual(weights[spine1], 0.25f),
+                "a lower-body mask covers the hips and legs and fades out up the spine");
+    CharacterAnimationLayer upper;
+    upper.maskRoot = "Spine";
+    ok &= Check(CharacterAnimationSystem::BuildLayerMask(skeleton, upper, weights, error) &&
+                    AlmostEqual(weights[hips], 0.0f) && AlmostEqual(weights[leg], 0.0f) &&
+                    AlmostEqual(weights[spine], 1.0f) && AlmostEqual(weights[spine1], 1.0f),
+                "an upper-body mask covers the spine and everything above it");
+    upper.maskRoot = "Tail";
+    ok &= Check(!CharacterAnimationSystem::BuildLayerMask(skeleton, upper, weights, error),
+                "a mask bone that does not exist is refused");
+
+    CharacterComponent character;
+    ok &= Check(CharacterAnimationSystem::BindRuntime(
+                    character, skeleton,
+                    {MakeOffsetClip(skeleton, "Aim", Vec3(0.0f, 0.0f, 0.0f), 1.0f),
+                     MakeOffsetClip(skeleton, "StrafeLeft", Vec3(-1.0f, 0.0f, 0.0f), 1.0f),
+                     MakeOffsetClip(skeleton, "StrafeRight", Vec3(1.0f, 0.0f, 2.0f), 1.0f)},
+                    error),
+                "bind body");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Aim", error), "play Aim");
+    lower.clips = {{"StrafeRight", 1.0f, false}};
+    ok &= Check(CharacterAnimationSystem::SetLayer(character, lower, error), "set the legs layer");
+    CharacterAnimationSystem::TickEntity(character, 0.1f);
+    ok &= Check(AlmostEqual(character.localPoses[leg].translation.x, 1.0f) &&
+                    AlmostEqual(character.localPoses[spine].translation.x, 0.5f) &&
+                    AlmostEqual(character.localPoses[spine1].translation.x, 0.25f),
+                "the layer drives the legs fully and the spine partly over the main clip");
+
+    lower.clips = {{"StrafeLeft", 1.0f, false}, {"StrafeRight", 3.0f, false}};
+    ok &= Check(CharacterAnimationSystem::SetLayer(character, lower, error), "reweight the legs layer");
+    CharacterAnimationSystem::TickEntity(character, 0.1f);
+    ok &= Check(AlmostEqual(character.localPoses[leg].translation.x, 0.5f) &&
+                    AlmostEqual(character.localPoses[leg].translation.z, 1.5f),
+                "a layer mixes its clips by weight");
+
+    lower.clips = {{"Missing", 1.0f, false}};
+    ok &= Check(!CharacterAnimationSystem::SetLayer(character, lower, error), "a layer with a missing clip is refused");
+
+    ok &= Check(CharacterAnimationSystem::ClearLayer(character, "Legs", 0.2f), "clear the legs layer");
+    CharacterAnimationSystem::TickEntity(character, 0.1f);
+    ok &= Check(character.localPoses[leg].translation.z > 0.1f && character.localPoses[leg].translation.z < 1.4f,
+                "a cleared layer fades out");
+    CharacterAnimationSystem::TickEntity(character, 0.2f);
+    ok &= Check(character.layers.empty() && AlmostEqual(character.localPoses[leg].translation.z, 0.0f),
+                "and is removed once it has faded");
+    return ok;
+}
+
 bool TestSceneSerializeCharacter() {
     bool ok = true;
     Scene scene("CharacterSerialize");
@@ -549,6 +653,7 @@ int main() {
     ok &= TestSameFramePlayAndLoopStop();
     ok &= TestIncompatibleClipRefused();
     ok &= TestCrossFadeMidpoint();
+    ok &= TestLayerMaskAndBlend();
     ok &= TestSceneSerializeCharacter();
     ok &= TestRepeatedPlayDoesNotRestart();
     ok &= TestRepeatedCrossFadeDoesNotRestart();

@@ -402,17 +402,91 @@ bool QtEditorEngine::AttachToViewport(QtViewportWindow* viewport)
         return false;
     }
     
-    // Connect viewport signals
-    connect(viewport, &QtViewportWindow::viewportResized, this, &QtEditorEngine::OnViewportResized);
-    viewport->SetInputEventCallback([this](const InputEvent& event) {
-        OnViewportInput(event);
-    });
+    m_editorViewport = viewport;
+    connectViewport(viewport);
     
     m_state = EngineState::Running;
     emit engineInitialized(true);
     
     std::cout << "[QtEditorEngine] Attached to viewport, ready to render\n";
     return true;
+}
+
+void QtEditorEngine::connectViewport(QtViewportWindow* window)
+{
+    connect(window, &QtViewportWindow::viewportResized, this, &QtEditorEngine::OnViewportResized,
+            Qt::UniqueConnection);
+    window->SetInputEventCallback([this, window](const InputEvent& event) {
+        OnViewportInput(event);
+        // In a Play window there is no Qt overlay over the game, so the game UI gets the mouse from here.
+        if (window != m_editorViewport && IsRuntimeUICursorMode()) {
+            const float dpr = static_cast<float>(window->devicePixelRatio());
+            switch (event.type) {
+            case InputEvent::Type::MousePress:
+                ForwardOverlayMouseEvent(0, event.x * dpr, event.y * dpr, event.button);
+                break;
+            case InputEvent::Type::MouseRelease:
+                ForwardOverlayMouseEvent(1, event.x * dpr, event.y * dpr, event.button);
+                break;
+            case InputEvent::Type::MouseMove:
+                ForwardOverlayMouseEvent(2, event.x * dpr, event.y * dpr, event.button);
+                break;
+            default:
+                break;
+            }
+        }
+    });
+}
+
+void QtEditorEngine::PresentTo(QtViewportWindow* window)
+{
+    m_pendingPresentTarget = window;
+    m_presentPending = true;
+}
+
+void QtEditorEngine::applyPresentationTarget()
+{
+    QtViewportWindow* target = m_pendingPresentTarget ? m_pendingPresentTarget : m_editorViewport;
+    if (!target || target == m_viewport) {
+        m_presentPending = false;
+        emit presentationTargetChanged(m_viewport);
+        return;
+    }
+    if (!target->IsReadyForRendering()) {
+        return;
+    }
+    m_presentPending = false;
+    vkDeviceWaitIdle(m_device->device);
+
+    QtViewportWindow* previous = m_viewport;
+    if (previous) {
+        if (previous->IsCursorCaptured()) {
+            previous->ReleaseCursor();
+        }
+        previous->SetGameOwnsKeyboard(false);
+        previous->SetInputEventCallback({});
+        disconnect(previous, &QtViewportWindow::viewportResized, this, &QtEditorEngine::OnViewportResized);
+    }
+
+    // The swapchain must go before the surface it was made from.
+    m_swapchain->Cleanup();
+    NativeSurface surface = target->GetNativeSurface();
+    if (!m_device->AttachToSurface(surface)) {
+        std::cerr << "[QtEditorEngine] Could not present to the new window; staying in the previous one\n";
+        target = previous;
+        surface = previous->GetNativeSurface();
+        m_device->AttachToSurface(surface);
+    }
+    m_currentSurface = surface;
+    m_swapchain->surface = m_device->surface;
+    m_swapchain->RecreateFromNativeSurface(surface.width, surface.height);
+    m_frameRenderer->OnResize(surface.width, surface.height);
+    m_swapchainNeedsRecreation = false;
+    m_viewport = target;
+    connectViewport(target);
+    std::cout << "[QtEditorEngine] Presenting to " << (target == m_editorViewport ? "the editor viewport" : "a Play window")
+              << " (" << surface.width << "x" << surface.height << ")\n";
+    emit presentationTargetChanged(target);
 }
 
 bool QtEditorEngine::createSwapchain()
@@ -1420,7 +1494,7 @@ void QtEditorEngine::selectEntitiesInViewportRect(
     std::unordered_set<entt::entity> seen;
     auto meshView = scene->GetRegistry().view<TransformComponent, MeshRendererComponent>();
     for (entt::entity handle : meshView) {
-        if (m_editorContext.IsEditorHidden(handle) ||
+        if (!m_editorContext.IsEditorEntityShown(handle) ||
             m_editorContext.IsEditorLocked(handle)) continue;
         Entity entity(handle, scene);
         const auto& renderer = meshView.get<MeshRendererComponent>(handle);
@@ -1673,7 +1747,7 @@ void QtEditorEngine::FocusAll()
     AABB combined;
     auto view = scene->GetRegistry().view<TransformComponent, MeshRendererComponent>();
     for (entt::entity handle : view) {
-        if (m_editorContext.IsEditorHidden(handle)) continue;
+        if (!m_editorContext.IsEditorEntityShown(handle)) continue;
         Entity entity(handle, scene);
         const auto& renderer = view.get<MeshRendererComponent>(handle);
         const AABB bounds = SceneAuthoring::TransformBounds(
@@ -1808,11 +1882,18 @@ void QtEditorEngine::onTick()
         return;
     }
     
-    // Calculate delta time
-    float currentTime = m_frameTimer.elapsed() / 1000.0f;
+    // Calculate delta time; the renderer's paced interval (when frames are shown) when it has one.
+    float currentTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
     float dt = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
+    if (m_frameRenderer && m_frameRenderer->PacedFrameSeconds() > 0.0) {
+        dt = static_cast<float>(m_frameRenderer->PacedFrameSeconds());
+    }
     
+    if (m_presentPending) {
+        applyPresentationTarget();
+    }
+
     // Handle pending swapchain recreation
     if (m_swapchainNeedsRecreation) {
         if (m_frameRenderer && m_frameRenderer->HasDeviceLost()) {
@@ -1843,6 +1924,9 @@ void QtEditorEngine::onTick()
     const bool isPlaying = m_playModeManager.IsPlaying();
     const bool isPaused  = m_playModeManager.IsPaused();
     const bool isPlayOrPause = !m_playModeManager.IsEditor();
+    if (m_viewport) {
+        m_viewport->SetGameOwnsKeyboard(isPlaying);
+    }
 
     if (isPlaying && m_playModeManager.ShouldAdvanceRealtime()) {
         populateGameplayInput();
@@ -1953,6 +2037,39 @@ static void AppendProbeVolumeDebugDraw(Scene& scene, std::vector<EditorDebugLine
     }
 }
 
+// A short, faint frustum in front of each camera that shows its editor mesh, at a 16:9 aspect.
+static void AppendCameraFrustumDebugDraw(Scene& scene, std::vector<EditorDebugLine>& lines)
+{
+    constexpr float kDepth = 1.2f;
+    constexpr float kAspect = 16.0f / 9.0f;
+    const Vec3 color(0.45f, 0.5f, 0.6f);
+    auto view = scene.GetRegistry().view<TransformComponent, CameraComponent>();
+    for (entt::entity handle : view) {
+        const CameraComponent& camera = view.get<CameraComponent>(handle);
+        Hephaestus::ActiveCameraView cameraView;
+        if (!camera.showEditorMesh || !Hephaestus::TryMakeCameraView(scene, Entity(handle, &scene), cameraView)) {
+            continue;
+        }
+        const Mat4 frame = Hephaestus::MakeCameraViewFrame(cameraView.position, cameraView.yawRadians,
+                                                           cameraView.pitchRadians, cameraView.rollRadians);
+        const Vec3 forward(frame.m[0], frame.m[1], frame.m[2]);
+        const Vec3 up(frame.m[4], frame.m[5], frame.m[6]);
+        const Vec3 right(frame.m[8], frame.m[9], frame.m[10]);
+        const float halfHeight = std::tan(camera.fov * 0.5f * 3.14159265f / 180.0f) * kDepth;
+        const float halfWidth = halfHeight * kAspect;
+        const Vec3 center = vadd(cameraView.position, vscale(forward, kDepth));
+        Vec3 corners[4];
+        for (int i = 0; i < 4; ++i) {
+            corners[i] = vadd(center, vadd(vscale(right, (i == 1 || i == 2) ? halfWidth : -halfWidth),
+                                           vscale(up, i >= 2 ? halfHeight : -halfHeight)));
+        }
+        for (int i = 0; i < 4; ++i) {
+            lines.push_back({cameraView.position, corners[i], color});
+            lines.push_back({corners[i], corners[(i + 1) % 4], color});
+        }
+    }
+}
+
 static void AppendMeshColliderBoundsDebugDraw(Scene& scene, std::vector<EditorDebugLine>& lines)
 {
     auto view = scene.GetRegistry().view<MeshColliderComponent, MeshRendererComponent>();
@@ -1996,7 +2113,7 @@ void QtEditorEngine::renderFrame()
     }
     
     // Calculate delta time for this frame
-    float currentTime = m_frameTimer.elapsed() / 1000.0f;
+    float currentTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
     float deltaTime = currentTime - m_lastFrameTime;
     
     // Sync EditorContext viewport settings to FrameRenderConfig
@@ -2035,15 +2152,12 @@ void QtEditorEngine::renderFrame()
             m_renderConfig.selectedEntities.push_back(static_cast<uint32_t>(e));
         }
     }
-    m_renderConfig.editorHiddenEntities.assign(
-        m_editorContext.GetEditorHiddenIds().begin(),
-        m_editorContext.GetEditorHiddenIds().end());
+    // Hiding and isolation follow the hierarchy; the renderer gets every entity they leave out.
+    m_renderConfig.editorHiddenEntities = m_editorContext.EditorHiddenIdsForRender();
     m_renderConfig.editorLockedEntities.assign(
         m_editorContext.GetEditorLockedIds().begin(),
         m_editorContext.GetEditorLockedIds().end());
-    m_renderConfig.editorIsolatedEntities.assign(
-        m_editorContext.GetIsolatedIds().begin(),
-        m_editorContext.GetIsolatedIds().end());
+    m_renderConfig.editorIsolatedEntities.clear();
     
     // Sync gizmo settings
     m_renderConfig.gizmoMode = static_cast<int>(m_editorContext.GetGizmoMode());
@@ -2054,6 +2168,7 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.debugPoints = m_debugPoints;
     AppendProbeVolumeDebugDraw(*scene, m_renderConfig.debugLines, m_renderConfig.debugPoints);
     AppendMeshColliderBoundsDebugDraw(*scene, m_renderConfig.debugLines);
+    AppendCameraFrustumDebugDraw(*scene, m_renderConfig.debugLines);
     // Set snap value based on current gizmo mode
     switch (m_editorContext.GetGizmoMode()) {
         case Hephaestus::GizmoMode::Translate:
@@ -2148,6 +2263,11 @@ void QtEditorEngine::renderFrame()
         }
     }
     
+    // A Play window has no Qt overlay, so the game UI is drawn by the renderer, as in a packaged game.
+    if (IsPresentingToPlayWindow() && !m_playModeManager.IsEditor()) {
+        m_frameRenderer->SubmitHUICommands(GetRuntimeUIDrawCommands());
+    }
+
     // Render frame using shared renderer
     bool success = m_frameRenderer->RenderFrame(
         m_editorContext.GetActiveScene(), 
@@ -2227,6 +2347,33 @@ void QtEditorEngine::createBuiltinMeshes()
     Hephaestus::AddBuiltinMeshes(*m_frameRenderer);
     m_builtinMeshesCreated = true;
     std::cout << "[QtEditorEngine] Builtin meshes created\n";
+}
+
+// The renderer draws this mesh at every camera in the editor (EngineFrameRenderer EditorCameraMeshes).
+void QtEditorEngine::loadEditorCameraMesh(const std::filesystem::path& projectRoot)
+{
+    constexpr const char* kKey = ".engine/meshes/Camera.glb";
+    if (!m_frameRenderer || m_frameRenderer->GetMeshHandle(kKey) != SIZE_MAX) {
+        return;
+    }
+    namespace fs = std::filesystem;
+    const fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
+    for (const fs::path& path : {projectRoot / kKey, exeDir / kKey, exeDir / "assets" / "meshes" / "Camera.glb"}) {
+        std::error_code ec;
+        if (projectRoot.empty() && path.is_relative()) continue;
+        if (!fs::exists(path, ec)) continue;
+        MeshData data;
+        std::string error;
+        if (!ModelImporter::LoadModel(path, data, error)) {
+            std::cerr << "[QtEditorEngine] Could not load the editor camera mesh " << path << ": " << error << "\n";
+            continue;
+        }
+        const size_t handle = uploadMeshToGPU("Camera", data, path, true);
+        if (handle != MeshRendererComponent::InvalidMesh) {
+            m_frameRenderer->AddMeshAlias(kKey, handle);
+        }
+        return;
+    }
 }
 
 size_t QtEditorEngine::uploadMeshToGPU(const std::string& name, const MeshData& data,
@@ -2359,6 +2506,126 @@ std::string QtEditorEngine::normalizeAssetPath(const std::string& assetPath) con
     return normalized;
 }
 
+namespace {
+void syncMaterialSlots(MeshRendererComponent& renderer, int subCount)
+{
+    const int requiredSlots = std::max(subCount, 1);
+    if (static_cast<int>(renderer.appliedMaterialPaths.size()) < requiredSlots) {
+        renderer.appliedMaterialPaths.resize(static_cast<size_t>(requiredSlots), "");
+    }
+    if (static_cast<int>(renderer.materialIndices.size()) < requiredSlots) {
+        renderer.materialIndices.resize(static_cast<size_t>(requiredSlots), -1);
+    }
+}
+} // namespace
+
+void QtEditorEngine::loadRendererMesh(MeshRendererComponent& renderer)
+{
+    namespace fs = std::filesystem;
+    if (renderer.meshAssetPath.empty()) {
+        return;
+    }
+
+    // If the entity already has a valid handle that still lives in the
+    // library, keep it.  This covers meshes loaded from a path that
+    // differs from the stored meshAssetPath (e.g. engine default meshes
+    // loaded from the build output while the asset path is stored as a
+    // relative string).
+    if (renderer.meshHandle != MeshRendererComponent::InvalidMesh) {
+        MeshGPU* existing = m_frameRenderer->GetMesh(renderer.meshHandle);
+        if (existing) {
+            int subCount = existing->submeshes.empty()
+                ? 1 : static_cast<int>(existing->submeshes.size());
+            syncMaterialSlots(renderer, subCount);
+            std::cout << "[QtEditorEngine]   -> Keeping existing handle "
+                      << renderer.meshHandle << "\n";
+            return;
+        }
+    }
+
+    std::string lookupKey = normalizeAssetPath(renderer.meshAssetPath);
+    if (!lookupKey.empty() && lookupKey != renderer.meshAssetPath &&
+        lookupKey.rfind("builtin://", 0) != 0) {
+        renderer.meshAssetPath = lookupKey;
+    }
+
+    // Check if mesh already in library
+    size_t existingHandle = m_frameRenderer->GetMeshHandle(lookupKey);
+    if (existingHandle != SIZE_MAX) {
+        MeshGPU* mesh = m_frameRenderer->GetMesh(existingHandle);
+        if (mesh) {
+            int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
+            renderer.SetMesh(existingHandle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+            syncMaterialSlots(renderer, subCount);
+            std::cout << "[QtEditorEngine]   -> Found in library: handle " << existingHandle << "\n";
+            return;
+        }
+    }
+
+    // Handle builtin meshes
+    if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
+        size_t handle = m_frameRenderer->GetMeshHandle(renderer.meshAssetPath);
+        if (handle != SIZE_MAX) {
+            MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
+            if (mesh) {
+                int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
+                renderer.SetMesh(handle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+                syncMaterialSlots(renderer, subCount);
+                std::cout << "[QtEditorEngine]   -> Builtin mesh: handle " << handle << "\n";
+            }
+        } else {
+            std::cerr << "[QtEditorEngine]   -> Unknown builtin: " << renderer.meshAssetPath << "\n";
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+        }
+        return;
+    }
+
+    // Try to load mesh from file using the robust resolver
+    fs::path meshPath = m_meshFileResolver ? m_meshFileResolver(renderer.meshAssetPath) : fs::path{};
+
+    // Normalize
+    if (!meshPath.empty() && fs::exists(meshPath)) {
+        meshPath = fs::weakly_canonical(meshPath);
+    }
+
+    std::cout << "[QtEditorEngine]   -> Resolved path: " << meshPath << "\n";
+
+    if (meshPath.empty() || !fs::exists(meshPath)) {
+        std::cerr << "[QtEditorEngine]   -> File not found for '"
+                  << renderer.meshAssetPath << "' (tried project root, asset root, "
+                  << ".engine/meshes, and filename search)\n";
+        renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+        return;
+    }
+
+    // Load mesh
+    MeshData meshData;
+    std::string loadError;
+    if (!ModelImporter::LoadModel(meshPath, meshData, loadError)) {
+        std::cerr << "[QtEditorEngine]   -> Load failed: " << loadError << "\n";
+        renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+        return;
+    }
+
+    // Upload to GPU
+    std::string meshName = meshPath.stem().string();
+    size_t handle = uploadMeshToGPU(meshName, meshData, meshPath, true);
+
+    if (handle != MeshRendererComponent::InvalidMesh) {
+        MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
+        int subCount = mesh ? (mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size())) : 1;
+        renderer.SetMesh(handle, meshData.bounds, lookupKey, true, subCount);
+        syncMaterialSlots(renderer, subCount);
+
+        // Register the relative asset path as an alias so that future
+        // lookups (e.g. after the next play-mode cycle) find this mesh
+        // without hitting disk again.
+        m_frameRenderer->AddMeshAlias(lookupKey, handle);
+
+        std::cout << "[QtEditorEngine]   -> Uploaded: handle " << handle << "\n";
+    }
+}
+
 void QtEditorEngine::RebuildSceneMeshes()
 {
     if (!m_frameRenderer || !m_device || !m_editorContext.HasActiveScene()) {
@@ -2417,13 +2684,14 @@ void QtEditorEngine::RebuildSceneMeshes()
         m_frameRenderer->SetProjectRoot(projectRoot.string());
     }
 
+    loadEditorCameraMesh(projectRoot);
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
 
     // -----------------------------------------------------------------
     // Helper: resolve a mesh asset path (relative key) to an absolute
     // path on disk, trying multiple fallback locations.
     // -----------------------------------------------------------------
-    auto resolveAssetPathToFile = [&](const std::string& assetPath) -> fs::path {
+    m_meshFileResolver = [this, projectRoot, assetRoot](const std::string& assetPath) -> fs::path {
         if (assetPath.empty()) return {};
         if (assetPath.rfind("builtin://", 0) == 0) return fs::path(assetPath);
 
@@ -2515,16 +2783,6 @@ void QtEditorEngine::RebuildSceneMeshes()
         return {};
     };
 
-    auto syncMaterialSlots = [](MeshRendererComponent& renderer, int subCount) {
-        const int requiredSlots = std::max(subCount, 1);
-        if (static_cast<int>(renderer.appliedMaterialPaths.size()) < requiredSlots) {
-            renderer.appliedMaterialPaths.resize(static_cast<size_t>(requiredSlots), "");
-        }
-        if (static_cast<int>(renderer.materialIndices.size()) < requiredSlots) {
-            renderer.materialIndices.resize(static_cast<size_t>(requiredSlots), -1);
-        }
-    };
-
     // Iterate all entities with MeshRendererComponent
     auto renderView = scene->GetEntitiesWith<MeshRendererComponent>();
     
@@ -2548,108 +2806,7 @@ void QtEditorEngine::RebuildSceneMeshes()
         std::cout << "[QtEditorEngine] Entity '" << entityName 
                   << "' meshAssetPath='" << renderer.meshAssetPath << "'\n";
 
-        if (renderer.meshAssetPath.empty()) {
-            continue;
-        }
-
-        // If the entity already has a valid handle that still lives in the
-        // library, keep it.  This covers meshes loaded from a path that
-        // differs from the stored meshAssetPath (e.g. engine default meshes
-        // loaded from the build output while the asset path is stored as a
-        // relative string).
-        if (renderer.meshHandle != MeshRendererComponent::InvalidMesh) {
-            MeshGPU* existing = m_frameRenderer->GetMesh(renderer.meshHandle);
-            if (existing) {
-                int subCount = existing->submeshes.empty()
-                    ? 1 : static_cast<int>(existing->submeshes.size());
-                syncMaterialSlots(renderer, subCount);
-                std::cout << "[QtEditorEngine]   -> Keeping existing handle "
-                          << renderer.meshHandle << "\n";
-                continue;
-            }
-        }
-
-        std::string lookupKey = normalizeAssetPath(renderer.meshAssetPath);
-        if (!lookupKey.empty() && lookupKey != renderer.meshAssetPath &&
-            lookupKey.rfind("builtin://", 0) != 0) {
-            renderer.meshAssetPath = lookupKey;
-        }
-
-        // Check if mesh already in library
-        size_t existingHandle = m_frameRenderer->GetMeshHandle(lookupKey);
-        if (existingHandle != SIZE_MAX) {
-            MeshGPU* mesh = m_frameRenderer->GetMesh(existingHandle);
-            if (mesh) {
-                int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
-                renderer.SetMesh(existingHandle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
-                syncMaterialSlots(renderer, subCount);
-                std::cout << "[QtEditorEngine]   -> Found in library: handle " << existingHandle << "\n";
-                continue;
-            }
-        }
-
-        // Handle builtin meshes
-        if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
-            size_t handle = m_frameRenderer->GetMeshHandle(renderer.meshAssetPath);
-            if (handle != SIZE_MAX) {
-                MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
-                if (mesh) {
-                    int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
-                    renderer.SetMesh(handle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
-                    syncMaterialSlots(renderer, subCount);
-                    std::cout << "[QtEditorEngine]   -> Builtin mesh: handle " << handle << "\n";
-                }
-            } else {
-                std::cerr << "[QtEditorEngine]   -> Unknown builtin: " << renderer.meshAssetPath << "\n";
-                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-            }
-            continue;
-        }
-
-        // Try to load mesh from file using the robust resolver
-        fs::path meshPath = resolveAssetPathToFile(renderer.meshAssetPath);
-
-        // Normalize
-        if (!meshPath.empty() && fs::exists(meshPath)) {
-            meshPath = fs::weakly_canonical(meshPath);
-        }
-
-        std::cout << "[QtEditorEngine]   -> Resolved path: " << meshPath << "\n";
-
-        if (meshPath.empty() || !fs::exists(meshPath)) {
-            std::cerr << "[QtEditorEngine]   -> File not found for '"
-                      << renderer.meshAssetPath << "' (tried project root, asset root, "
-                      << ".engine/meshes, and filename search)\n";
-            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-            continue;
-        }
-
-        // Load mesh
-        MeshData meshData;
-        std::string loadError;
-        if (!ModelImporter::LoadModel(meshPath, meshData, loadError)) {
-            std::cerr << "[QtEditorEngine]   -> Load failed: " << loadError << "\n";
-            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-            continue;
-        }
-
-        // Upload to GPU
-        std::string meshName = meshPath.stem().string();
-        size_t handle = uploadMeshToGPU(meshName, meshData, meshPath, true);
-        
-        if (handle != MeshRendererComponent::InvalidMesh) {
-            MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
-            int subCount = mesh ? (mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size())) : 1;
-            renderer.SetMesh(handle, meshData.bounds, lookupKey, true, subCount);
-            syncMaterialSlots(renderer, subCount);
-
-            // Register the relative asset path as an alias so that future
-            // lookups (e.g. after the next play-mode cycle) find this mesh
-            // without hitting disk again.
-            m_frameRenderer->AddMeshAlias(lookupKey, handle);
-
-            std::cout << "[QtEditorEngine]   -> Uploaded: handle " << handle << "\n";
-        }
+        loadRendererMesh(renderer);
     }
 
     std::cout << "[QtEditorEngine] Mesh rebuild complete. Library size: " 
@@ -2844,6 +3001,7 @@ void QtEditorEngine::StartPlayMode()
     }
     if (!runtimeUI.context) {
         runtimeUI.context = std::make_unique<::Hephaestus::HephaestusUI::UIContext>();
+        runtimeUI.context->SetReferenceHeight(::Hephaestus::HephaestusUI::kGameUIReferenceHeight);
     }
     if (!runtimeUI.renderer) {
         runtimeUI.renderer = std::make_unique<::Hephaestus::HephaestusUI::UIRenderer>();
@@ -2868,6 +3026,7 @@ void QtEditorEngine::StartPlayMode()
     // ── Initialize Lua script engine if not yet created ────────────────────
     if (!m_luaScriptEngine) {
         m_luaScriptEngine = std::make_unique<LuaScriptEngine>();
+        m_luaScriptEngine->SetDevelopment(true);
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
         m_luaScriptEngine->SetFrameRenderer(m_frameRenderer.get());
@@ -2880,6 +3039,12 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine->SetFrameRenderer(m_frameRenderer.get());
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
+    // Editor Play keeps Storage data inside the project (ignored by source control), apart from players' saves.
+    m_luaScriptEngine->SetStorageRoot(projectRootPath.empty() ? std::filesystem::path{}
+                                                              : projectRootPath / ".hephaestus" / "editor" / "saves");
+    m_luaScriptEngine->SetConfigRoot(projectRootPath.empty() ? std::filesystem::path{}
+                                                             : projectRootPath / "Saved" / "Config",
+                                     "Editor");
     m_luaScriptEngine->SetInputSystem(&m_gameplayInput);
     if (!m_pluginScriptHost) {
         m_pluginScriptHost = std::make_unique<PluginScriptHost>();
@@ -2954,6 +3119,7 @@ void QtEditorEngine::StartPlayMode()
     };
     m_luaScriptEngine->SetPhysicsBinding(MakeScriptPhysicsBinding(physicsAccess));
     m_luaScriptEngine->SetCharacterBinding(MakeScriptCharacterBinding(physicsAccess));
+    m_luaScriptEngine->SetSpawnedMeshLoader([this](MeshRendererComponent& renderer) { loadRendererMesh(renderer); });
 
     // ── Initialize C++ script engine ───────────────────────────────────────
     if (!m_cppScriptEngine) {
@@ -2964,16 +3130,16 @@ void QtEditorEngine::StartPlayMode()
     // Wire up engines to the play mode manager
     m_playModeManager.SetScene(scene);
     m_playModeManager.SetLuaScriptEngine(m_luaScriptEngine.get());
-    m_luaScriptEngine->SetSceneReloadCallback([this]() {
-        return m_playModeManager.RequestSceneReload();
+    m_luaScriptEngine->SetSceneReloadCallback([this](const std::string& scenePath) {
+        return m_playModeManager.RequestSceneReload(scenePath);
     });
     m_luaScriptEngine->SetQuitRequestCallback([this]() {
         m_playModeManager.RequestStop();
     });
     m_playModeManager.SetCppScriptEngine(m_cppScriptEngine.get());
     m_playModeManager.SetPluginScriptHost(m_pluginScriptHost.get());
-    m_playModeManager.SetSceneReloadCallback([this](std::string& error) {
-        return reloadRuntimeScene(error);
+    m_playModeManager.SetSceneReloadCallback([this](const std::string& scenePath, std::string& error) {
+        return reloadRuntimeScene(scenePath, error);
     });
     m_playModeManager.SetLogCallback([](const std::string& msg) {
         std::cout << msg << std::endl;
@@ -3029,6 +3195,11 @@ void QtEditorEngine::StopPlayMode()
 
     m_playModeManager.StopPlayMode();
     LuaDebugger::Instance().StopFinished();
+    if (m_frameRenderer) {
+        // Play's texture quality setting and scope are the game's; the editor shows textures at full size.
+        m_frameRenderer->SetMaxMaterialTextureSize(0);
+        m_frameRenderer->SetScopeLens({});
+    }
     m_editorContext.SyncSelectionFromScene();
 
     if (m_luaScriptEngine) {
@@ -3106,18 +3277,25 @@ bool QtEditorEngine::IsRealtime() const
 void QtEditorEngine::SetRealtime(bool realtime)
 {
     m_playModeManager.SetRealtime(realtime);
-    m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
+    m_lastFrameTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
 }
 
-bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
+bool QtEditorEngine::reloadRuntimeScene(const std::string& scenePath, std::string& outError)
 {
     Scene* scene = m_editorContext.GetActiveScene();
-    if (!scene || !scene->IsReloadable()) {
+    if (!scene || (scenePath.empty() && !scene->IsReloadable())) {
         outError = "current scene has no authored source asset";
         return false;
     }
 
-    const std::string sourcePath = scene->GetSourceAssetPath();
+    // Scene.load names a project path; Scene.reload rebuilds the scene from its own file.
+    std::string sourcePath = scene->GetSourceAssetPath();
+    if (!scenePath.empty()) {
+        const std::filesystem::path requested = std::filesystem::u8path(scenePath);
+        sourcePath = (requested.is_absolute() || m_projectRoot.empty()
+                          ? requested
+                          : std::filesystem::path(m_projectRoot) / requested).generic_string();
+    }
 
     // Validate into a temporary scene before teardown. A missing or malformed
     // source therefore leaves the active play scene intact.
@@ -3183,6 +3361,7 @@ bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
     if (projectRoot.empty()) {
         projectRoot = fs::path(sourcePath).parent_path();
     }
+    loadEditorCameraMesh(projectRoot);
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
     m_editorContext.RequestRebuildSceneVisuals();
     if (physicsActive() && m_joltPhysicsSystem && m_playPhysicsEnabled) {
@@ -3303,7 +3482,7 @@ bool QtEditorEngine::StepFrames(std::uint32_t count, float fixedDt, std::string&
 
     // Reset the frame timer so the next free-running tick applies a normal dt
     // instead of a large delta accumulated across the stepped frames.
-    m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
+    m_lastFrameTime = static_cast<float>(m_frameTimer.nsecsElapsed() / 1.0e9);
     return true;
 }
 

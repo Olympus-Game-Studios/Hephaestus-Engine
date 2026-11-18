@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "apiVersion": 1,
+  "id": "com.hephaestus.material-nodes",
+  "name": "Material Nodes",
+  "description": "Per-pixel material graph nodes: noise, gradients, Fresnel, panning and distorted UVs, time, and camera and world positions.",
+  "author": "Hephaestus Engine",
+  "pluginVersion": "1.0.0",
+  "engineVersion": ">=2026.9.0",
+  "type": "editor",
+  "entry": "bin/HephaestusMaterialNodes.dll"
+}

@@ -25,6 +25,29 @@ namespace Hephaestus::HephaestusUI {
  * order; headless tests can feed the same input and assert on the geometry.
  */
 
+/** Where an image of texWidth x texHeight is drawn inside rect for a scale mode, and which pixels of it show. */
+struct UIImagePlacement {
+    UIRect destination;
+    UIRect source;
+};
+UIImagePlacement PlaceImage(const UIRect& rect, float texWidth, float texHeight, UIImageScaleMode scaleMode);
+
+/** File for a HUI imageId: an existing absolute path, else under projectRoot with or without "assets/". Empty if none. */
+std::string ResolveHUIImagePath(const std::string& projectRoot, const std::string& imageId);
+
+/** Folders searched for HUI fonts (each also as <folder>/fonts): the project, its assets and fonts, then the
+ *  engine's bundled fonts (assets/ beside the editor, .engine/ in a packaged game). */
+std::vector<std::string> HUIFontSearchPaths(const std::string& projectRoot);
+
+/** One line of text as the game renderer lays it out, in pixels from the line's left edge; all 0 when no font loads.
+ *  width is the advance (where the next text would start); inkLeft/inkRight bound the drawn pixels. */
+struct UITextMeasure {
+    float width = 0.0f;
+    float inkLeft = 0.0f;
+    float inkRight = 0.0f;
+};
+UITextMeasure MeasureHUIText(const std::string& projectRoot, const std::string& text, const UIFontKey& key);
+
 class IFontAtlasProvider {
 public:
     virtual ~IFontAtlasProvider() = default;

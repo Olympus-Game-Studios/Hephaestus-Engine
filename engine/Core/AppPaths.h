@@ -42,9 +42,19 @@ inline std::filesystem::path ResourceRootFor(const std::filesystem::path& execut
     return contents.parent_path().parent_path();
 }
 
+// The folder holding the running executable; empty if the platform can't say.
+std::filesystem::path ExecutableDirectory();
+
 // %LOCALAPPDATA%\<appName> on Windows, where logs and crash dumps go so the install folder
 // stays read-only; empty on other platforms or when Windows can't provide the folder.
 std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName);
+
+// Where a game keeps per-user data such as settings and saves: LocalAppDataFor on Windows,
+// ~/Library/Application Support/<appName> on macOS, $XDG_DATA_HOME (or ~/.local/share)/<appName> elsewhere.
+// Empty when none can be found.
+std::filesystem::path UserDataFor(const std::filesystem::path& appName);
+// Replaces the per-user folder root for LocalAppDataFor and UserDataFor (<root>/<appName>); empty restores the default.
+void SetUserDataRootOverride(const std::filesystem::path& root);
 
 // Where logs go when LocalAppDataFor is empty: beside the resources, except a shipped .app
 // (which must not modify itself) logs to ~/Library/Logs/<app name>.

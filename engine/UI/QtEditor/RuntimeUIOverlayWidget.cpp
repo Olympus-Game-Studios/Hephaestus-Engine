@@ -2,10 +2,17 @@
 
 #include "RuntimeUIOverlayWidget.h"
 
+#include "../../Assets/AssetManager.h"
+#include "../HephaestusUI/Rendering/HUIGeometryBuilder.h"
+
+#include <QFontDatabase>
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <algorithm>
+#include <cmath>
+#include <unordered_map>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -20,6 +27,24 @@ float clamp01(float value)
 QColor toQColor(const Hephaestus::HephaestusUI::UIColor& color)
 {
     return QColor::fromRgbF(clamp01(color.r), clamp01(color.g), clamp01(color.b), clamp01(color.a));
+}
+
+// The Qt family for the font file the game renderer would use, registered with Qt on first use.
+QString GameFontFamily(const std::string& family, bool bold, bool italic)
+{
+    static std::unordered_map<std::string, QString> registered;
+    const std::string file = Hephaestus::HephaestusUI::UIFontAtlas::ResolveFontFile(
+        family, bold, italic, Hephaestus::HephaestusUI::HUIFontSearchPaths(AssetManager::GetInstance().GetProjectRoot()));
+    if (file.empty()) {
+        return QString::fromStdString(family);
+    }
+    auto it = registered.find(file);
+    if (it == registered.end()) {
+        const int id = QFontDatabase::addApplicationFont(QString::fromStdString(file));
+        const QStringList families = id >= 0 ? QFontDatabase::applicationFontFamilies(id) : QStringList{};
+        it = registered.emplace(file, families.isEmpty() ? QString::fromStdString(family) : families.front()).first;
+    }
+    return it->second;
 }
 
 QRectF toQRectF(const Hephaestus::HephaestusUI::UIRect& rect)
@@ -179,16 +204,27 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
         if (std::holds_alternative<Hephaestus::HephaestusUI::UIDrawTextCommand>(command)) {
             const auto& drawText = std::get<Hephaestus::HephaestusUI::UIDrawTextCommand>(command);
             QFont font = painter.font();
-            if (!drawText.fontFamily.empty()) {
-                font.setFamily(QString::fromStdString(drawText.fontFamily));
-            }
-            font.setPointSizeF(std::max(1.0f, drawText.fontSize));
+            font.setFamily(GameFontFamily(drawText.fontFamily.empty() ? "Default" : drawText.fontFamily,
+                                          drawText.bold, drawText.italic));
+            // The game renderer sizes fonts so ascender to descender spans fontSize pixels (stb_truetype's
+            // pixel height); Qt sizes the em, so scale by the font's own ascent + descent per em.
+            font.setPixelSize(100);
+            const QFontMetricsF reference(font, painter.device());
+            const qreal emPixels = std::max(1.0f, drawText.fontSize) * 100.0 /
+                                   std::max<qreal>(1.0, reference.ascent() + reference.descent());
+            font.setPointSizeF(emPixels * 72.0 / std::max(1, painter.device()->logicalDpiY()));
             font.setBold(drawText.bold);
             font.setItalic(drawText.italic);
             painter.setFont(font);
 
-            const QRectF rect = toQRectF(drawText.rect);
+            QRectF rect = toQRectF(drawText.rect);
             const int alignFlags = toQtAlign(drawText.alignment, drawText.wordWrap);
+            if (!drawText.wordWrap) {
+                // Qt centres the whole line box; centre the capitals instead, as the game renderer does.
+                const QFontMetricsF metrics(font);
+                const qreal lineCentre = (metrics.ascent() - metrics.descent()) * 0.5;
+                rect.translate(0.0, lineCentre - metrics.capHeight() * 0.5);
+            }
 
             if (drawText.shadow) {
                 QColor shadowColor = toQColor(drawText.shadowColor);
@@ -207,6 +243,19 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
 
         if (std::holds_alternative<Hephaestus::HephaestusUI::UIDrawImageCommand>(command)) {
             const auto& drawImage = std::get<Hephaestus::HephaestusUI::UIDrawImageCommand>(command);
+            const QImage& image = TintedImage(drawImage.imageId, drawImage.tint);
+            if (!image.isNull()) {
+                const auto placement = Hephaestus::HephaestusUI::PlaceImage(
+                    drawImage.rect, static_cast<float>(image.width()), static_cast<float>(image.height()),
+                    drawImage.scaleMode);
+                painter.save();
+                painter.setOpacity(clamp01(drawImage.tint.a * drawImage.opacity));
+                painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+                painter.drawImage(toQRectF(placement.destination), image, toQRectF(placement.source));
+                painter.restore();
+                continue;
+            }
+            // Missing image: tinted solid placeholder, as the game renderer draws it.
             QColor placeholder = toQColor(drawImage.tint);
             placeholder.setAlphaF(clamp01(placeholder.alphaF() * drawImage.opacity));
             painter.setPen(Qt::NoPen);
@@ -234,6 +283,43 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
         painter.restore();
         --clipDepth;
     }
+}
+
+const QImage& RuntimeUIOverlayWidget::TintedImage(const std::string& imageId,
+                                                   const Hephaestus::HephaestusUI::UIColor& tint)
+{
+    static const QImage none;
+    if (imageId.empty()) {
+        return none;
+    }
+    auto loaded = m_images.find(imageId);
+    if (loaded == m_images.end()) {
+        const std::string path =
+            Hephaestus::HephaestusUI::ResolveHUIImagePath(AssetManager::GetInstance().GetProjectRoot(), imageId);
+        QImage image;
+        if (!path.empty()) {
+            image.load(QString::fromStdString(path));
+        }
+        loaded = m_images.emplace(imageId, image.isNull() ? QImage() : image.convertToFormat(QImage::Format_ARGB32_Premultiplied)).first;
+    }
+    if (loaded->second.isNull()) {
+        return none;
+    }
+    const QColor color = toQColor(tint);
+    const std::string key = imageId + "|" + std::to_string(color.rgb());
+    auto tinted = m_tintedImages.find(key);
+    if (tinted == m_tintedImages.end()) {
+        // Multiply by the tint's colour (its alpha is applied as opacity when drawing), keeping the image's alpha.
+        QImage out = loaded->second;
+        QPainter tintPainter(&out);
+        tintPainter.setCompositionMode(QPainter::CompositionMode_Multiply);
+        tintPainter.fillRect(out.rect(), QColor(color.red(), color.green(), color.blue()));
+        tintPainter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+        tintPainter.drawImage(0, 0, loaded->second);
+        tintPainter.end();
+        tinted = m_tintedImages.emplace(key, std::move(out)).first;
+    }
+    return tinted->second;
 }
 
 } // namespace QtEditor

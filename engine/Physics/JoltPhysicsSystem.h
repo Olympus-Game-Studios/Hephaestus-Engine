@@ -13,6 +13,7 @@
 #include "JoltPhysicsEngine.h"
 #include "PhysicsContactEvents.h"
 #include "PhysicsWorldPose.h"
+#include "RagdollSystem.h"
 #include "../Scene/Scene.h"
 #include "../Core/Math.h"
 
@@ -26,6 +27,7 @@ struct RaycastHit {
     Vec3 point{0.0f, 0.0f, 0.0f};
     Vec3 normal{0.0f, 1.0f, 0.0f};
     entt::entity entity = entt::null;
+    bool sensor = false;
 };
 
 // A snapshot is published only after the body is added and every field below
@@ -73,6 +75,11 @@ public:
     void RegisterCharacterProxy(entt::entity entity, JPH::BodyID bodyId);
     void UnregisterCharacterProxy(JPH::BodyID bodyId);
     bool IsCharacterProxy(JPH::BodyID bodyId) const;
+    // Bodies owned by another system that should report `entity` in raycasts and contacts.
+    void RegisterExternalBody(entt::entity entity, JPH::BodyID bodyId);
+    void UnregisterExternalBody(JPH::BodyID bodyId);
+    RagdollSystem& Ragdolls() { return *m_Ragdolls; }
+    const RagdollSystem& Ragdolls() const { return *m_Ragdolls; }
 
     // When true, a character proxy contact does not let the solver push a dynamic body.
     // CharacterVirtual::HandleContact remains the push. Sensors are unchanged.
@@ -116,7 +123,8 @@ public:
     // World raycast; optionally ignores a single entity's body. Fills outHit.
     bool Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
                  float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer = nullptr,
-                 bool ignoreSensors = false) const;
+                 bool ignoreSensors = false,
+                 const std::vector<entt::entity>* extraIgnoredEntities = nullptr) const;
 
     BodyObservationStatus ObserveBody(entt::entity entity, BodyObservation& out) const;
     void ObserveBodies(std::vector<BodyObservation>& out) const;
@@ -194,6 +202,9 @@ private:
     void DetachContactListener();
     void DispatchContactEvents();
     void ClearContactState();
+
+    // Last, so ragdolls are destroyed while the body maps they unregister from still exist.
+    std::unique_ptr<RagdollSystem> m_Ragdolls;
 };
 
 } // namespace Physics

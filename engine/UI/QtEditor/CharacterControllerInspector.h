@@ -34,12 +34,15 @@ private:
     QDoubleSpinBox* m_height = nullptr;
     QDoubleSpinBox* m_radius = nullptr;
     QDoubleSpinBox* m_crouchedHeight = nullptr;
+    QDoubleSpinBox* m_proneHeight = nullptr;
     QDoubleSpinBox* m_walkSpeed = nullptr;
     QDoubleSpinBox* m_acceleration = nullptr;
     QDoubleSpinBox* m_deceleration = nullptr;
     QDoubleSpinBox* m_airAcceleration = nullptr;
     QDoubleSpinBox* m_airControl = nullptr;
     QDoubleSpinBox* m_jumpSpeed = nullptr;
+    QDoubleSpinBox* m_coyoteTime = nullptr;
+    QDoubleSpinBox* m_jumpBufferTime = nullptr;
     QDoubleSpinBox* m_gravityScale = nullptr;
     QDoubleSpinBox* m_maxFallSpeed = nullptr;
     QDoubleSpinBox* m_groundSnap = nullptr;

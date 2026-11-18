@@ -200,6 +200,13 @@ bool CharacterRuntime::BindScene(Scene& scene,
                 continue;
             }
         }
+        // Already showing the current upload: UploadVisual would reload and copy the whole character to find that out.
+        if (renderer && entity.HasComponent<MeshRendererComponent>() &&
+            !entity.GetComponent<MeshRendererComponent>().meshPartHandles.empty() &&
+            renderer->GetMeshHandle(character.characterPath) ==
+                entity.GetComponent<MeshRendererComponent>().meshPartHandles.front()) {
+            continue;
+        }
         if (!UploadVisual(entity, projectRoot, renderer, error)) {
             ok = false;
         }

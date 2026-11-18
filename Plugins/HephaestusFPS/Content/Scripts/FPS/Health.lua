@@ -59,6 +59,14 @@ function Health.heal(entity, amount)
     end
 end
 
+function Health.revive(entity)
+    local row = Health.get(entity)
+    if row then
+        row.dead = false
+        row.health = row.maxHealth
+    end
+end
+
 function Health.applyDamage(entity, amount, instigator)
     local row = Health.get(entity)
     if not row then

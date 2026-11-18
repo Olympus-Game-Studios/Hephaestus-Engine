@@ -63,6 +63,7 @@ int main() {
     Write(project / "assets" / "prefabs" / "Ship.hpprefab", "{}");
     Write(project / "assets" / "characters" / "Cultist.hpcharacter", "{}");
     Write(project / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb", "mesh");
+    Write(project / "assets" / "characters" / ".source" / "Cultist" / "Cultist.blend", "blender scene");
     Write(project / "assets" / "characters" / ".source" / "Cultist" / "CultistCharacter.lua",
           "function onUpdate(dt) end");
     Write(project / "assets" / "ui" / "Hud.hui", "{}");
@@ -76,6 +77,7 @@ int main() {
     Write(project / ".hephaestus" / "physics_layers.json", "{\"version\":1}");
     Write(engine / ".engine" / "meshes" / "builtin.mesh", "mesh");
     Write(engine / ".engine" / "hdris" / "builtin.hdr", "builtin hdri");
+    Write(engine / "assets" / "fonts" / "Roboto-Regular.ttf", "font");
     Write(engine / "THIRD_PARTY_NOTICES.md", "Third-party notices");
     Write(runtime / kPlayerExecutable, "fake executable");
     Write(runtime / "lua.dll", "fake lua");
@@ -138,6 +140,8 @@ int main() {
                 "prefabs are packaged");
     ok &= Check(fs::exists(content / "assets" / "characters" / "Cultist.hpcharacter"),
                 "character assets are packaged");
+    ok &= Check(!fs::exists(content / "assets" / "characters" / ".source" / "Cultist" / "Cultist.blend"),
+                "Blender scenes are not packaged");
     ok &= Check(fs::exists(content / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb"),
                 "owned character sources are packaged");
     ok &= Check(fs::exists(content / "assets" / "characters" / ".source" / "Cultist" /
@@ -192,6 +196,8 @@ int main() {
                 "project meshes are packaged");
     ok &= Check(fs::exists(content / ".engine" / "hdris" / "project.hdr"),
                 "project HDRIs are packaged");
+    ok &= Check(fs::exists(content / ".engine" / "fonts" / "Roboto-Regular.ttf"),
+                "the engine's bundled fonts are packaged for the game's UI");
     ok &= Check(fs::exists(content / ".engine" / "hdris" / "builtin.hdr"),
                 "builtin HDRIs are packaged");
     ok &= Check(fs::exists(content / ".hephaestus" / "physics_layers.json"),

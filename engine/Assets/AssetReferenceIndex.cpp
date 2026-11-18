@@ -37,7 +37,7 @@ bool StartsWithInsensitive(const std::string& value, const std::string& prefix) 
 
 bool IsIndexableExtension(const std::string& ext) {
     return ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" ||
-           ext == ".hui" || ext == ".hpcharacter" || ext == ".heproject" || ext == ".json";
+           ext == ".hui" || ext == ".hpcharacter" || ext == ".heproject" || ext == ".json" || ext == ".hpmesh";
 }
 
 bool LooksLikeAssetPath(const std::string& value) {
@@ -163,6 +163,9 @@ bool AllowKeyForExtension(const std::string& ext, const std::string& key) {
                kind == AssetReferenceFieldKind::AppliedMaterialPath ||
                kind == AssetReferenceFieldKind::ScriptPath ||
                kind == AssetReferenceFieldKind::CharacterPath;
+    }
+    if (ext == ".hpmesh") {
+        return kind == AssetReferenceFieldKind::AppliedMaterialPath;
     }
     if (ext == ".hematerial") {
         return kind == AssetReferenceFieldKind::TexturePath ||
@@ -694,6 +697,11 @@ void AssetReferenceIndex::ScanDocument(const std::filesystem::path& absoluteOrRe
     scanDocumentUnlocked(absolute);
 }
 
+void AssetReferenceIndex::ForgetDocument(const std::filesystem::path& absoluteOrRelativeDocumentPath) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    removeDocumentUnlocked(toDocumentKey(resolveDocumentPath(absoluteOrRelativeDocumentPath)));
+}
+
 void AssetReferenceIndex::ScanProject(const std::filesystem::path& projectRoot) {
     std::lock_guard<std::mutex> lock(m_mutex);
     clearUnlocked();
@@ -713,7 +721,7 @@ void AssetReferenceIndex::ScanProject(const std::filesystem::path& projectRoot) 
             const auto& path = it->path();
             const std::string ext = ExtensionLower(path);
             if (ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" ||
-                ext == ".hui" || ext == ".hpcharacter") {
+                ext == ".hui" || ext == ".hpcharacter" || ext == ".hpmesh") {
                 scanDocumentUnlocked(path);
             }
         }

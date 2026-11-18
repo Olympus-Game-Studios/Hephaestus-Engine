@@ -39,6 +39,8 @@ int AutoShots(lua_State* L, double dt, double seconds, double rps)
     lua_setfield(L, -2, "roundsPerSecond");
     lua_pushnumber(L, 999);
     lua_setfield(L, -2, "magazine");
+    lua_pushnumber(L, 1);
+    lua_setfield(L, -2, "chamber");
     lua_pushnumber(L, 0);
     lua_setfield(L, -2, "now");
     lua_pushnumber(L, 0);
@@ -182,6 +184,8 @@ int main(int argc, char** argv)
     lua_setfield(L, -2, "roundsPerSecond");
     lua_pushnumber(L, 12);
     lua_setfield(L, -2, "magazine");
+    lua_pushnumber(L, 1);
+    lua_setfield(L, -2, "chamber");
     lua_pushvalue(L, -2);
     lua_pushvalue(L, -2);
     lua_pushnumber(L, 1.0);
@@ -214,6 +218,8 @@ int main(int argc, char** argv)
     lua_setfield(L, -2, "roundsPerSecond");
     lua_pushnumber(L, 999);
     lua_setfield(L, -2, "magazine");
+    lua_pushnumber(L, 1);
+    lua_setfield(L, -2, "chamber");
     const int hitchStateRef = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_getglobal(L, "Logic");
     lua_getfield(L, -1, "tickFire");
@@ -241,7 +247,7 @@ int main(int argc, char** argv)
 
     lua_settop(L, 0);
     if (luaL_dostring(L, R"(
-        local s = { fireMode = "auto", roundsPerSecond = 10, magazine = 999 }
+        local s = { fireMode = "auto", roundsPerSecond = 10, magazine = 999, chamber = 1 }
         Logic.tickFire(s, 1 / 60, true, true)
         for _ = 1, 60 do Logic.tickFire(s, 1 / 60, false, false) end
         local repress = Logic.tickFire(s, 1 / 60, true, true)
@@ -292,7 +298,10 @@ int main(int argc, char** argv)
     lua_pop(L, 2);
     lua_rawgeti(L, LUA_REGISTRYINDEX, reloadRef);
     lua_getfield(L, -1, "magazine");
-    ok &= Check(lua_tointeger(L, -1) == 5, "reload moves min(space, reserve)");
+    ok &= Check(lua_tointeger(L, -1) == 4, "reload moves min(space, reserve) and chambers one of them");
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "chamber");
+    ok &= Check(lua_tointeger(L, -1) == 1, "empty reload chambers a round");
     lua_pop(L, 1);
     lua_getfield(L, -1, "reserve");
     ok &= Check(lua_tointeger(L, -1) == 0, "reserve empties");
@@ -411,6 +420,839 @@ int main(int argc, char** argv)
         lua_gettable(L, -2);
         ok &= Check(lua_isnil(L, -1), "ensureSession drops previous health at recycled id");
         lua_pop(L, 3);
+    }
+
+    static const char* kGunplayChecks = R"lua(
+local Gunplay = require("FPS.Gunplay")
+local function near(a, b, eps) return math.abs(a - b) <= (eps or 1e-6) end
+local failures = {}
+local function check(cond, message) if not cond then failures[#failures + 1] = message end end
+
+local weapon = { hipSpread = 2, moveSpread = 2.5, airSpread = 4, maxSpread = 7, adsSpread = 0.1,
+                 adsBloomScale = 0.5, bloomPerShot = 0.6, maxBloom = 1.0, bloomDecay = 2,
+                 damage = 30, falloffStart = 25, falloffEnd = 50, falloffMinMultiplier = 0.6,
+                 headMultiplier = 1.5, limbMultiplier = 0.9 }
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 0, moveFraction = 0, bloom = 0 }), 2), "standing hip spread")
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 0, moveFraction = 1, bloom = 0 }), 4.5), "moving widens spread")
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 0, moveFraction = 1, airborne = true, bloom = 1 }), 7),
+      "spread clamps at maxSpread")
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 1, moveFraction = 1, bloom = 1 }), 0.6), "ADS spread is tight")
+local bloom = Gunplay.addBloom(Gunplay.addBloom(0, weapon), weapon)
+check(near(bloom, 1.0), "bloom grows per shot and caps")
+check(near(Gunplay.decayBloom(bloom, weapon, 0.25), 0.5), "bloom decays over time")
+
+check(near(Gunplay.shotDamage(weapon, 10, "body"), 30), "full damage inside falloff start")
+check(near(Gunplay.shotDamage(weapon, 37.5, "body"), 24), "falloff is linear between start and end")
+check(near(Gunplay.shotDamage(weapon, 80, "body"), 18), "falloff floors at the minimum")
+check(near(Gunplay.shotDamage(weapon, 10, "head"), 45), "head zone multiplies by 1.5")
+check(near(Gunplay.shotDamage(weapon, 10, "limb"), 27), "limb zone multiplies by 0.9")
+
+local pattern = Gunplay.parsePattern("0.5,0.1; 0.7,-0.2;0.9,0.3")
+check(#pattern == 3 and near(pattern[2].pitch, 0.7) and near(pattern[2].yaw, -0.2), "pattern parses pitch,yaw pairs")
+local function fixed() return 0.5 end
+local p, y = Gunplay.recoilForShot(pattern, 2, 0.2, 0.2, fixed)
+check(near(p, 0.7) and near(y, -0.2), "recoil follows the learnable pattern")
+p, y = Gunplay.recoilForShot(pattern, 9, 0.2, 0.2, fixed)
+check(near(p, 0.9) and near(y, 0.3), "the last pattern entry repeats")
+p = Gunplay.recoilForShot(pattern, 1, 0.2, 0, function() return 0.999999 end)
+check(p > 0.69 and p <= 0.7, "jitter stays inside its range")
+
+check(near(Gunplay.absorbCounterInput(0.05, -0.02), 0.03), "pulling down spends accumulated recoil")
+check(near(Gunplay.absorbCounterInput(0.05, -0.2), 0), "counter input never overshoots")
+check(near(Gunplay.absorbCounterInput(0.05, 0.02), 0.05), "looking up keeps accumulated recoil")
+local delta, rest = Gunplay.recoverRecoil(0.05, 0.1, 0.1)
+check(near(delta, -0.01) and near(rest, 0.04), "recovery returns the aim at its rate")
+delta, rest = Gunplay.recoverRecoil(0.005, 0.1, 0.1)
+check(near(delta, -0.005) and near(rest, 0), "recovery stops at the original aim")
+
+local omega, zeta = 16, 0.68
+local function peakOf(v0, w, z)
+    local spring = Gunplay.newSpring()
+    spring.v = v0
+    local peak = 0
+    for _ = 1, 2000 do
+        Gunplay.dampedSpring(spring, 0, w, z, 1 / 2000)
+        peak = math.max(peak, spring.x)
+    end
+    return peak, spring
+end
+for _, z in ipairs({ 0.68, 1.0, 1.6 }) do
+    local peak, spring = peakOf(Gunplay.impulseForPeak(0.02, omega, z), omega, z)
+    check(near(peak, 0.02, 1e-5), "impulseForPeak gives the requested peak at damping " .. z)
+    check(math.abs(spring.x) < 0.02, "kick spring heads back to rest at damping " .. z)
+end
+local function springAt(stepDt, seconds)
+    local spring = Gunplay.newSpring()
+    spring.v = 1
+    local t = 0
+    while t < seconds - 1e-9 do
+        Gunplay.dampedSpring(spring, 0, omega, zeta, stepDt)
+        t = t + stepDt
+    end
+    return spring.x
+end
+local reference = springAt(1 / 240, 0.5)
+for _, fps in ipairs({ 30, 60, 144 }) do
+    check(near(springAt(1 / fps, 0.5), reference, 1e-9), "spring position does not depend on frame rate (" .. fps .. ")")
+end
+local long = Gunplay.newSpring()
+long.v = 1
+Gunplay.dampedSpring(long, 0, omega, zeta, 0.25)
+check(math.abs(long.x) < 0.1, "spring stays stable through a long frame")
+
+check(Gunplay.hash01(3, 7, 1) == Gunplay.hash01(3, 7, 1) and Gunplay.hash01(3, 7, 1) ~= Gunplay.hash01(4, 7, 1),
+      "hash is deterministic and depends on the seed")
+local inRange = true
+for i = 1, 500 do
+    local value = Gunplay.hash01(1, i, 2)
+    inRange = inRange and value >= 0 and value < 1
+end
+check(inRange, "hash stays in [0, 1)")
+local smooth, bounded = true, true
+for i = 0, 400 do
+    local t = i * 0.037
+    local a, b = Gunplay.smoothNoise(5, t), Gunplay.smoothNoise(5, t + 1e-4)
+    smooth = smooth and math.abs(a - b) < 1e-2
+    bounded = bounded and math.abs(a) <= 1
+end
+check(smooth and bounded, "idle noise is continuous and bounded")
+local curves = Gunplay.adsCurves(0.5)
+check(near(curves.weapon, 0.5) and near(curves.fov, 0.5) and near(Gunplay.adsCurves(1).fov, 1)
+      and Gunplay.adsCurves(0.2).fov < Gunplay.adsCurves(0.2).weapon, "ADS curves meet at the ends and middle")
+
+local Logic = require("FPS.Logic")
+-- Same seed and held fire give the same shots and recoil at any frame rate.
+local function burst(fps)
+    local state = { fireMode = "auto", roundsPerSecond = 12.5, magazine = 999, chamber = 1 }
+    local shots, pitchSum, yawSum, times = 0, 0, 0, {}
+    local steps = math.floor(fps * 1.0 + 0.5)
+    for _ = 1, steps do
+        local n = Logic.tickFire(state, 1 / fps, true, false)
+        for _ = 1, n do
+            shots = shots + 1
+            local p, y = Gunplay.recoilForShot(pattern, shots, 0.12, 0.12, Gunplay.seededRandom(42, shots))
+            pitchSum, yawSum = pitchSum + p, yawSum + y
+            times[#times + 1] = state.now
+        end
+    end
+    return shots, pitchSum, yawSum, times
+end
+local s30, p30, y30 = burst(30)
+for _, fps in ipairs({ 60, 144, 240 }) do
+    local s, p, y, times = burst(fps)
+    check(s == s30 and near(p, p30, 1e-9) and near(y, y30, 1e-9),
+          "shots and seeded recoil match 30 fps at " .. fps .. " fps")
+    local even = true
+    for i = 2, #times do
+        even = even and math.abs((times[i] - times[i - 1]) - 0.08) <= 1 / fps + 1e-9
+    end
+    check(even, "shot spacing stays within one frame of 80 ms at " .. fps .. " fps")
+end
+local r1, r2 = Gunplay.seededRandom(9, 3), Gunplay.seededRandom(9, 3)
+check(r1() == r2() and r1() == r2(), "seeded recoil repeats for the same seed and shot")
+
+for _, u in ipairs({ { 0.0, 0.0 }, { 0.999, 0.3 }, { 0.5, 0.75 } }) do
+    local x, yy, z = Gunplay.spreadDirection(1, 0, 0, math.rad(3), u[1], u[2])
+    local angle = math.deg(math.acos(math.max(-1, math.min(1, x))))
+    check(near(x * x + yy * yy + z * z, 1, 1e-9) and angle <= 3.0001, "spread stays inside the cone")
+end
+local vx, vy, vz = Gunplay.spreadDirection(0, 1, 0, math.rad(2), 0.8, 0.1)
+check(vy > math.cos(math.rad(2.0001)), "spread handles a vertical aim")
+
+check(near(Gunplay.fireBlock(0, true, 0.22, 0.016), 0.22), "sprinting holds the sprint-to-fire block")
+check(near(Gunplay.fireBlock(0.22, false, 0.22, 0.02), 0.2), "the block counts down after sprinting")
+
+local state = { fireMode = "auto", roundsPerSecond = 10, magazine = 30, chamber = 1, fireBlockedRemaining = 0.2 }
+check(Logic.tickFire(state, 0.016, true, true) == 0, "a fire block stops shots")
+state.fireBlockedRemaining = 0
+check(Logic.tickFire(state, 0.016, true, false) == 1, "shots resume when the block ends")
+local reload = { magazine = 0, magazineSize = 30, reserve = 60, reloadSeconds = 2.0, reloadEmptySeconds = 2.6 }
+check(Logic.tryStartReload(reload) and near(reload.reloadRemaining, 2.6) and reload.reloadFromEmpty,
+      "an empty magazine uses the empty reload time")
+local tactical = { magazine = 5, chamber = 1, magazineSize = 30, reserve = 60, reloadSeconds = 2.0,
+                   reloadEmptySeconds = 2.6 }
+check(Logic.tryStartReload(tactical) and near(tactical.reloadRemaining, 2.0) and not tactical.reloadFromEmpty,
+      "a partial magazine uses the tactical reload time")
+
+local function weapon(magazine, chamber, reserve)
+    return { magazine = magazine, chamber = chamber, magazineSize = 30, reserve = reserve,
+             tacticalReload = { seconds = 1.8, detach = 0.3, insert = 0.9 },
+             emptyReload = { seconds = 2.1, detach = 0.4, insert = 0.9, chamber = 1.4 } }
+end
+local fresh = { magazineSize = 30 }
+Logic.fillWeapon(fresh)
+check(fresh.chamber == 1 and fresh.magazine == 29 and Logic.loadedRounds(fresh) == 30, "a fresh weapon holds 29+1")
+local w = weapon(10, 1, 60)
+check(Logic.tryStartReload(w) and w.reload.kind == "tactical", "a chambered weapon does a tactical reload")
+local _, events = Logic.advanceReload(w, 0.5)
+check(#events == 1 and events[1] == "detach" and w.magazine == 10, "ammo does not move at detach")
+_, events = Logic.advanceReload(w, 0.5)
+check(events[1] == "insert" and w.magazine == 30 and w.reserve == 40 and Logic.loadedRounds(w) == 31,
+      "ammo moves at insert, old rounds return to the reserve, tactical gives 30+1")
+local done = Logic.advanceReload(w, 1.0)
+check(done and w.reload == nil and w.reloadRemaining == 0, "the reload ends at its total time")
+w = weapon(0, 0, 60)
+check(Logic.tryStartReload(w) and w.reload.kind == "empty", "an empty weapon does an empty reload")
+done, events = Logic.advanceReload(w, 3.0)
+check(done and #events == 3 and events[3] == "chamber" and w.chamber == 1 and w.magazine == 29 and w.reserve == 30,
+      "one long frame crosses every event in order")
+w = weapon(5, 1, 60)
+Logic.tryStartReload(w)
+Logic.advanceReload(w, 0.5)
+check(Logic.interruptReload(w) and w.magazine == 5 and w.chamber == 1 and w.reserve == 60,
+      "interrupting before insert keeps the old magazine")
+w = weapon(0, 0, 60)
+Logic.tryStartReload(w)
+Logic.advanceReload(w, 1.0)
+Logic.interruptReload(w)
+check(w.magazine == 30 and w.chamber == 0 and Logic.reloadKind(w) == "chamber",
+      "interrupting an empty reload after insert leaves the chamber to rack")
+check(Logic.tryStartReload(w) and w.reloadTotal < 1.0, "racking is shorter than a reload")
+Logic.advanceReload(w, 1.0)
+check(w.chamber == 1 and w.magazine == 29 and w.reload == nil, "racking chambers a round")
+w = weapon(0, 1, 0)
+check(Logic.spendShot(w) and w.chamber == 0 and not Logic.spendShot(w), "the last round leaves the chamber empty")
+check(Logic.reloadKind(w) == nil, "no reload without reserve ammo")
+w = weapon(30, 1, 10)
+check(Logic.reloadKind(w) == nil, "no reload with a full magazine and a chambered round")
+
+local function pump(magazine, chamber, reserve)
+    return { magazine = magazine, chamber = chamber, magazineSize = 8, reserve = reserve,
+             shellReload = { start = 0.4, perShell = 0.5, pump = 0.6, finish = 0.3 } }
+end
+local s = pump(4, 1, 20)
+check(Logic.tryStartReload(s) and s.reload.kind == "shell" and not s.reloadFromEmpty
+      and near(s.reloadTotal, 0.4 + 3 * 0.5 + 0.3), "a pump with a round chambered loads the 3 shells it has room for")
+local _, shells = Logic.advanceReload(s, 0.95)
+check(#shells == 1 and shells[1] == "shell" and s.magazine == 5 and s.reserve == 19, "shells go in one at a time")
+check(Logic.cutShellReload(s) and s.reload == nil and s.magazine == 5 and s.chamber == 1 and s.reserve == 19,
+      "fire cuts a shell reload and keeps the shells already loaded")
+check(Logic.tickFire({ fireMode = "semi", roundsPerSecond = 1, magazine = 5, chamber = 1, now = 0, nextFire = 0,
+                       reloadRemaining = s.reloadRemaining }, 0.016, false, true) == 1,
+      "the cut reload no longer blocks the shot")
+s = pump(0, 0, 20)
+check(Logic.tryStartReload(s) and s.reloadFromEmpty, "an empty pump does a shell reload from empty")
+local finished
+finished, shells = Logic.advanceReload(s, 10)
+check(finished and #shells == 9 and shells[9] == "chamber" and s.chamber == 1 and s.magazine == 7 and s.reserve == 12,
+      "an empty pump loads 8 shells and pumps one into the chamber")
+s = pump(0, 0, 3)
+Logic.tryStartReload(s)
+Logic.advanceReload(s, 10)
+check(s.chamber == 1 and s.magazine == 2 and s.reserve == 0, "a short reserve loads what there is")
+s = pump(0, 0, 20)
+Logic.tryStartReload(s)
+Logic.advanceReload(s, 0.95)
+check(Logic.cutShellReload(s) and s.reload and s.reload.kind == "chamber" and s.magazine == 1,
+      "cutting an empty pump's reload pumps the loaded shell in before it can fire")
+Logic.advanceReload(s, 1)
+check(s.chamber == 1 and s.magazine == 0, "the pump chambers it")
+check(not Logic.cutShellReload(weapon(5, 1, 60)), "magazine reloads are not cut by fire")
+check(Logic.reloadKind(pump(7, 1, 20)) == nil, "no shell reload with 7+1 loaded")
+
+local Impacts = require("FPS.Impacts")
+-- Turn +Y by Euler degrees the way TransformComponent::GetLocalMatrix composes them (Rx * Ry * Rz).
+local function upAfter(r)
+    local a, b, c = math.rad(r.x), math.rad(r.y), math.rad(r.z)
+    local x, y, z = 0, 1, 0
+    x, y = math.cos(c) * x - math.sin(c) * y, math.sin(c) * x + math.cos(c) * y
+    x, z = math.cos(b) * x + math.sin(b) * z, -math.sin(b) * x + math.cos(b) * z
+    y, z = math.cos(a) * y - math.sin(a) * z, math.sin(a) * y + math.cos(a) * z
+    return x, y, z
+end
+local aligned = true
+for _, n in ipairs({ { 0, 1, 0 }, { 0, -1, 0 }, { 1, 0, 0 }, { -1, 0, 0 }, { 0, 0, 1 }, { 0, 0, -1 },
+                     { 0.3, 0.8, -0.52 }, { -0.7, -0.1, 0.7 } }) do
+    local length = math.sqrt(n[1] ^ 2 + n[2] ^ 2 + n[3] ^ 2)
+    local x, y, z = upAfter(Impacts.rotationForNormal(n[1], n[2], n[3]))
+    aligned = aligned and near(x, n[1] / length, 1e-6) and near(y, n[2] / length, 1e-6) and near(z, n[3] / length, 1e-6)
+end
+check(aligned, "decal rotation turns +Y onto the surface normal")
+check(Impacts.surfaceOffset(50) > Impacts.surfaceOffset(1) and Impacts.surfaceOffset(0) > 0,
+      "decals lift further off distant surfaces")
+
+)lua"
+R"lua(local Explosives = require("FPS.Explosives")
+local FPSRegistry = require("FPS.Registry")
+local Health = require("FPS.Health")
+check(Explosives.falloff(1, 2, 7) == 1 and Explosives.falloff(7, 2, 7) == 0 and near(Explosives.falloff(4.5, 2, 7), 0.5),
+      "blast falloff is full inside the inner radius and linear to the edge")
+FPSRegistry.sessionOpen = false
+FPSRegistry.ensureSession()
+-- Targets are tested half a metre above their origin, so these sit level with the blast.
+local function fakeEntity(key, x, z)
+    return { key = key, calls = {},
+             GetTransform = function() return { GetWorldPosition = function() return { x = x, y = -0.5, z = z } end } end,
+             Call = function(self, name) self.calls[#self.calls + 1] = name end }
+end
+local near1, far1, behind, outside = fakeEntity("near", 1, 0), fakeEntity("far", 4.5, 0), fakeEntity("behind", 0, 3),
+                                     fakeEntity("outside", 9, 0)
+for _, e in ipairs({ near1, far1, behind, outside }) do Health.attach(e, { maxHealth = 100 }) end
+FPSRegistry.player = { key = "player" }
+Physics = { raycast = function(x, y, z, dx, dy, dz, distance)
+    if dz > 0.5 then return { entity = "wall", distance = 1 } end
+    return nil
+end }
+local damaged = Explosives.applyBlast(0, 0, 0, { damage = 100, radius = 7, innerRadius = 2, byPlayer = true })
+check(damaged == 2, "blast damages exposed targets in range only")
+check(Health.getHealth(near1) == 0 and Health.isDead(near1), "a target inside the inner radius takes full damage")
+check(near(Health.getHealth(far1), 50, 1e-4), "a target halfway through the falloff takes half damage")
+check(Health.getHealth(behind) == 100 and Health.getHealth(outside) == 100, "cover and range protect targets")
+check(FPSRegistry.player.hitEvent == "kill", "a kill by the player's blast shows the kill marker")
+Physics = nil
+
+local Hud = require("FPS.Hud")
+local texts = {}
+UI = { setVisible = function() end, setOpacity = function() end, setTextColor = function() end,
+       setText = function(widget, text) texts[widget] = text end }
+Hud.handle = 1
+Hud.widgets = { HealthText = "health", GrenadeText = "grenades" }
+local hudOk = pcall(Hud.refresh, { enabled = true, showHealth = true, showAmmo = true, health = 31.4, maxHealth = 100,
+                                   grenades = { frag = 1, smoke = 2 }, dt = 0 })
+check(hudOk and texts.health == "32 / 100", "fractional health from blast damage shows rounded up")
+check(texts.grenades == "Frag 1   Smoke 2", "the HUD shows grenade counts")
+Hud.handle, Hud.widgets, UI = nil, {}, nil
+
+local ThrowPreview = require("FPS.ThrowPreview")
+local groundY = 0
+Physics = { raycast = function(x, y, z, dx, dy, dz, distance)
+    local ey = y + dy * distance
+    if y >= groundY and ey < groundY and dy < 0 then
+        local t = (y - groundY) / -dy
+        return { point = { x = x + dx * t, y = groundY, z = z + dz * t }, normal = { x = 0, y = 1, z = 0 }, distance = t }
+    end
+    return nil
+end }
+local points, marks = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 10, y = 0, z = 0 }, { maxSeconds = 3 })
+local landing = marks[1]
+check(#marks == 1 and near(landing.point.x, 10 * math.sqrt(2 * 1.5 / 9.81), 0.15) and landing.point.y == 0,
+      "a level throw lands where gravity says")
+check(points[#points].x == landing.point.x and #points > 10, "the preview path ends at the landing point")
+local _, damped = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 10, y = 0, z = 0 }, { damping = 0.5 })
+check(damped[1].point.x < landing.point.x - 0.3, "damping shortens the predicted throw")
+local _, bounced, rested = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 6, y = 2, z = 0 },
+                                                { bounces = 3, restitution = 0.4, friction = 0.1, maxSeconds = 12 })
+local ordered = #bounced >= 3
+for i = 2, #bounced do ordered = ordered and bounced[i].point.x > bounced[i - 1].point.x end
+check(ordered and rested, "bounces carry on down range and the throw comes to rest")
+local first = 6 * (2 + math.sqrt(4 + 2 * 9.81 * 1.5)) / 9.81
+local secondHop = 2 * 0.4 * math.sqrt(4 + 2 * 9.81 * 1.5) / 9.81
+local slide = 6 * math.max(0, 1 - 0.1 * 1.4 * math.sqrt(4 + 2 * 9.81 * 1.5) / 6)
+check(near(bounced[2].point.x - bounced[1].point.x, slide * secondHop, 0.25),
+      "a bounce keeps restitution of the normal speed and loses friction from the sliding speed")
+local _, capped = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 6, y = 2, z = 0 },
+                                       { bounces = 1, restitution = 0.4, friction = 0.1, maxSeconds = 12 })
+check(#capped == 2, "the prediction stops after the allowed number of bounces")
+groundY = -1000
+local skyward, none = ThrowPreview.predict({ x = 0, y = 0, z = 0 }, { x = 0, y = 5, z = 0 }, { maxSeconds = 0.5 })
+check(#none == 0 and #skyward == 31, "a throw that reaches nothing stops after maxSeconds")
+local L = require("FPS.Logic")
+check(L.directionSpeedScale(1, 0, 0.85, 0.7) == 1 and near(L.directionSpeedScale(0, 1, 0.85, 0.7), 0.85)
+      and near(L.directionSpeedScale(-1, 0, 0.85, 0.7), 0.7) and L.directionSpeedScale(0, 0, 0.85, 0.7) == 1,
+      "moving forward is full speed, strafing and backpedalling are slower")
+local diagonal = L.directionSpeedScale(1, 1, 0.85, 0.7)
+check(diagonal > 0.85 and diagonal < 1, "a forward diagonal falls between strafe and forward speed")
+check(near(L.landingSpeedScale(0, 0.3, 0.6), 0.6) and L.landingSpeedScale(0.3, 0.3, 0.6) == 1
+      and L.landingSpeedScale(0.15, 0.3, 0.6) > 0.6 and L.landingSpeedScale(0.15, 0.3, 0.6) < 1,
+      "a hard landing slows the player and eases back to full speed")
+check(near(L.slideSpeedScale(0, 0.8, 1.84, 0.6), 1.84) and near(L.slideSpeedScale(0.8, 0.8, 1.84, 0.6), 0.6)
+      and near(L.slideSpeedScale(2, 0.8, 1.84, 0.6), 0.6) and L.slideSpeedScale(0.1, 0.8, 1.84, 0.6) > 1.75,
+      "a slide starts fast, keeps most of its speed early and ends at crouch speed")
+local active, charge = L.stepTacticalSprint(true, 2.5, 2.5, 4, 1.0)
+check(active and near(charge, 1.5), "a tactical sprint spends its charge")
+active, charge = L.stepTacticalSprint(true, 0.5, 2.5, 4, 1.0)
+check(not active and charge == 0, "a tactical sprint ends when its charge runs out")
+active, charge = L.stepTacticalSprint(false, 0, 2.5, 4, 2.0)
+check(not active and near(charge, 1.25), "the charge refills from empty to full over the recharge time")
+check(L.leanOffset(0, 0.35) == 0 and near(L.leanOffset(1, 0.35), 0.35) and near(L.leanOffset(-0.5, 0.35), -0.175),
+      "a lean moves the head sideways by its fraction of the lean distance")
+check(near(L.leanOffset(1, 0.35, function() return 0.4 end), 0.2)
+      and L.leanOffset(-1, 0.35, function() return 0.1 end) == 0,
+      "a wall beside the head limits the lean")
+local Ballistics = require("FPS.Ballistics")
+-- A wall facing the shooter at x = 100.
+local function wall(x, y, z, dx, dy, dz, distance)
+    if dx > 0 and x < 100 and x + dx * distance >= 100 then
+        local t = (100 - x) / dx
+        return { distance = t, point = { x = 100, y = y + dy * t, z = z + dz * t }, normal = { x = -1, y = 0, z = 0 } }
+    end
+    return nil
+end
+local bullet = Ballistics.new(0, 0, 0, 1, 0, 0, 500)
+local landed, frames = nil, 0
+while not landed and frames < 60 do
+    landed = Ballistics.step(bullet, 1 / 60, 9.81, wall)
+    frames = frames + 1
+end
+check(landed and frames >= 12 and frames <= 13 and near(landed.distance, 100, 0.05),
+      "a 500 m/s bullet takes about 0.2 s to reach a wall 100 m away and reports the whole distance")
+check(landed.point.y < -0.15 and landed.point.y > -0.25, "the bullet drops about 0.2 m over 100 m at 500 m/s")
+local near1 = Ballistics.new(95, 0, 0, 1, 0, 0, 500)
+check(Ballistics.step(near1, 1 / 60, 9.81, wall) ~= nil, "a target within the first frame's travel is hit at once")
+local flying, hits = { Ballistics.new(0, 0, 0, 1, 0, 0, 500), Ballistics.new(0, 0, 0, 0, 0, 1, 500) }, 0
+for _ = 1, 30 do
+    Ballistics.update(flying, 1 / 60, 9.81, 120, 2, wall, function() hits = hits + 1 end)
+end
+check(hits == 1 and #flying == 0, "bullets that hit or fly past the range are removed")
+
+local Mantle = require("FPS.Mantle")
+-- Ground at y = 0 plus axis-aligned boxes; returns the nearest hit like Physics.raycast.
+local boxes = {}
+local function rayBoxes(ox, oy, oz, dx, dy, dz, distance)
+    local best = nil
+    local o, d = { ox, oy, oz }, { dx, dy, dz }
+    for _, b in ipairs(boxes) do
+        local tmin, tmax, axis = 0, distance, nil
+        local ok = true
+        for i = 1, 3 do
+            if math.abs(d[i]) < 1e-9 then
+                if o[i] < b.min[i] or o[i] > b.max[i] then ok = false end
+            else
+                local t1, t2 = (b.min[i] - o[i]) / d[i], (b.max[i] - o[i]) / d[i]
+                local enter = math.min(t1, t2)
+                if enter > tmin then tmin, axis = enter, i end
+                tmax = math.min(tmax, math.max(t1, t2))
+            end
+        end
+        if ok and axis and tmin <= tmax and (not best or tmin < best.distance) then
+            local n = { x = 0, y = 0, z = 0 }
+            n[({ "x", "y", "z" })[axis]] = d[axis] > 0 and -1 or 1
+            best = { distance = tmin, point = { x = ox + dx * tmin, y = oy + dy * tmin, z = oz + dz * tmin }, normal = n }
+        end
+    end
+    if dy < 0 and oy > 0 then
+        local t = oy / -dy
+        if t <= distance and (not best or t < best.distance) then
+            best = { distance = t, point = { x = ox + dx * t, y = 0, z = oz + dz * t }, normal = { x = 0, y = 1, z = 0 } }
+        end
+    end
+    return best
+end
+Physics = { raycast = rayBoxes }
+local feet = { x = 0, y = 0, z = 0 }
+local options = { reach = 0.8, maxHeight = 2.0, vaultMaxHeight = 1.1 }
+boxes = { { min = { 0.5, 0, -5 }, max = { 1.1, 0.9, 5 } } }
+local vault = Mantle.find(feet, 1, 0, options)
+check(vault and vault.kind == "vault" and near(vault.height, 0.9, 1e-6) and vault.points[4].x > 1.1
+      and vault.points[4].y == 0, "a waist-high bench is vaulted, landing on the far side")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 1.5, 5 } } }
+local climb = Mantle.find(feet, 1, 0, options)
+check(climb and climb.kind == "mantle" and near(climb.points[3].y, 1.5, 1e-6) and climb.points[3].x > 0.8,
+      "a chest-high crate is climbed onto")
+local path = { Mantle.position(climb, 0), Mantle.position(climb, 0.6), Mantle.position(climb, 1) }
+check(path[1].x == 0 and near(path[2].y, 1.55, 1e-6) and path[2].x == 0 and near(path[3].x, climb.points[3].x, 1e-6),
+      "a mantle rises in front of the ledge, then moves onto it")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 3.0, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a wall taller than the reach is not climbed")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 0.2, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a curb lower than the minimum height is not climbed")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 1.5, 5 } }, { min = { 0.5, 2.3, -5 }, max = { 3.5, 2.6, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a ledge without room to stand on is not climbed")
+boxes = { { min = { 2.0, 0, -5 }, max = { 3.5, 1.5, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a ledge out of reach is not climbed")
+options.vaultDepth = 1.0
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.0, 5 } } }
+local over = Mantle.find(feet, 1, 0, options)
+check(over and over.kind == "vault" and over.linear and near(over.points[2].x, 0.3, 1e-6)
+      and near(over.points[2].y, 1.05, 1e-6) and near(over.points[4].x, 2.6, 1e-6) and over.points[4].y == 0,
+      "a half wall is vaulted: up as the body reaches its face, across, and down at 45 degrees beyond it")
+local mid = Mantle.position(over, 0.5)
+check(mid.x > over.points[2].x and mid.x < over.points[3].x and near(mid.y, 1.05, 1e-6),
+      "a vault moves at a steady speed across the top")
+check(near(Mantle.vaultDuration(over, 20, 0.35, 0.55), 0.35, 1e-6)
+      and near(Mantle.vaultDuration(over, 1, 0.35, 0.55), 0.55, 1e-6)
+      and near(Mantle.vaultDuration(over, Mantle.length(over) / 0.45, 0.35, 0.55), 0.45, 1e-6),
+      "a vault takes its path at the incoming speed, within its time limits")
+options.vaultOnly = true
+check(Mantle.find(feet, 1, 0, options) ~= nil, "running into a half wall vaults it")
+boxes = { { min = { 0.6, 0, -5 }, max = { 2.2, 0.8, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "running into a table too deep to vault does nothing")
+options.vaultOnly = nil
+local onto = Mantle.find(feet, 1, 0, options)
+check(onto and onto.kind == "mantle", "jumping at a table too deep to vault climbs onto it")
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.0, 5 } }, { min = { 1.7, 0, -5 }, max = { 2.0, 3.0, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a half wall with a wall right behind it is neither vaulted nor climbed")
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.0, 5 } }, { min = { 0.6, 1.9, -5 }, max = { 3.0, 2.2, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a half wall under a low beam is not vaulted")
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.4, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a thin wall too tall to vault has no top to climb onto")
+options.vaultDepth = nil
+Physics = nil
+Physics = nil
+
+if #failures > 0 then error(table.concat(failures, "\n")) end
+)lua";
+    if (luaL_dostring(L, kGunplayChecks) != LUA_OK) {
+        std::cerr << "[FAIL] gunplay checks:\n" << lua_tostring(L, -1) << '\n';
+        ok = false;
+    }
+
+    static const char* kAIChecks = R"lua(
+local failures = {}
+local function check(condition, label) if not condition then failures[#failures + 1] = label end end
+local function near(a, b, eps) return math.abs(a - b) <= (eps or 1e-6) end
+local Difficulty = require("FPS.AI.Difficulty")
+check(Difficulty.level() == "regular" and #Difficulty.levels() == 4, "enemies default to the regular level")
+local recruit, veteran = Difficulty.resolve("recruit"), Difficulty.resolve("veteran")
+check(recruit.reactionSeconds > veteran.reactionSeconds and recruit.aimErrorDegrees > veteran.aimErrorDegrees
+      and recruit.damageScale < veteran.damageScale, "harder levels react faster, aim better and hit harder")
+check(recruit.grenadeAwareness == false and veteran.grenadeAwareness == true, "switches resolve per level")
+check(Difficulty.setLevel("hardened") and Difficulty.resolve("").reactionSeconds == 0.4
+      and not Difficulty.setLevel("impossible") and Difficulty.level() == "hardened",
+      "the global level applies to enemies without their own level and unknown names are refused")
+Difficulty.setOverride("damageScale", 0.1)
+check(Difficulty.resolve("veteran").damageScale == 0.1, "a global override beats the preset")
+check(Difficulty.resolve("veteran", { damageScale = 2 }).damageScale == 2, "an enemy's own override beats both")
+Difficulty.clearOverrides()
+Difficulty.setLevel("regular")
+check(Difficulty.resolve("veteran").damageScale == 1.25, "clearing overrides restores the preset")
+
+local Perception = require("FPS.AI.Perception")
+check(Perception.inView(1, 0, 10, 1, 120, 10) and not Perception.inView(1, 0, -10, 0, 120, 10)
+      and Perception.inView(1, 0, -2, 0, 120, 2), "the view cone sees ahead, not behind, except up close")
+local regular = Difficulty.resolve("regular")
+check(Perception.awarenessRate(5, regular, "standing", false) > Perception.awarenessRate(40, regular, "standing", false)
+      and Perception.awarenessRate(10, regular, "prone", false) < Perception.awarenessRate(10, regular, "crouched", false)
+      and Perception.awarenessRate(10, regular, "standing", true) > Perception.awarenessRate(10, regular, "standing", false),
+      "a near, standing or moving player is noticed faster")
+local noises = { { id = 1, x = 0, y = 0, z = 0, radius = 10 }, { id = 2, x = 100, y = 0, z = 0, radius = 10 } }
+local heard, newest = Perception.hear(noises, 0, 5, 0, 0, 1)
+check(heard and heard.id == 1 and newest == 2, "a listener hears noises in range and marks all of them as seen")
+check(Perception.hear(noises, newest, 5, 0, 0, 1) == nil, "a noise is heard only once")
+check(Perception.hear(noises, 0, 15, 0, 0, 1) == nil and Perception.hear(noises, 0, 15, 0, 0, 2) ~= nil,
+      "hearing scale changes how far noises carry")
+-- A wall at x = 5 between z = -2 and 2, up to y = 2.
+Physics = { raycast = function(x, y, z, dx, dy, dz, distance)
+    if dx > 0 and x < 5 then
+        local t = (5 - x) / dx
+        local hy, hz = y + dy * t, z + dz * t
+        if t <= distance and hy <= 2 and math.abs(hz) <= 2 then
+            return { distance = t, entity = "wall" }
+        end
+    end
+    return nil
+end }
+local never = function() return false end
+check(not Perception.canSee({ x = 0, y = 1.6, z = 0 }, 1, 0, { x = 10, y = 1.6, z = 0 }, { x = 10, y = 1.2, z = 0 },
+                            regular, {}, never), "a wall hides the player")
+check(Perception.canSee({ x = 0, y = 1.6, z = 0 }, 1, 0, { x = 10, y = 1.6, z = 6 }, { x = 10, y = 1.2, z = 6 },
+                        regular, {}, never), "a player beside the wall is seen")
+check(not Perception.canSee({ x = 0, y = 1.6, z = 0 }, -1, 0, { x = 10, y = 1.6, z = 6 }, { x = 10, y = 1.2, z = 6 },
+                            regular, {}, never), "a player behind the enemy is not seen")
+
+local Cover = require("FPS.AI.Cover")
+local blocked = function(from, to)
+    local hit = Physics.raycast(from.x, from.y, from.z, to.x - from.x, to.y - from.y, to.z - from.z, 1)
+    return hit ~= nil
+end
+local candidates = { { x = 4, y = 0, z = 0 }, { x = 4, y = 0, z = 8 } }
+local pick = 0
+local spot = Cover.find({ x = 0, y = 0, z = 0 }, { x = 20, y = 1.6, z = 0 }, { radius = 10, samples = 2, peekStep = 2.5 },
+                        function() pick = pick + 1; return candidates[pick] end, function(p) return p end, blocked)
+check(spot and spot.point.z == 0 and spot.peek and math.abs(spot.peek.z) > 2,
+      "cover is behind the wall from the threat and its peek spot steps out past the edge")
+pick = 0
+candidates = { { x = 4, y = 0, z = 8 } }
+check(Cover.find({ x = 0, y = 0, z = 0 }, { x = 20, y = 1.6, z = 0 }, { samples = 1 },
+                 function() pick = pick + 1; return candidates[pick] end, function(p) return p end, blocked) == nil,
+      "open ground is not cover")
+Physics = nil
+
+local Mover = require("FPS.AI.Mover")
+Nav = { findPath = function(from, to)
+    return { { x = from.x, y = 0, z = from.z }, { x = 5, y = 0, z = 0 }, { x = 5, y = 0, z = 5 } }
+end }
+local mover = Mover.new()
+check(Mover.setGoal(mover, { x = 0, y = 0, z = 0 }, { x = 5, y = 0, z = 5 }), "a reachable goal gets a path")
+local wx, wz, arrived = Mover.update(mover, { x = 0, y = 0, z = 0 }, 0.1, 0.5)
+check(near(wx, 1) and near(wz, 0) and not arrived, "the walker heads for the first corner")
+wx, wz = Mover.update(mover, { x = 4.9, y = 0, z = 0 }, 0.1, 0.5)
+check(near(wx, 0, 0.05) and near(wz, 1, 0.05), "a reached corner moves on to the next")
+check(select(3, Mover.update(mover, { x = 5, y = 0, z = 4.8 }, 0.1, 0.5)) and mover.arrived, "the goal is reached")
+local plans = 0
+Nav.findPath = function(from, to) plans = plans + 1; return { from, to } end
+Mover.follow(mover, { x = 0, y = 0, z = 0 }, { x = 10, y = 0, z = 0 }, 1)
+Mover.follow(mover, { x = 0, y = 0, z = 0 }, { x = 10.5, y = 0, z = 0 }, 1)
+check(plans == 1, "following a goal that barely moved does not plan again")
+for _ = 1, 12 do
+    Mover.update(mover, { x = 0, y = 0, z = 0 }, 0.1, 0.5)
+end
+check(plans == 2, "a stuck walker plans again")
+Nav.findPath = function() return nil end
+check(not Mover.setGoal(mover, { x = 0, y = 0, z = 0 }, { x = 99, y = 0, z = 0 }) and mover.arrived,
+      "an unreachable goal leaves the walker standing")
+Nav = nil
+
+local Tactics = require("FPS.AI.Tactics")
+local spots = Tactics.flankCandidates({ x = 20, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, 10, { 90, -90, 0 })
+check(near(spots[1].x, 0, 1e-6) and near(spots[1].z, 10, 1e-6) and near(spots[2].z, -10, 1e-6)
+      and near(spots[3].x, 10, 1e-6), "flank spots sit beside the threat, square to the enemy's line")
+-- Fly a throw the way the grenade body does (gravity, then damping, then move) until it comes back down.
+local function land(from, to, damping)
+    local vx, vy, vz = Tactics.throwVelocity(from, to, 40, 9.81, damping)
+    local x, y, z, dt = from.x, from.y, from.z, 1 / 60
+    for _ = 1, 600 do
+        vy = vy - 9.81 * dt
+        local keep = 1 - damping * dt
+        vx, vy, vz = vx * keep, vy * keep, vz * keep
+        x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
+        if vy < 0 and y <= to.y then
+            return x, z
+        end
+    end
+end
+local lx, lz = land({ x = 0, y = 1.6, z = 0 }, { x = 15, y = 0, z = 8 }, 0.1)
+check(lx and math.sqrt((lx - 15) ^ 2 + (lz - 8) ^ 2) < 0.6, "a damped throw lands within 0.6 m of its target")
+lx, lz = land({ x = 0, y = 1.6, z = 0 }, { x = 24, y = 0, z = 0 }, 0)
+check(lx and near(lx, 24, 0.3), "an undamped throw lands on its target")
+check(Tactics.throwVelocity({ x = 0, y = 0, z = 0 }, { x = 5, y = 20, z = 0 }, 40, 9.81, 0) == nil,
+      "a target too high for the angle cannot be reached")
+
+local GrenadeWarning = require("FPS.GrenadeWarning")
+local function frag(x, z) return { x = x, y = 0, z = z, damage = 150, radius = 7, innerRadius = 2 } end
+local feet = { x = 0, y = 0, z = 0 }
+local warn = GrenadeWarning.compute(feet, 0, 100, { frag(5, 0), frag(0, 5), frag(-1, 0), frag(8.5, 0), frag(30, 0) }, 10, 4)
+check(#warn == 4 and warn[1].level == "lethal" and near(warn[1].angle % (2 * math.pi), math.pi, 0.01),
+      "a frag at the player's feet behind them is lethal and points straight down the screen")
+check(warn[2].level == "harmful" and warn[3].level == "harmful" and warn[4].level == "near",
+      "a frag inside the blast radius would hurt and one just outside it is only near")
+local ahead, right
+for _, w in ipairs(warn) do
+    if w.distance > 4 and w.distance < 6 and math.abs(w.angle) < 0.1 then ahead = w end
+    if w.distance > 4 and w.distance < 6 and near(w.angle, math.pi / 2, 0.1) then right = w end
+end
+check(ahead and right, "angles are clockwise from straight ahead: ahead is 0, to the right is a quarter turn")
+check(GrenadeWarning.compute(feet, 0, 30, { frag(5, 0) }, 10, 4)[1].level == "lethal",
+      "a blast that would only hurt a healthy player is lethal to a hurt one")
+check(#GrenadeWarning.compute(feet, 0, 100, { frag(0, 5), frag(5, 0), frag(-5, 0) }, 10, 2) == 2,
+      "only the nearest warnings up to the limit are shown")
+check(near(GrenadeWarning.compute(feet, math.pi / 2, 100, { frag(5, 0) }, 10, 4)[1].angle, math.pi / 2, 0.01),
+      "turning the player turns the warning: facing -Z, a frag at +X is to the right")
+
+local Registry = require("FPS.Registry")
+Registry.corpses = {}
+local removed = {}
+for i = 1, 8 do
+    for _, e in ipairs(Registry.addCorpse("body" .. i, i, 8)) do removed[#removed + 1] = e end
+end
+check(#removed == 0 and #Registry.corpses == 8, "eight bodies stay")
+removed = Registry.addCorpse("body9", 9, 8)
+check(#removed == 1 and removed[1] == "body1" and #Registry.corpses == 8,
+      "the ninth body removes the oldest, leaving eight")
+Registry.removeCorpse(5)
+check(#Registry.corpses == 7 and #Registry.addCorpse("body10", 10, 8) == 0,
+      "a body removed some other way frees its place")
+Registry.corpses = {}
+for i = 1, 20 do Registry.addCorpse("b" .. i, i, 0) end
+check(#Registry.corpses == 20, "a limit of 0 keeps every body")
+Registry.corpses = {}
+
+local Waves = require("FPS.Waves")
+local plan = Waves.parse("3; 5:hardened ;0;x;7:veteran")
+check(#plan == 3 and plan[1].count == 3 and plan[1].difficulty == "" and plan[2].count == 5
+      and plan[2].difficulty == "hardened" and plan[3].difficulty == "veteran",
+      "a wave plan reads counts with optional difficulty levels and skips empty or invalid waves")
+local spawnPoints = Waves.parsePoints("10,0; -20.5,4;30,-30")
+check(#spawnPoints == 3 and spawnPoints[2].x == -20.5 and spawnPoints[2].z == 4, "spawn points read as x,z pairs")
+local seq = { 0.0, 0.99 }
+local n = 0
+local function nextRandom() n = n + 1; return seq[n] end
+local a = Waves.pickSpawn(spawnPoints, { x = 9, y = 0, z = 0 }, 15, nextRandom)
+local b = Waves.pickSpawn(spawnPoints, { x = 9, y = 0, z = 0 }, 15, nextRandom)
+check(a ~= spawnPoints[1] and b ~= spawnPoints[1] and a ~= b, "spawns avoid points near the player and vary")
+check(Waves.pickSpawn(spawnPoints, { x = 0, y = 0, z = 0 }, 1000, nextRandom) == spawnPoints[3],
+      "with no point far enough, the farthest is used")
+check(Waves.pickSpawn({}, nil, 15, nextRandom) == nil, "no spawn points means no spawn")
+
+local Brain = require("FPS.AI.Brain")
+local log = {}
+local states = {
+    idle = { enter = function() log[#log + 1] = "enter idle" end, exit = function() log[#log + 1] = "exit idle" end,
+             update = function(_, b) if b.time >= 1 then return "alert", 7 end end },
+    alert = { enter = function(_, b, value) b.value = value end },
+}
+local brain = Brain.new("owner", states, "idle")
+Brain.update(brain, 0.5)
+check(brain.current == "idle", "a state holds until it returns another")
+Brain.update(brain, 0.6)
+check(brain.current == "alert" and brain.value == 7 and brain.previous == "idle" and brain.time == 0
+      and log[2] == "exit idle", "a returned state is entered with its arguments after the old one exits")
+
+if #failures > 0 then error(table.concat(failures, "\n")) end
+)lua";
+    if (luaL_dostring(L, kAIChecks) != LUA_OK) {
+        std::cerr << "[FAIL] AI checks:\n" << lua_tostring(L, -1) << '\n';
+        ok = false;
+    }
+
+    // Smoke, tracers and the damage direction indicator (a chunk of its own: MSVC limits string literals to 16 KB).
+    static const char* kCombatChecks = R"lua(
+local failures = {}
+local function check(condition, message) if not condition then failures[#failures + 1] = message end end
+local function near(a, b, tolerance) return math.abs(a - b) <= (tolerance or 1e-4) end
+
+local Smoke = require("FPS.AI.Smoke")
+local cloud = { x = 10, y = 1.2, z = 0, age = 0, life = 20 }
+check(Smoke.radius(cloud) == 0, "a cloud has no size the moment it bursts")
+cloud.age = 5
+check(near(Smoke.radius(cloud), Smoke.MAX_RADIUS), "a cloud reaches full size")
+local eye, target = { x = 0, y = 1.6, z = 0 }, { x = 20, y = 1.4, z = 0 }
+check(Smoke.blocks(eye, target, { cloud }), "sight through the middle of a cloud is blocked")
+check(not Smoke.blocks(eye, { x = 0, y = 1.4, z = 20 }, { cloud }), "sight that passes beside a cloud is clear")
+check(not Smoke.blocks(eye, { x = 5, y = 1.4, z = 0 }, { cloud }), "sight that stops short of a cloud is clear")
+check(Smoke.blocks({ x = 10, y = 1.5, z = 1 }, target, { cloud }), "a looker standing in smoke cannot see out")
+cloud.age = 19.95
+check(not Smoke.blocks(eye, target, { cloud }), "a cloud that has nearly faded no longer blocks sight")
+
+local Registry = require("FPS.Registry")
+local Perception = require("FPS.AI.Perception")
+Physics = Physics or {}
+local realRaycast = Physics.raycast
+Physics.raycast = function() return nil end
+Registry.smokeClouds = { grenade = { x = 10, y = 1.2, z = 0, age = 5, life = 20 } }
+check(not Perception.clearLine(eye, target, {}, function() return false end),
+      "an enemy cannot see the player through a registered smoke cloud")
+Registry.smokeClouds = {}
+check(Perception.clearLine(eye, target, {}, function() return false end), "with the smoke gone it can")
+Physics.raycast = realRaycast
+
+local Tracers = require("FPS.Tracers")
+local flight = Tracers.newFlight(0, 0, 0, 1, 0, 0, 100, 0, 30)
+local done = Tracers.advance(flight, 0.1, nil)
+check(not done and near(flight.x, 10) and near(flight.travelled, 10), "a tracer flies at its speed")
+Tracers.advance(flight, 0.1, nil)
+done = Tracers.advance(flight, 0.1, nil)
+check(done and near(flight.x, 30) and near(flight.travelled, 30), "a tracer stops at its full distance")
+flight = Tracers.newFlight(0, 0, 0, 1, 0, 0, 100, 0, 100)
+done = Tracers.advance(flight, 0.1, function(x, y, z, dx, dy, dz, length) return 4 end)
+check(done and near(flight.x, 4), "a tracer stops where it hits")
+flight = Tracers.newFlight(0, 0, 0, 1, 0, 0, 100, 9.81, 1000)
+for _ = 1, 10 do Tracers.advance(flight, 0.05, nil) end
+check(flight.y < -1 and flight.dy < 0, "a tracer with gravity drops like the bullet")
+
+local DamageDirection = require("FPS.DamageDirection")
+local hits = { { x = 0, y = 0, z = -10, time = 0.0 }, { x = 10, y = 0, z = 0, time = 1.0 } }
+local shown = DamageDirection.compute({ x = 0, y = 0, z = 0 }, 0, hits, 1.2, 1.5, 4)
+check(#shown == 2 and near(shown[1].angle, 0, 0.01) and near(shown[2].angle, -math.pi / 2, 0.01),
+      "the newest hit comes first, and each points towards where it came from (facing +X, -Z is to the left)")
+check(near(shown[1].alpha, 1 - 0.2 / 1.5, 0.001) and near(shown[2].alpha, 0.2, 0.001), "older hits are fainter")
+check(#DamageDirection.compute({ x = 0, y = 0, z = 0 }, 0, hits, 5, 1.5, 4) == 0, "hits fade out completely")
+
+local Difficulty = require("FPS.AI.Difficulty")
+check(Difficulty.resolve("recruit").smokeFireChance == 0, "recruits never fire blind into smoke")
+local previous = 0
+for _, name in ipairs(Difficulty.levels()) do
+    local skill = Difficulty.resolve(name)
+    check(skill.smokeFireChance >= previous and skill.smokeFireSpreadDegrees > 0,
+          name .. " fires into smoke at least as often as the level below, with extra spread")
+    previous = skill.smokeFireChance
+end
+
+local BulletSounds = require("FPS.BulletSounds")
+local picked, repeated, last = {}, false, nil
+for i = 0, 199 do
+    local index = BulletSounds.pick(4, last, (i * 0.618) % 1)
+    repeated = repeated or index == last
+    picked[index] = true
+    last = index
+end
+check(not repeated and picked[1] and picked[2] and picked[3] and picked[4],
+      "random sounds use every choice and never play the same one twice in a row")
+check(BulletSounds.pick(1, 1, 0.5) == 1 and BulletSounds.pick(0, nil, 0.5) == nil, "one sound repeats, none plays nothing")
+check(BulletSounds.pick(3, nil, 0.9999) == 3 and BulletSounds.pick(3, 3, 0.9999) == 2, "picks stay in range")
+local head = { x = 10, y = 1.6, z = 0 }
+local at, gap = BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, 1, 0, 0, 50, head, 2.5)
+check(at and near(at.x, 10) and near(at.z, 1) and near(gap, 1), "a miss is heard where it passes closest to the head")
+check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 4 }, 1, 0, 0, 50, head, 2.5), "a wide miss is not heard")
+check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, 1, 0, 0, 6, head, 2.5),
+      "a shot that stopped short of the player is not heard")
+check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, -1, 0, 0, 50, head, 2.5),
+      "a shot fired away from the player is not heard")
+
+local Pickups = require("FPS.Pickups")
+local hurt = Pickups.plan("health", 50, { health = 70, maxHealth = 100 })
+check(hurt and hurt.health == 30 and Pickups.describe(hurt) == "+30 Health", "health heals only up to max")
+check(Pickups.plan("health", 50, { health = 100, maxHealth = 100 }) == nil, "health is left when already full")
+local rifle = { reserve = 100, maxReserve = 150, magazineSize = 30 }
+local pistol = { reserve = 48, maxReserve = 48, magazineSize = 12 }
+local ammo = Pickups.plan("ammo", 2, { weapons = { rifle, pistol }, activeWeapon = 1 })
+check(ammo and ammo.ammo[1] == 50 and ammo.ammo[2] == 0 and Pickups.describe(ammo, 1) == "+50 Ammo",
+      "ammo gives magazines to every weapon up to its starting reserve")
+check(Pickups.describe(ammo, 2) == "+50 Ammo", "the message falls back to the weapon that got the most")
+rifle.reserve = 150
+check(Pickups.plan("ammo", 2, { weapons = { rifle, pistol } }) == nil, "ammo is left when every weapon is full")
+local carried = { grenades = { frag = 4, smoke = 1 }, maxGrenades = { frag = 4, smoke = 4 } }
+local both = Pickups.plan("grenades", 1, carried)
+check(both and both.frag == nil and both.smoke == 1 and Pickups.describe(both) == "+1 Smoke",
+      "grenades top up whichever kind has room")
+check(Pickups.plan("frag", 1, carried) == nil, "a frag pickup is left when frags are full")
+
+local Controls = require("FPS.Controls")
+local encoded = Controls.encode({ { type = "keyboard", control = "W" }, { type = "keyboard", control = "S", scale = -1 },
+                                  { type = "gamepad_axis", control = "LEFT_Y", scale = -1 } })
+check(encoded == "key:W, key:S*-1, stick:LEFT_Y*-1", "bindings are written as kind:CONTROL with *scale")
+local decoded = Controls.decode(" key:w ,mouse:LEFT, pad:SOUTH, stick:LEFT_Y*-1 ")
+check(decoded and #decoded == 4 and decoded[1].type == "keyboard" and decoded[1].control == "W"
+      and decoded[2].type == "mouse_button" and decoded[3].type == "gamepad_button"
+      and decoded[4].type == "gamepad_axis" and decoded[4].scale == -1,
+      "hand-written bindings read back, any case and spacing")
+local bad, err = Controls.decode("key:SPACE, foo:BAR")
+check(bad == nil and err:find("foo:BAR"), "an unknown kind is refused with the offending part")
+check(#Controls.decode("") == 0, "an empty line clears the bindings")
+check(Controls.describe({ type = "gamepad_button", control = "SOUTH" }) == "A"
+      and Controls.describe({ type = "mouse_button", control = "3" }) == "MOUSE 4"
+      and Controls.describe({ type = "keyboard", control = "LEFT_SHIFT" }) == "LEFT SHIFT",
+      "controls are shown with player-facing names")
+
+local Match = require("FPS.Match")
+local match = Match.new({ scoreLimit = 3, timeLimitSeconds = 60, feedSize = 2 })
+Match.join(match, "you", "You", 1)
+Match.join(match, "ally", "Hale", 1)
+Match.join(match, "foe", "Kane", 2)
+local entry = Match.kill(match, "foe", "you")
+check(entry and entry.killer == "You" and entry.victim == "Kane" and entry.killerTeam == 1 and entry.victimTeam == 2,
+      "a kill names both sides and their teams")
+check(match.scores[1] == 1 and match.players.you.kills == 1 and match.players.foe.deaths == 1,
+      "a kill scores for the killer's team")
+entry = Match.kill(match, "ally", "you")
+check(match.scores[1] == 1 and match.players.you.kills == 1 and match.players.ally.deaths == 1 and entry.killer == nil,
+      "killing a teammate counts a death but no kill or score")
+Match.kill(match, "you", nil)
+check(match.scores[2] == 0 and match.players.you.deaths == 1, "a death no one caused scores nothing")
+check(#match.feed == 2 and match.feed[1].victim == "Hale" and match.feed[2].victim == "You",
+      "the kill feed keeps the newest entries")
+Match.kill(match, "foe", "ally")
+check(Match.kill(match, "foe", "you") ~= nil and match.winner == 1 and match.scores[1] == 3,
+      "reaching the score limit wins")
+check(Match.kill(match, "foe", "you") == nil and match.scores[1] == 3, "nothing counts after the match is over")
+local standings = Match.standings(match, 1)
+check(standings[1].id == "you" and standings[2].id == "ally", "standings put the most kills first")
+
+local timed = Match.new({ scoreLimit = 50, timeLimitSeconds = 10 })
+Match.join(timed, "a", "A", 1)
+Match.join(timed, "b", "B", 2)
+check(Match.clock(timed) == "0:10" and Match.step(timed, 4.5) == nil and Match.clock(timed) == "0:06",
+      "the clock counts down in whole seconds")
+check(Match.step(timed, 6) == "draw", "level scores when the time runs out are a draw")
+local ahead = Match.new({ scoreLimit = 50, timeLimitSeconds = 10 })
+Match.join(ahead, "a", "A", 1)
+Match.join(ahead, "b", "B", 2)
+Match.kill(ahead, "a", "b")
+check(Match.step(ahead, 11) == 2, "the team ahead when the time runs out wins")
+check(#Match.recentFeed(ahead, 5) == 0 and #Match.recentFeed(ahead, 20) == 1, "old kills leave the feed")
+
+local points = { { x = 0, z = 0 }, { x = 30, z = 0 }, { x = 60, z = 0 } }
+local spot = Match.pickSpawn(points, { { x = 55, z = 0 } }, 20, function() return 0.99 end)
+check(spot == points[2], "spawns are picked away from the enemy")
+check(Match.pickSpawn(points, { { x = 0, z = 0 }, { x = 60, z = 0 } }, 40, function() return 0 end) == points[2],
+      "with nowhere far enough, the spawn furthest from the nearest enemy is used")
+check(Match.pickSpawn({}, {}, 10, function() return 0 end) == nil, "no spawn points gives no spawn")
+
+if #failures > 0 then error(table.concat(failures, "\n")) end
+)lua";
+    if (luaL_dostring(L, kCombatChecks) != LUA_OK) {
+        std::cerr << "[FAIL] combat checks:\n" << lua_tostring(L, -1) << '\n';
+        ok = false;
     }
 
     lua_close(L);

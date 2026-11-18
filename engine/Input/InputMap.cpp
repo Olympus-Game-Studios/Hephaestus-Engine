@@ -216,6 +216,46 @@ int ResolveInputControl(InputBindingType type, const std::string& control)
     return -1;
 }
 
+std::string InputControlName(InputBindingType type, int code)
+{
+    if (code < 0) {
+        return {};
+    }
+    const auto first = [code](const std::unordered_map<std::string, int>& names,
+                              std::initializer_list<const char*> aliases) {
+        std::string best;
+        for (const auto& [name, value] : names) {
+            const bool alias = std::find_if(aliases.begin(), aliases.end(), [&name](const char* a) {
+                return name == a;
+            }) != aliases.end();
+            if (value == code && !alias && (best.empty() || name < best)) {
+                best = name;
+            }
+        }
+        return best;
+    };
+    switch (type) {
+    case InputBindingType::Keyboard:
+        if (code >= GLFW_KEY_A && code <= GLFW_KEY_Z) return std::string(1, static_cast<char>('A' + code - GLFW_KEY_A));
+        if (code >= GLFW_KEY_0 && code <= GLFW_KEY_9) return std::string(1, static_cast<char>('0' + code - GLFW_KEY_0));
+        return first(KeyCodes(), {"ESC", "RETURN", "SHIFT", "LEFT_CTRL", "CTRL", "CONTROL", "ALT", "SUPER",
+                                  "RIGHT_CTRL"});
+    case InputBindingType::MouseButton:
+        if (code == GLFW_MOUSE_BUTTON_LEFT) return "LEFT";
+        if (code == GLFW_MOUSE_BUTTON_RIGHT) return "RIGHT";
+        if (code == GLFW_MOUSE_BUTTON_MIDDLE) return "MIDDLE";
+        return code <= 7 ? std::string(1, static_cast<char>('0' + code)) : std::string();
+    case InputBindingType::MouseDelta:
+    case InputBindingType::MouseWheel:
+        return code == 0 ? "X" : (code == 1 ? "Y" : "");
+    case InputBindingType::GamepadButton:
+        return first(GamepadButtons(), {"A", "B", "X", "Y"});
+    case InputBindingType::GamepadAxis:
+        return first(GamepadAxes(), {});
+    }
+    return {};
+}
+
 InputMap InputMap::CreateDefault()
 {
     InputMap map;

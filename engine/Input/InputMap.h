@@ -50,5 +50,7 @@ struct InputMap {
 const char* ToString(InputBindingType type);
 bool InputBindingTypeFromString(const std::string& value, InputBindingType& outType);
 int ResolveInputControl(InputBindingType type, const std::string& control);
+// The name a map uses for a control code (the inverse of ResolveInputControl), or "" for none.
+std::string InputControlName(InputBindingType type, int code);
 
 } // namespace Hephaestus

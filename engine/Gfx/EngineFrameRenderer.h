@@ -22,15 +22,20 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <chrono>
 #include <filesystem>
 
+#include "VulkanPipeline.h"
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
+#include "../Scene/EditorIcons.h"
+#include <array>
 #include "VulkanGizmo.h"
 #include "VulkanLightGizmo.h"
 #include "SkyIrradiance.h"
 #include "ProbeBake.h"
 #include "ProbeGI.h"
+#include "../Assets/CompiledMaterialShader.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -75,6 +80,7 @@ struct RenderCamera {
     float positionZ = 5.0f;
     float yawDeg = 90.0f;
     float pitchDeg = 0.0f;
+    float rollDeg = 0.0f;
     float nearPlane = 0.1f;
     float farPlane = 10000.0f;
     float fovDeg = 60.0f;
@@ -115,7 +121,7 @@ struct FrameRenderConfig {
     // Selection for outline rendering (entt::entity as uint32_t)
     uint32_t selectedEntity = static_cast<uint32_t>(-1); // entt::null (primary)
     std::vector<uint32_t> selectedEntities;               // All selected entities for multi-select outlines
-    std::vector<uint32_t> editorHiddenEntities;
+    std::vector<uint32_t> editorHiddenEntities; ///< sorted ascending
     std::vector<uint32_t> editorIsolatedEntities;
     std::vector<uint32_t> editorLockedEntities;
     
@@ -186,6 +192,12 @@ public:
                      const FrameRenderConfig& config, float deltaTime);
 
     /**
+     * @brief Seconds between the last two frames' pacing points (where waiting for the GPU and the swapchain
+     * returns), or 0 when the last RenderFrame did not reach it. Gameplay stepped by it moves evenly on screen.
+     */
+    double PacedFrameSeconds() const { return m_pacedFrameSeconds; }
+
+    /**
      * @brief Shutdown and cleanup all resources.
      */
     void Shutdown();
@@ -203,6 +215,34 @@ public:
      */
     void SetProjectRoot(const std::string& root);
     const std::string& GetProjectRoot() const { return m_projectRoot; }
+
+    /**
+     * @brief Caps material textures to this many pixels on their longer side (0 = their full size). Textures
+     * already loaded are reloaded at the new size, so this waits for the GPU to go idle when anything changes.
+     */
+    void SetMaxMaterialTextureSize(uint32_t pixels);
+
+    /// Draws a material that is not a file (the Material Editor preview's) with a compiled graph; null removes it.
+    /// The component must stay at the same address while the override is set.
+    void SetMaterialShaderOverride(const MaterialComponent* material, const CompiledMaterialShader* shader);
+    uint32_t GetMaxMaterialTextureSize() const { return m_maxMaterialTextureSize; }
+
+    /**
+     * @brief A full-screen rifle scope drawn by the tone map pass: the scene through a round lens (barrel
+     * distortion, colour fringing and darker edges), a dark tube around it, black outside and an optional
+     * mil-dot reticle. A radius of 0 turns it off.
+     */
+    struct ScopeLens {
+        float radius = 0.0f;         ///< lens radius as a fraction of the screen height
+        float distortion = 0.12f;    ///< barrel distortion at the lens edge
+        float aberration = 0.006f;   ///< colour fringing at the edge, as a fraction of the radius
+        float edgeDarkening = 0.45f; ///< 0 to 1
+        float ringWidth = 0.14f;     ///< the tube's width, as a fraction of the radius
+        float opacity = 1.0f;        ///< fades the whole scope in and out
+        bool reticle = true;
+    };
+    void SetScopeLens(const ScopeLens& lens) { m_scopeLens = lens; }
+    const ScopeLens& GetScopeLens() const { return m_scopeLens; }
 
     // --- Runtime HUI Overlay ---
 
@@ -391,7 +431,7 @@ private:
     void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera,
                          const FrameRenderConfig& config);
     void updateLightingUBO(uint32_t imageIndex, Scene* scene, const RenderCamera& camera);
-    void recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera,
+    void recordShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const RenderCamera& camera,
                           const FrameRenderConfig& config);
     void recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
                         const FrameRenderConfig& config);
@@ -409,7 +449,11 @@ private:
     bool createDebugOverlayResources();
     bool createToneMapResources();
     void cleanupToneMapResources();
-    void recordToneMap(VkCommandBuffer cmd);
+    void recordToneMap(VkCommandBuffer cmd, Scene* scene, uint32_t imageIndex);
+    bool createBloomResources();
+    void cleanupBloomResources();
+    bool bloomEnabled(Scene* scene);
+    void recordBloom(VkCommandBuffer cmd, const EnvironmentComponent::PostProcess& post);
     bool createOutlineResources();
     void cleanupOutlineResources();
     
@@ -511,11 +555,19 @@ private:
     };
     SkinnedPass m_skinned;
 
+    // One palette per frame in flight: a frame still on the GPU keeps reading its own pose while the next is written.
     struct CharacterBoneGpu {
-        VulkanBuffer buffer;
-        VkDescriptorSet set = VK_NULL_HANDLE;
+        VulkanBuffer buffers[MAX_FRAMES_IN_FLIGHT];
+        VkDescriptorSet sets[MAX_FRAMES_IN_FLIGHT] = {};
+        uint64_t writtenFrame[MAX_FRAMES_IN_FLIGHT] = {};
+        uint64_t lastUsedFrame = 0;
     };
     std::unordered_map<uint32_t, CharacterBoneGpu> m_characterBonePalettes;
+    uint64_t m_frameSerial = 0;
+    std::chrono::steady_clock::time_point m_lastPacedTime{};
+    bool m_hasPacedTime = false;
+    double m_pacedFrameSeconds = 0.0;
+    void releaseCharacterBonePalette(CharacterBoneGpu& gpu);
 
     // Material texture slots
     struct MaterialTextureSlot {
@@ -523,7 +575,11 @@ private:
         VulkanTexture texture;
         VkDescriptorImageInfo descriptor{};
         std::string key;
+        std::string resolvedPath;
+        bool linear = false;
     };
+    uint32_t m_maxMaterialTextureSize = 0;
+    ScopeLens m_scopeLens;
     std::vector<MaterialTextureSlot> m_materialTextureSlots;
     std::unordered_map<std::string, uint32_t> m_materialTextureLookup;
     std::vector<std::vector<uint32_t>> m_pendingTextureSlotUpdates;
@@ -535,16 +591,44 @@ private:
     static constexpr uint32_t kMaxMaterialsPerFrame = 1024;
 
     // Material asset cache (hot-reloads from .hematerial files)
+    // A material's compiled graph (`.hemshader`); its pipelines are built on first draw and dropped with the swapchain.
+    struct MaterialShaderProgram {
+        CompiledMaterialShader compiled;
+        SurfacePipelines pipelines;
+        bool pipelinesFailed = false;
+    };
     struct MaterialCacheEntry {
         MaterialComponent material;
         std::filesystem::file_time_type lastWriteTime{};
+        std::filesystem::file_time_type shaderWriteTime{};
+        std::unique_ptr<MaterialShaderProgram> shader;
     };
+    std::unordered_map<const MaterialComponent*, MaterialShaderProgram*> m_materialShaderPrograms;
+    std::unordered_map<const MaterialComponent*, std::unique_ptr<MaterialShaderProgram>> m_materialShaderOverrides;
+    /// The compiled graph's pipelines for a material, or null to draw it with the standard surface shader.
+    const SurfacePipelines* materialShaderPipelines(const MaterialComponent* material);
+    void destroyMaterialShaderPipelines();
     std::unordered_map<std::string, MaterialCacheEntry> m_materialAssetCache;
     std::unordered_map<std::string, std::filesystem::file_time_type> m_materialAssetCacheFailed;
+    // What each material path resolved to and when its file was last checked, so draws don't touch the disk.
+    struct MaterialPathCheck {
+        const MaterialComponent* material = nullptr;
+        std::chrono::steady_clock::time_point checkedAt{};
+    };
+    std::unordered_map<std::string, MaterialPathCheck> m_materialPathChecks;
+    static constexpr std::chrono::milliseconds kMaterialRecheckInterval{500};
+    // Each model's default slot materials (MeshSettings, <model>.hpmesh), rechecked like material paths.
+    struct MeshDefaultsCheck {
+        std::vector<std::string> materials;
+        std::chrono::steady_clock::time_point checkedAt{};
+    };
+    std::unordered_map<std::string, MeshDefaultsCheck> m_meshDefaultMaterials;
+    const std::vector<std::string>& meshDefaultMaterials(const std::string& meshAssetPath);
 
     // Material system helpers
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
-    uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
+    const MaterialComponent* loadMaterialFromPath(const std::string& materialPath);
+    uint32_t ensureMaterialTextureSlot(const std::string& rawPath, bool linear = false);
     void updateEnvironmentReflectionDescriptor(uint32_t imageIndex);
     EnvironmentComponent* findEnvironment(Scene* scene);
     const MaterialComponent* resolveMaterialForSlot(Entity& entity, const MeshRendererComponent& renderer, int slot);
@@ -592,14 +676,21 @@ private:
     bool m_traceShadows = false;    // some light asked for ray-traced shadows this frame (set by updateLightingUBO)
     bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
     bool createLocalShadowResources();
-    void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
+    void transitionShadowMapForSampling(VkImage image);
+    void recordLocalShadowPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const FrameRenderConfig& config);
     // The ray-query build of triangle.frag reads the scene acceleration structure in ProbeGI's set.
     const char* surfaceFragmentShader() const {
         return m_probeGI.HardwareRayTracingAvailable() ? "triangle_rt.frag.spv" : "triangle.frag.spv";
     }
-    void drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config, const Mat4& viewProj,
-                           const Vec3* cullCenter, float cullRadius);
+    void drawShadowCasters(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, const FrameRenderConfig& config,
+                           const Mat4& viewProj, const Vec3* cullCenter, float cullRadius);
+    // Masked (alpha cutout) static surfaces in the shadow passes; reads materialTextures from the main set 0.
+    VkPipelineLayout m_maskedShadowLayout = VK_NULL_HANDLE;
+    VkPipeline m_maskedShadowPipeline = VK_NULL_HANDLE;
+    bool createMaskedShadowPipeline();
+    void destroyMaskedShadowPipeline();
 
+    std::chrono::steady_clock::time_point m_startTime = std::chrono::steady_clock::now();  // material graph Time
     ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 
@@ -613,12 +704,9 @@ private:
     };
     BillboardPipeline m_billboardPipeline;
     VkDescriptorPool m_billboardDescriptorPool = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_billboardDescriptorSets_Point;
-    std::vector<VkDescriptorSet> m_billboardDescriptorSets_Spot;
-    std::vector<VkDescriptorSet> m_billboardDescriptorSets_Directional;
-    VulkanTexture m_pointLightTexture;
-    VulkanTexture m_spotLightTexture;
-    VulkanTexture m_directionalLightTexture;
+    // Per Hephaestus::EditorIcon; an icon whose image is missing has no sets and is not drawn.
+    std::array<VulkanTexture, static_cast<size_t>(Hephaestus::EditorIcon::Count)> m_editorIconTextures;
+    std::array<std::vector<VkDescriptorSet>, static_cast<size_t>(Hephaestus::EditorIcon::Count)> m_editorIconSets;
 
     // Billboard ID picking pipeline (renders billboards into the entity-ID buffer)
     struct BillboardIdPipeline {
@@ -731,8 +819,25 @@ private:
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
+        uint32_t frame = 0;
+        bool bloomThisFrame = false;
     };
     ToneMap m_toneMap;
+
+    struct Bloom {
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        std::vector<VkImageView> mipViews;
+        std::vector<VkExtent2D> mipSizes;
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        std::vector<VkDescriptorSet> sets;  // bright pass, downsamples, then upsamples
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        bool layoutReady = false;
+    };
+    Bloom m_bloom;
 
     // Entity ID picker for viewport selection
     struct IdPicker {
@@ -830,8 +935,23 @@ private:
     Mat4 m_frameViewMatrix = Mat4::Identity();        // camera of the frame being recorded
     Mat4 m_frameProjectionMatrix = Mat4::Identity();
     Vec3 m_frameCameraPos = Vec3(0, 0, 0);
+    Mat4 m_frameViewFrame = Mat4::Identity();         // forward/up/right world frame of the frame's view
 
     bool m_editorOverlays = false;
 };
+
+// Releases and erases the entries (with a lastUsedFrame) that no frame still in flight can be reading.
+template <typename Map, typename Release>
+void RetireIdleEntries(Map& entries, uint64_t frame, uint64_t framesInFlight, Release&& release)
+{
+    for (auto it = entries.begin(); it != entries.end();) {
+        if (frame - it->second.lastUsedFrame >= framesInFlight) {
+            release(it->second);
+            it = entries.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 } // namespace Hephaestus

@@ -29,6 +29,30 @@
 namespace Hephaestus {
 namespace QtEditor {
 
+namespace {
+struct PostField {
+    const char* label;
+    const char* tip;
+    float EnvironmentComponent::PostProcess::* field;
+    double min;
+    double max;
+    double step;
+};
+
+const PostField kPostFields[9] = {
+    {"Exposure:", "Brightens or darkens the whole frame, in stops.", &EnvironmentComponent::PostProcess::exposure, -6.0, 6.0, 0.1},
+    {"Contrast:", "1 leaves contrast unchanged.", &EnvironmentComponent::PostProcess::contrast, 0.0, 3.0, 0.05},
+    {"Saturation:", "1 leaves colours unchanged; 0 is black and white.", &EnvironmentComponent::PostProcess::saturation, 0.0, 3.0, 0.05},
+    {"Vignette:", "Darkens the edges of the screen.", &EnvironmentComponent::PostProcess::vignette, 0.0, 1.0, 0.05},
+    {"Film Grain:", "Adds moving noise.", &EnvironmentComponent::PostProcess::grain, 0.0, 1.0, 0.05},
+    {"Scanlines:", "Darkens every third row of pixels.", &EnvironmentComponent::PostProcess::scanlines, 0.0, 1.0, 0.05},
+    {"Bloom:", "How strongly bright areas glow; 0 turns bloom off.", &EnvironmentComponent::PostProcess::bloomIntensity, 0.0, 4.0, 0.05},
+    {"Bloom Threshold:", "Scene brightness where the glow starts.", &EnvironmentComponent::PostProcess::bloomThreshold, 0.0, 10.0, 0.05},
+    {"Bloom Radius:", "How far the glow spreads.", &EnvironmentComponent::PostProcess::bloomRadius, 0.0, 1.0, 0.05},
+};
+constexpr int kPostFieldCount = static_cast<int>(sizeof(kPostFields) / sizeof(kPostFields[0]));
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Helpers (same sRGB <-> linear as LightInspector)
 // ---------------------------------------------------------------------------
@@ -220,6 +244,23 @@ void EnvironmentInspector::buildUI()
     renderDistForm->addRow(m_renderDistGroup);
     mainLayout->addLayout(renderDistForm);
 
+    mainLayout->addWidget(new QLabel(tr("<b>Post Processing</b>")));
+    auto* postForm = new QFormLayout();
+    postForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    for (int i = 0; i < kPostFieldCount; ++i) {
+        m_postSpins[i] = new QDoubleSpinBox();
+        m_postSpins[i]->setRange(kPostFields[i].min, kPostFields[i].max);
+        m_postSpins[i]->setSingleStep(kPostFields[i].step);
+        m_postSpins[i]->setDecimals(2);
+        m_postSpins[i]->setToolTip(tr(kPostFields[i].tip));
+        postForm->addRow(tr(kPostFields[i].label), m_postSpins[i]);
+    }
+    m_postFilterBtn = new QPushButton();
+    m_postFilterBtn->setFixedHeight(24);
+    m_postFilterBtn->setToolTip(tr("Multiplies every colour; white leaves the image unchanged."));
+    postForm->addRow(tr("Color Filter:"), m_postFilterBtn);
+    mainLayout->addLayout(postForm);
+
     mainLayout->addLayout(form);
 }
 
@@ -260,6 +301,11 @@ void EnvironmentInspector::connectSignals()
     });
     connect(m_renderDistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_renderDistSpin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
+    for (QDoubleSpinBox* spin : m_postSpins) {
+        connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
+    }
+    connect(m_postFilterBtn, &QPushButton::clicked, this, &EnvironmentInspector::pickPostFilter);
 
     connect(m_resetIntensityBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetIntensity);
     connect(m_resetReflectionIntensityBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetReflectionIntensity);
@@ -305,6 +351,13 @@ void EnvironmentInspector::Refresh()
     m_infiniteRenderDistCheck->setChecked(env.infiniteRenderDistance);
     m_renderDistSpin->setValue(static_cast<double>(env.renderDistance));
 
+    for (int i = 0; i < kPostFieldCount; ++i) {
+        m_postSpins[i]->setValue(static_cast<double>(env.post.*kPostFields[i].field));
+    }
+    m_postFilter = vec3ToQColor(env.post.colorFilter);
+    m_postFilterBtn->setStyleSheet(QString("background-color: %1; border: 1px solid #555;").arg(m_postFilter.name()));
+    m_postFilterBtn->setText(m_postFilter.name().toUpper());
+
     blockAllSignals(false);
     m_updating = false;
 
@@ -332,6 +385,10 @@ void EnvironmentInspector::applyToComponent()
         env.enableRenderDistance = m_enableRenderDistCheck->isChecked();
         env.infiniteRenderDistance = m_infiniteRenderDistCheck->isChecked();
         env.renderDistance = static_cast<float>(m_renderDistSpin->value());
+        for (int i = 0; i < kPostFieldCount; ++i) {
+            env.post.*kPostFields[i].field = static_cast<float>(m_postSpins[i]->value());
+        }
+        env.post.colorFilter = qcolorToVec3(m_postFilter);
     });
 }
 
@@ -356,6 +413,9 @@ void EnvironmentInspector::blockAllSignals(bool block)
     m_enableRenderDistCheck->blockSignals(block);
     m_infiniteRenderDistCheck->blockSignals(block);
     m_renderDistSpin->blockSignals(block);
+    for (QDoubleSpinBox* spin : m_postSpins) {
+        spin->blockSignals(block);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +432,19 @@ void EnvironmentInspector::pickSolidColor()
         m_solidColorBtn->setText(m_currentSolidColor.name().toUpper());
         applyToComponent();
     }
+}
+
+void EnvironmentInspector::pickPostFilter()
+{
+    QColor chosen = QColorDialog::getColor(m_postFilter, this, tr("Color Filter"));
+    if (!chosen.isValid()) {
+        return;
+    }
+    m_postFilter = chosen;
+    m_postFilterBtn->setStyleSheet(QString("background-color: %1; border: 1px solid #555;").arg(m_postFilter.name()));
+    m_postFilterBtn->setText(m_postFilter.name().toUpper());
+    applyToComponent();
+    EndEdit();
 }
 
 void EnvironmentInspector::browseHDRI()

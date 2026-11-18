@@ -7,15 +7,49 @@
 
 #include "AssetPathPolicy.h"
 #include "CharacterRuntime.h"
+#include "FbxDocument.h"
+#include "ModelMaterialImport.h"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <system_error>
 #include <unordered_map>
 
 namespace Hephaestus {
 namespace {
+
+std::string SanitizeCharacterName(std::string name);
+
+// Gives each empty submesh slot a material built from the FBX material of the same name.
+void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std::filesystem::path& sourceFbx,
+                            const std::filesystem::path& ownedAbs, CharacterAsset& asset) {
+    std::vector<FbxMaterialInfo> materials;
+    std::string error;
+    if (!ReadFbxMaterials(sourceFbx, materials, error)) {
+        return;
+    }
+    MaterialAssetWriter writer(projectRoot, ownedAbs / "materials");
+    for (CharacterSubmeshSlot& slot : asset.mesh.submeshes) {
+        if (!slot.material.empty()) {
+            continue;
+        }
+        const auto found = std::find_if(materials.begin(), materials.end(),
+                                        [&](const FbxMaterialInfo& m) { return m.name == slot.name; });
+        if (found == materials.end()) {
+            continue;
+        }
+        std::string writeError;
+        const std::string written =
+            writer.Write(SourceMaterialFromFbx(*found), SanitizeCharacterName(slot.name), writeError);
+        if (!written.empty()) {
+            slot.material = written;
+        }
+    }
+}
 
 std::string ToLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -521,6 +555,9 @@ bool CharacterImporter::Import(const CharacterImportRequest& request,
     CharacterAsset asset = BuildAssetFromImport(name, meshPortable, inspect.imported,
                                                 request.createController, controllerPortable);
     ApplyPersistedImportSettings(asset, request.settings, inspect.imported);
+    if (IsFbxPath(request.sourceGlb)) {
+        ImportFbxSlotMaterials(request.projectRoot, request.sourceGlb, ownedAbs, asset);
+    }
     if (!CharacterSerializer::Serialize(asset, characterAbs, outError)) {
         std::filesystem::remove(characterAbs, ec);
         std::filesystem::remove_all(ownedAbs, ec);

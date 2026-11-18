@@ -61,6 +61,33 @@ private:
     FbxSpaceConversion m_resolved = FbxSpaceConversion::ModifyGeometry;
 };
 
+/// An FBX texture as either embedded bytes or a file found next to the FBX.
+struct FbxTextureSource {
+    std::vector<uint8_t> embedded;
+    std::string extension; ///< ".png", ".jpg", ... for embedded bytes
+    std::filesystem::path file;
+    bool Exists() const { return !embedded.empty() || !file.empty(); }
+};
+
+struct FbxMaterialInfo {
+    std::string name;
+    Vec3 baseColor{1.0f, 1.0f, 1.0f};
+    float roughness = 0.5f;
+    float metallic = 0.0f;
+    FbxTextureSource baseColorTexture;
+    FbxTextureSource normalTexture;
+    FbxTextureSource roughnessTexture;   ///< roughness map, used as is
+    FbxTextureSource glossinessTexture;  ///< glossiness map (Mixamo, Phong exporters), scales shininessExponent
+    FbxTextureSource metallicTexture;
+    FbxTextureSource aoTexture;
+    float shininessExponent = 20.0f;      ///< FBX ShininessExponent the glossiness map scales
+};
+
+/// Materials of an FBX with their base colour and normal textures (embedded or beside the file).
+bool ReadFbxMaterials(const std::filesystem::path& path,
+                      std::vector<FbxMaterialInfo>& outMaterials,
+                      std::string& outError);
+
 bool FbxFileContainsSkin(const std::filesystem::path& path, bool& outHasSkin, std::string& outError);
 
 } // namespace Hephaestus

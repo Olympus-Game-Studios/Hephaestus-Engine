@@ -44,6 +44,53 @@ static void EndSingleTimeCommands(VkDevice device, VkCommandPool commandPool, Vk
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 
+void CappedTextureExtent(uint32_t width, uint32_t height, uint32_t maxDimension, uint32_t& outWidth, uint32_t& outHeight)
+{
+    while (maxDimension > 0 && std::max(width, height) > maxDimension && width > 1 && height > 1) {
+        width /= 2;
+        height /= 2;
+    }
+    outWidth = width;
+    outHeight = height;
+}
+
+bool DownscaleRgba8ToFit(const unsigned char* pixels, uint32_t width, uint32_t height, uint32_t maxDimension,
+                         std::vector<unsigned char>& out, uint32_t& outWidth, uint32_t& outHeight)
+{
+    uint32_t targetWidth = width;
+    uint32_t targetHeight = height;
+    CappedTextureExtent(width, height, maxDimension, targetWidth, targetHeight);
+    if (targetWidth == width && targetHeight == height) {
+        return false;
+    }
+    std::vector<unsigned char> current(pixels, pixels + static_cast<size_t>(width) * height * 4);
+    while (width > targetWidth || height > targetHeight) {
+        const uint32_t nextWidth = width / 2;
+        const uint32_t nextHeight = height / 2;
+        std::vector<unsigned char> next(static_cast<size_t>(nextWidth) * nextHeight * 4);
+        for (uint32_t y = 0; y < nextHeight; ++y) {
+            for (uint32_t x = 0; x < nextWidth; ++x) {
+                for (uint32_t c = 0; c < 4; ++c) {
+                    uint32_t sum = 0;
+                    for (uint32_t dy = 0; dy < 2; ++dy) {
+                        for (uint32_t dx = 0; dx < 2; ++dx) {
+                            sum += current[(static_cast<size_t>(y * 2 + dy) * width + x * 2 + dx) * 4 + c];
+                        }
+                    }
+                    next[(static_cast<size_t>(y) * nextWidth + x) * 4 + c] = static_cast<unsigned char>((sum + 2) / 4);
+                }
+            }
+        }
+        current = std::move(next);
+        width = nextWidth;
+        height = nextHeight;
+    }
+    out = std::move(current);
+    outWidth = width;
+    outHeight = height;
+    return true;
+}
+
 bool VulkanTexture::LoadFromFile(
     VmaAllocator allocator,
     VkDevice device,
@@ -51,8 +98,11 @@ bool VulkanTexture::LoadFromFile(
     VkCommandPool commandPool,
     VkQueue graphicsQueue,
     const std::string& filepath,
-    bool generateMipmaps)
+    bool generateMipmaps,
+    bool srgb,
+    uint32_t maxDimension)
 {
+    const VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     // Load image using stb_image
     int texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load(filepath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -63,6 +113,13 @@ bool VulkanTexture::LoadFromFile(
 
     width = static_cast<uint32_t>(texWidth);
     height = static_cast<uint32_t>(texHeight);
+    sourceWidth = width;
+    sourceHeight = height;
+    std::vector<unsigned char> halved;
+    const stbi_uc* source = pixels;
+    if (DownscaleRgba8ToFit(pixels, width, height, maxDimension, halved, width, height)) {
+        source = halved.data();
+    }
     
     // Calculate mip levels
     if (generateMipmaps) {
@@ -85,10 +142,12 @@ bool VulkanTexture::LoadFromFile(
     // Copy pixel data to staging buffer
     void* data;
     vmaMapMemory(allocator, stagingBuffer.allocation, &data);
-    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    memcpy(data, source, static_cast<size_t>(imageSize));
     vmaUnmapMemory(allocator, stagingBuffer.allocation);
 
     stbi_image_free(pixels);
+    halved.clear();
+    halved.shrink_to_fit();
 
     // Create image
     VkImageCreateInfo imageInfo{};
@@ -99,7 +158,7 @@ bool VulkanTexture::LoadFromFile(
     imageInfo.extent.depth = 1;
     imageInfo.mipLevels = mipLevels;
     imageInfo.arrayLayers = 1;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageInfo.format = format;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -129,14 +188,14 @@ bool VulkanTexture::LoadFromFile(
     // Generate mipmaps or transition to shader read
     if (generateMipmaps) {
         GenerateMipmaps(device, physicalDevice, commandPool, graphicsQueue, 
-            VK_FORMAT_R8G8B8A8_SRGB, width, height);
+            format, width, height);
     } else {
         TransitionImageLayout(device, commandPool, graphicsQueue,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
     // Create image view
-    CreateImageView(device, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+    CreateImageView(device, format, VK_IMAGE_ASPECT_COLOR_BIT);
 
     // Create sampler
     CreateSampler(device, physicalDevice);
@@ -151,7 +210,8 @@ bool VulkanTexture::LoadHDRFromFile(
     VkCommandPool commandPool,
     VkQueue graphicsQueue,
     const std::string& filepath,
-    std::vector<float>* outPixels)
+    std::vector<float>* outPixels,
+    bool generateMipmaps)
 {
     // Load HDR image using stbi_loadf (returns float data)
     int texWidth, texHeight, texChannels;
@@ -165,9 +225,52 @@ bool VulkanTexture::LoadHDRFromFile(
 
     width = static_cast<uint32_t>(texWidth);
     height = static_cast<uint32_t>(texHeight);
-    mipLevels = 1; // No mipmaps for HDR environment maps typically
+    // Float blits are not guaranteed to filter, so the mip chain is a CPU box filter.
+    std::vector<float> levels(pixels, pixels + static_cast<size_t>(width) * height * 4);
+    std::vector<VkBufferImageCopy> regions;
+    {
+        uint32_t levelWidth = width, levelHeight = height;
+        size_t levelOffset = 0;
+        mipLevels = generateMipmaps
+            ? static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1
+            : 1;
+        for (uint32_t level = 0; level < mipLevels; ++level) {
+            VkBufferImageCopy region{};
+            region.bufferOffset = static_cast<VkDeviceSize>(levelOffset * sizeof(float));
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.mipLevel = level;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {levelWidth, levelHeight, 1};
+            regions.push_back(region);
+            if (level + 1 == mipLevels) {
+                break;
+            }
+            const uint32_t nextWidth = std::max(1u, levelWidth / 2);
+            const uint32_t nextHeight = std::max(1u, levelHeight / 2);
+            const size_t nextOffset = levels.size();
+            levels.resize(nextOffset + static_cast<size_t>(nextWidth) * nextHeight * 4);
+            for (uint32_t y = 0; y < nextHeight; ++y) {
+                for (uint32_t x = 0; x < nextWidth; ++x) {
+                    for (uint32_t c = 0; c < 4; ++c) {
+                        float sum = 0.0f;
+                        for (uint32_t dy = 0; dy < 2; ++dy) {
+                            for (uint32_t dx = 0; dx < 2; ++dx) {
+                                const uint32_t sx = std::min(levelWidth - 1, x * 2 + dx);
+                                const uint32_t sy = std::min(levelHeight - 1, y * 2 + dy);
+                                sum += levels[levelOffset + (static_cast<size_t>(sy) * levelWidth + sx) * 4 + c];
+                            }
+                        }
+                        levels[nextOffset + (static_cast<size_t>(y) * nextWidth + x) * 4 + c] = sum * 0.25f;
+                    }
+                }
+            }
+            levelOffset = nextOffset;
+            levelWidth = nextWidth;
+            levelHeight = nextHeight;
+        }
+    }
 
-    VkDeviceSize imageSize = width * height * 4 * sizeof(float); // RGBA float
+    VkDeviceSize imageSize = levels.size() * sizeof(float);
 
     // Create staging buffer
     VulkanBuffer stagingBuffer;
@@ -181,7 +284,7 @@ bool VulkanTexture::LoadHDRFromFile(
     // Copy pixel data to staging buffer
     void* data;
     vmaMapMemory(allocator, stagingBuffer.allocation, &data);
-    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    memcpy(data, levels.data(), static_cast<size_t>(imageSize));
     vmaUnmapMemory(allocator, stagingBuffer.allocation);
 
     if (outPixels) {
@@ -218,8 +321,12 @@ bool VulkanTexture::LoadHDRFromFile(
     TransitionImageLayout(device, commandPool, graphicsQueue, 
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-    // Copy buffer to image
-    CopyBufferToImage(device, commandPool, graphicsQueue, stagingBuffer.buffer, width, height);
+    {
+        VkCommandBuffer commandBuffer = BeginSingleTimeCommands(device, commandPool);
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               static_cast<uint32_t>(regions.size()), regions.data());
+        EndSingleTimeCommands(device, commandPool, graphicsQueue, commandBuffer);
+    }
 
     stagingBuffer.Destroy(allocator);
 

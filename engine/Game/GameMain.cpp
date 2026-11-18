@@ -88,6 +88,7 @@
 
 // Scripting
 #include "../Audio/AudioEngine.h"
+#include "../Core/AppPaths.h"
 #include "../Core/SimulationStep.h"
 #if HEPHAESTUS_GAME_SCRIPTING
 #include "../Scripting/LuaScriptEngine.h"
@@ -127,6 +128,7 @@ struct GameCamera {
     Vec3 position = Vec3(0.0f, 2.0f, 5.0f);
     float yawDeg = -90.0f;
     float pitchDeg = 0.0f;
+    float rollDeg = 0.0f;
     float fovDeg = 60.0f;
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;
@@ -138,6 +140,7 @@ struct GameCamera {
         camera.positionZ = position.z;
         camera.yawDeg = yawDeg;
         camera.pitchDeg = pitchDeg;
+        camera.rollDeg = rollDeg;
         camera.fovDeg = fovDeg;
         camera.nearPlane = nearPlane;
         camera.farPlane = farPlane;
@@ -184,6 +187,7 @@ static void ApplyActiveCameraView(const Hephaestus::ActiveCameraView& view, Game
     camera.position = view.position;
     camera.yawDeg = view.yawRadians * kRadToDeg;
     camera.pitchDeg = view.pitchRadians * kRadToDeg;
+    camera.rollDeg = view.rollRadians * kRadToDeg;
     camera.fovDeg = view.fovDegrees;
     camera.nearPlane = view.nearPlane;
     camera.farPlane = view.farPlane;
@@ -418,6 +422,12 @@ static void LoadConfigFile(GameConfig& config) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+    // Test packages keep saves, settings and logs out of the player's real folder.
+    if (const char* testRoot = std::getenv("HEPHAESTUS_USER_DATA_ROOT"); testRoot && *testRoot) {
+        Hephaestus::SetUserDataRootOverride(testRoot);
+    }
+#endif
     // ── Bootstrap ─────────────────────────────────
     BootstrapConfig bootstrapConfig;
     bootstrapConfig.applicationName = "HephaestusGame";
@@ -715,6 +725,7 @@ int main(int argc, char* argv[]) {
     // ── Runtime UI ────────────────────────────────
     HUI::UISystem uiSystem;
     HUI::UIContext uiContext;
+    uiContext.SetReferenceHeight(HUI::kGameUIReferenceHeight);
     HUI::UIRenderer uiRenderer;
     uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
     bool sceneReloadFailed = false;
@@ -726,6 +737,9 @@ int main(int argc, char* argv[]) {
     Bootstrap::BeginStage(InitStage::Scripting);
     
     LuaScriptEngine luaEngine;
+#ifndef NDEBUG
+    luaEngine.SetDevelopment(true); // Development packages run the Debug player
+#endif
     PluginScriptHost pluginScripts;
     pluginScripts.SetLuaEngine(&luaEngine);
     pluginScripts.SetInputSystem(&inputSystem);
@@ -738,22 +752,31 @@ int main(int argc, char* argv[]) {
         }
     }
     bool sceneReloadRequested = false;
+    std::string pendingScenePath;
     try {
         luaEngine.Initialize(&scene, window);
         // Set project root so script search paths resolve correctly on any device
         luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
+        {
+            const fs::path userData =
+                Hephaestus::UserDataFor(g_Config.projectName.empty() ? std::string("HephaestusGame") : g_Config.projectName);
+            luaEngine.SetStorageRoot(userData.empty() ? fs::path{} : userData / "Saves");
+            luaEngine.SetConfigRoot(userData.empty() ? fs::path{} : userData / "Saved" / "Config");
+        }
         luaEngine.SetFrameRenderer(&frameRenderer);
         luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
         luaEngine.SetPluginScriptHost(&pluginScripts);
-        luaEngine.SetSceneReloadCallback([&scene, &sceneReloadRequested, &sceneReloadProcessing]() {
-            if (!scene.IsReloadable() || sceneReloadRequested || sceneReloadProcessing) {
-                return false;
-            }
-            sceneReloadRequested = true;
-            return true;
-        });
+        luaEngine.SetSceneReloadCallback(
+            [&scene, &sceneReloadRequested, &sceneReloadProcessing, &pendingScenePath](const std::string& scenePath) {
+                if ((scenePath.empty() && !scene.IsReloadable()) || sceneReloadRequested || sceneReloadProcessing) {
+                    return false;
+                }
+                pendingScenePath = scenePath;
+                sceneReloadRequested = true;
+                return true;
+            });
         HP_LOG(Info, "Lua scripting engine initialized");
     } catch (const std::exception& e) {
         HP_LOG(Error, std::string("Failed to initialize Lua: ") + e.what());
@@ -855,280 +878,296 @@ int main(int argc, char* argv[]) {
         Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
     }
     
-    try {
-        auto meshView = scene.GetEntitiesWith<MeshRendererComponent>();
-        int meshEntityCount = 0;
-        int loadedCount = 0;
-        
-        for (auto entityHandle : meshView) {
-            meshEntityCount++;
-            
-            try {
-                Entity entity(entityHandle, &scene);
-                
-                // Get entity name for better logging
-                std::string entityName = "Entity_" + std::to_string(meshEntityCount);
-                if (entity.HasComponent<TagComponent>()) {
-                    entityName = entity.GetComponent<TagComponent>().tag;
-                }
-                
-                auto& renderer = entity.GetComponent<MeshRendererComponent>();
-                if (IsRuntimeGeneratedVisual(renderer)) {
-                    loadedCount++;
-                    continue;
-                }
-                
-                // Skip entities without mesh asset paths
-                if (renderer.meshAssetPath.empty()) {
-                    HP_LOG(Info, "  Skipping " + entityName + " (no mesh path)");
-                    continue;
-                }
-                
-                // Handle builtin:// meshes by assigning pre-generated handles
-                if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
-                    std::string builtinKey = renderer.meshAssetPath;
-                    // Normalize to lowercase for comparison
-                    std::transform(builtinKey.begin(), builtinKey.end(), builtinKey.begin(), ::tolower);
-                    
-                    size_t builtinHandle = frameRenderer.GetMeshHandle(builtinKey);
-                    if (builtinHandle != SIZE_MAX) {
-                        renderer.meshHandle = builtinHandle;
-                        HP_LOG(Info, "  " + entityName + " using builtin mesh: " + renderer.meshAssetPath + " (handle " + std::to_string(renderer.meshHandle) + ")");
-                        loadedCount++;
-                    } else {
-                        HP_LOG(Warning, "  " + entityName + " references unknown builtin mesh: " + renderer.meshAssetPath);
-                    }
-                    continue;
-                }
-                
-                // Skip .hpscene files (scene references, not meshes)
-                if (renderer.meshAssetPath.find(".hpscene") != std::string::npos) {
-                    HP_LOG(Info, "  Skipping " + entityName + " (scene reference, not a mesh)");
-                    continue;
-                }
-                
-                std::string meshKey = renderer.meshAssetPath;
-                HP_LOG(Info, "  Processing " + entityName + " -> " + meshKey);
-                
-                // Check if already loaded
-                size_t cachedIdx = frameRenderer.GetMeshHandle(meshKey);
-                if (cachedIdx != SIZE_MAX) {
-                    renderer.meshHandle = cachedIdx;
-                    
-                    // Sync submesh count from cached mesh
-                    const MeshGPU& cachedMesh = *frameRenderer.GetMesh(cachedIdx);
-                    int cachedSubmeshCount = cachedMesh.submeshes.empty() ? 1 : static_cast<int>(cachedMesh.submeshes.size());
-                    if (renderer.submeshCount != cachedSubmeshCount) {
-                        HP_LOG(Info, "    Syncing submeshCount from cached mesh: " + std::to_string(renderer.submeshCount) + " -> " + std::to_string(cachedSubmeshCount));
-                        renderer.submeshCount = cachedSubmeshCount;
-                    }
-                    
-                    HP_LOG(Info, "    Reusing cached mesh (submeshes=" + std::to_string(cachedMesh.submeshes.size()) + 
-                        ", materialSlots=" + std::to_string(renderer.appliedMaterialPaths.size()) + ")");
-                    loadedCount++;
-                    continue;
-                }
-                
-                // Load mesh from file – try multiple resolution strategies
-                // so that scenes created on another device still work.
-                fs::path meshPath;
-                fs::path assetP(renderer.meshAssetPath);
-                if (Hephaestus::AssetPathPolicy::IsPluginContentKey(renderer.meshAssetPath)) {
-                    meshPath = Hephaestus::AssetPathPolicy::ResolvePortableKey(
-                        !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot,
-                        renderer.meshAssetPath);
-                    if (meshPath.empty()) {
-                        HP_LOG(Error, Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(
-                                          renderer.meshAssetPath) +
-                                          " (" + renderer.meshAssetPath + ")");
-                        continue;
-                    }
-                }
+    // Resolves, loads and uploads one renderer's mesh; used for the scene and for prefabs spawned by scripts.
+    auto loadRendererMesh = [&frameRenderer](MeshRendererComponent& renderer, const std::string& entityName) -> bool {
+        bool loaded = false;
+        if (IsRuntimeGeneratedVisual(renderer)) {
+            loaded = true;
+            return loaded;
+        }
 
-                // 1. runtimeRoot / key  (standard relative path)
-                if (assetP.is_relative() && !g_RuntimeRoot.empty()) {
-                    fs::path candidate = g_RuntimeRoot / assetP;
-                    if (fs::exists(candidate)) meshPath = candidate;
-                }
+        // Skip entities without mesh asset paths
+        if (renderer.meshAssetPath.empty()) {
+            HP_LOG(Info, "  Skipping " + entityName + " (no mesh path)");
+            return loaded;
+        }
 
-                // 1b. projectRoot / key  (project detected from .heproject)
-                if (meshPath.empty() && assetP.is_relative() && !g_ProjectRoot.empty()) {
-                    fs::path candidate = (g_ProjectRoot / assetP).lexically_normal();
-                    if (fs::exists(candidate)) meshPath = candidate;
-                }
+        // Handle builtin:// meshes by assigning pre-generated handles
+        if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
+            std::string builtinKey = renderer.meshAssetPath;
+            // Normalize to lowercase for comparison
+            std::transform(builtinKey.begin(), builtinKey.end(), builtinKey.begin(), ::tolower);
 
-                // 2. Backward compat: "assets/meshes/X" → ".engine/meshes/X"
-                if (meshPath.empty() && assetP.is_relative() && !g_RuntimeRoot.empty()) {
-                    std::string rel = assetP.generic_string();
-                    if (rel.rfind("assets/meshes/", 0) == 0) {
-                        std::string filename = rel.substr(std::string("assets/meshes/").size());
-                        fs::path candidate = g_RuntimeRoot / ".engine" / "meshes" / filename;
-                        if (fs::exists(candidate)) meshPath = candidate;
-                    }
-                }
-                // 2b. Same backward compat under project root
-                if (meshPath.empty() && assetP.is_relative() && !g_ProjectRoot.empty()) {
-                    std::string rel = assetP.generic_string();
-                    if (rel.rfind("assets/meshes/", 0) == 0) {
-                        std::string filename = rel.substr(std::string("assets/meshes/").size());
-                        fs::path candidate = (g_ProjectRoot / ".engine" / "meshes" / filename).lexically_normal();
-                        if (fs::exists(candidate)) meshPath = candidate;
-                    }
-                }
+            size_t builtinHandle = frameRenderer.GetMeshHandle(builtinKey);
+            if (builtinHandle != SIZE_MAX) {
+                renderer.meshHandle = builtinHandle;
+                HP_LOG(Info, "  " + entityName + " using builtin mesh: " + renderer.meshAssetPath + " (handle " + std::to_string(renderer.meshHandle) + ")");
+                loaded = true;
+            } else {
+                HP_LOG(Warning, "  " + entityName + " references unknown builtin mesh: " + renderer.meshAssetPath);
+            }
+            return loaded;
+        }
 
-                // 3. Strip "assets/" prefix, try under runtimeRoot/assets/
-                if (meshPath.empty() && assetP.is_relative() && !g_RuntimeRoot.empty()) {
-                    std::string rel = assetP.generic_string();
-                    fs::path assetsDir = g_RuntimeRoot / "assets";
-                    if (rel.rfind("assets/", 0) == 0) {
-                        std::string stripped = rel.substr(std::string("assets/").size());
-                        fs::path candidate = assetsDir / stripped;
-                        if (fs::exists(candidate)) meshPath = candidate;
-                    } else {
-                        fs::path candidate = assetsDir / assetP;
-                        if (fs::exists(candidate)) meshPath = candidate;
-                    }
-                }
-                // 3b. Strip "assets/" prefix, try under projectRoot/assets/
-                if (meshPath.empty() && assetP.is_relative() && !g_ProjectAssets.empty()) {
-                    std::string rel = assetP.generic_string();
-                    if (rel.rfind("assets/", 0) == 0) {
-                        std::string stripped = rel.substr(std::string("assets/").size());
-                        fs::path candidate = (g_ProjectAssets / stripped).lexically_normal();
-                        if (fs::exists(candidate)) meshPath = candidate;
-                    } else {
-                        fs::path candidate = (g_ProjectAssets / assetP).lexically_normal();
-                        if (fs::exists(candidate)) meshPath = candidate;
-                    }
-                }
+        // Skip .hpscene files (scene references, not meshes)
+        if (renderer.meshAssetPath.find(".hpscene") != std::string::npos) {
+            HP_LOG(Info, "  Skipping " + entityName + " (scene reference, not a mesh)");
+            return loaded;
+        }
 
-                // 4. Filename search in known mesh directories
-                if (meshPath.empty()) {
-                    fs::path filename = assetP.filename();
-                    if (!filename.empty()) {
-                        std::vector<fs::path> searchDirs;
-                        // Project directories first (most likely to have custom meshes)
-                        if (!g_ProjectAssets.empty()) {
-                            searchDirs.push_back(g_ProjectAssets / "meshes");
-                            searchDirs.push_back(g_ProjectAssets);
-                        }
-                        if (!g_ProjectRoot.empty()) {
-                            searchDirs.push_back(g_ProjectRoot / ".engine" / "meshes");
-                        }
-                        // Runtime directories as fallback
-                        if (!g_RuntimeRoot.empty()) {
-                            searchDirs.push_back(g_RuntimeRoot / "assets" / "meshes");
-                            searchDirs.push_back(g_RuntimeRoot / "assets");
-                            searchDirs.push_back(g_RuntimeRoot / ".engine" / "meshes");
-                        }
-                        for (const auto& dir : searchDirs) {
-                            std::error_code ec;
-                            if (!fs::is_directory(dir, ec)) continue;
-                            fs::path candidate = dir / filename;
-                            if (fs::exists(candidate, ec)) {
-                                HP_LOG(Info, "    Fallback found '" + renderer.meshAssetPath + "' at " + candidate.string());
-                                meshPath = candidate;
-                                break;
-                            }
-                        }
-                    }
-                }
+        std::string meshKey = renderer.meshAssetPath;
+        HP_LOG(Info, "  Processing " + entityName + " -> " + meshKey);
 
-                // 5. Try as absolute (legacy scenes from the original device)
-                if (meshPath.empty() && assetP.is_absolute() && fs::exists(assetP)) {
-                    meshPath = assetP;
-                }
+        // Check if already loaded
+        size_t cachedIdx = frameRenderer.GetMeshHandle(meshKey);
+        if (cachedIdx != SIZE_MAX) {
+            renderer.meshHandle = cachedIdx;
 
-                // 6. Fallback: map engine mesh paths to builtin:// equivalents.
-                //    Handles .engine/meshes/X.glb or bare filenames like Cube.glb
-                //    when the .engine/ directory wasn't deployed and the
-                //    procedural builtin equivalent exists.
-                if (!fs::exists(meshPath)) {
-                    std::string rel = assetP.generic_string();
-                    std::string stem;
-                    const std::string engineMeshPrefix = ".engine/meshes/";
-                    if (rel.rfind(engineMeshPrefix, 0) == 0) {
-                        stem = rel.substr(engineMeshPrefix.size());
-                    } else {
-                        // Bare filename (e.g. "Cube.glb") — try as builtin
-                        stem = assetP.filename().string();
-                    }
-                    // Strip extension to get base name
-                    auto dotPos = stem.rfind('.');
-                    if (dotPos != std::string::npos)
-                        stem = stem.substr(0, dotPos);
-                    if (!stem.empty()) {
-                        // Lowercase for builtin:// key matching
-                        std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
-                        std::string builtinKey = "builtin://" + stem;
-                        size_t builtinHandle = frameRenderer.GetMeshHandle(builtinKey);
-                        if (builtinHandle != SIZE_MAX) {
-                            renderer.meshHandle = builtinHandle;
-                            HP_LOG(Warning, "  " + entityName + ": mesh file " + renderer.meshAssetPath + " is missing; using " + builtinKey + " instead, which may differ in size");
-                            loadedCount++;
-                            continue;
-                        }
-                    }
-                }
-                
-                if (!fs::exists(meshPath)) {
-                    HP_LOG(Warning, "    Mesh not found: " + renderer.meshAssetPath
-                        + " (tried project root, .engine/meshes, assets/meshes, filename search)");
-                    continue;
-                }
-                
-                MeshData meshData;
-                std::string importError;
-                HP_LOG(Info, "    Loading from: " + meshPath.string());
-                
-                if (ModelImporter::LoadModel(meshPath, meshData, importError)) {
-                    HP_LOG(Info, "    Model imported, uploading to GPU...");
-                    size_t idx = frameRenderer.AddStaticMesh(meshKey, meshData, meshKey, false);
-                    if (idx != MeshRendererComponent::InvalidMesh) {
-                        renderer.meshHandle = idx;
-                        frameRenderer.AddMeshAlias(meshKey, idx);
-                        frameRenderer.AddMeshAlias(meshPath.lexically_normal().generic_string(), idx);
-                        
-                        // Update submesh count from the loaded mesh data
-                        const MeshGPU& loadedMesh = *frameRenderer.GetMesh(idx);
-                        int newSubmeshCount = loadedMesh.submeshes.empty() ? 1 : static_cast<int>(loadedMesh.submeshes.size());
-                        if (renderer.submeshCount != newSubmeshCount) {
-                            HP_LOG(Info, "    Updating submeshCount: " + std::to_string(renderer.submeshCount) + " -> " + std::to_string(newSubmeshCount));
-                            renderer.submeshCount = newSubmeshCount;
-                        }
-                        
-                        // Log submesh/material debug info
-                        HP_LOG(Info, "    Loaded mesh: " + meshKey + " (submeshes=" + std::to_string(loadedMesh.submeshes.size()) + 
-                            ", materialSlots=" + std::to_string(renderer.appliedMaterialPaths.size()) + ")");
-                        
-                        // Warn if submesh count doesn't match material slot count
-                        if (!loadedMesh.submeshes.empty() && 
-                            renderer.appliedMaterialPaths.size() != loadedMesh.submeshes.size()) {
-                            HP_LOG(Warning, "    Mesh '" + meshKey + "' has " + std::to_string(loadedMesh.submeshes.size()) + 
-                                " submeshes but " + std::to_string(renderer.appliedMaterialPaths.size()) + 
-                                " material paths assigned. Some sections may use fallback materials.");
-                        }
-                        
-                        loadedCount++;
-                    } else {
-                        HP_LOG(Warning, "    GPU upload failed for: " + meshKey);
-                    }
-                } else {
-                    HP_LOG(Warning, "    Failed to load mesh " + meshPath.string() + ": " + importError);
-                }
-            } catch (const std::exception& e) {
-                HP_LOG(Error, "  Exception processing entity " + std::to_string(meshEntityCount) + ": " + std::string(e.what()));
-            } catch (...) {
-                HP_LOG(Error, "  Unknown exception processing entity " + std::to_string(meshEntityCount));
+            // Sync submesh count from cached mesh
+            const MeshGPU& cachedMesh = *frameRenderer.GetMesh(cachedIdx);
+            int cachedSubmeshCount = cachedMesh.submeshes.empty() ? 1 : static_cast<int>(cachedMesh.submeshes.size());
+            if (renderer.submeshCount != cachedSubmeshCount) {
+                HP_LOG(Info, "    Syncing submeshCount from cached mesh: " + std::to_string(renderer.submeshCount) + " -> " + std::to_string(cachedSubmeshCount));
+                renderer.submeshCount = cachedSubmeshCount;
+            }
+
+            HP_LOG(Info, "    Reusing cached mesh (submeshes=" + std::to_string(cachedMesh.submeshes.size()) +
+                ", materialSlots=" + std::to_string(renderer.appliedMaterialPaths.size()) + ")");
+            loaded = true;
+            return loaded;
+        }
+
+        // Load mesh from file – try multiple resolution strategies
+        // so that scenes created on another device still work.
+        fs::path meshPath;
+        fs::path assetP(renderer.meshAssetPath);
+        if (Hephaestus::AssetPathPolicy::IsPluginContentKey(renderer.meshAssetPath)) {
+            meshPath = Hephaestus::AssetPathPolicy::ResolvePortableKey(
+                !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot,
+                renderer.meshAssetPath);
+            if (meshPath.empty()) {
+                HP_LOG(Error, Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(
+                                  renderer.meshAssetPath) +
+                                  " (" + renderer.meshAssetPath + ")");
+                return loaded;
             }
         }
+
+        // 1. runtimeRoot / key  (standard relative path)
+        if (assetP.is_relative() && !g_RuntimeRoot.empty()) {
+            fs::path candidate = g_RuntimeRoot / assetP;
+            if (fs::exists(candidate)) meshPath = candidate;
+        }
+
+        // 1b. projectRoot / key  (project detected from .heproject)
+        if (meshPath.empty() && assetP.is_relative() && !g_ProjectRoot.empty()) {
+            fs::path candidate = (g_ProjectRoot / assetP).lexically_normal();
+            if (fs::exists(candidate)) meshPath = candidate;
+        }
+
+        // 2. Backward compat: "assets/meshes/X" → ".engine/meshes/X"
+        if (meshPath.empty() && assetP.is_relative() && !g_RuntimeRoot.empty()) {
+            std::string rel = assetP.generic_string();
+            if (rel.rfind("assets/meshes/", 0) == 0) {
+                std::string filename = rel.substr(std::string("assets/meshes/").size());
+                fs::path candidate = g_RuntimeRoot / ".engine" / "meshes" / filename;
+                if (fs::exists(candidate)) meshPath = candidate;
+            }
+        }
+        // 2b. Same backward compat under project root
+        if (meshPath.empty() && assetP.is_relative() && !g_ProjectRoot.empty()) {
+            std::string rel = assetP.generic_string();
+            if (rel.rfind("assets/meshes/", 0) == 0) {
+                std::string filename = rel.substr(std::string("assets/meshes/").size());
+                fs::path candidate = (g_ProjectRoot / ".engine" / "meshes" / filename).lexically_normal();
+                if (fs::exists(candidate)) meshPath = candidate;
+            }
+        }
+
+        // 3. Strip "assets/" prefix, try under runtimeRoot/assets/
+        if (meshPath.empty() && assetP.is_relative() && !g_RuntimeRoot.empty()) {
+            std::string rel = assetP.generic_string();
+            fs::path assetsDir = g_RuntimeRoot / "assets";
+            if (rel.rfind("assets/", 0) == 0) {
+                std::string stripped = rel.substr(std::string("assets/").size());
+                fs::path candidate = assetsDir / stripped;
+                if (fs::exists(candidate)) meshPath = candidate;
+            } else {
+                fs::path candidate = assetsDir / assetP;
+                if (fs::exists(candidate)) meshPath = candidate;
+            }
+        }
+        // 3b. Strip "assets/" prefix, try under projectRoot/assets/
+        if (meshPath.empty() && assetP.is_relative() && !g_ProjectAssets.empty()) {
+            std::string rel = assetP.generic_string();
+            if (rel.rfind("assets/", 0) == 0) {
+                std::string stripped = rel.substr(std::string("assets/").size());
+                fs::path candidate = (g_ProjectAssets / stripped).lexically_normal();
+                if (fs::exists(candidate)) meshPath = candidate;
+            } else {
+                fs::path candidate = (g_ProjectAssets / assetP).lexically_normal();
+                if (fs::exists(candidate)) meshPath = candidate;
+            }
+        }
+
+        // 4. Filename search in known mesh directories
+        if (meshPath.empty()) {
+            fs::path filename = assetP.filename();
+            if (!filename.empty()) {
+                std::vector<fs::path> searchDirs;
+                // Project directories first (most likely to have custom meshes)
+                if (!g_ProjectAssets.empty()) {
+                    searchDirs.push_back(g_ProjectAssets / "meshes");
+                    searchDirs.push_back(g_ProjectAssets);
+                }
+                if (!g_ProjectRoot.empty()) {
+                    searchDirs.push_back(g_ProjectRoot / ".engine" / "meshes");
+                }
+                // Runtime directories as fallback
+                if (!g_RuntimeRoot.empty()) {
+                    searchDirs.push_back(g_RuntimeRoot / "assets" / "meshes");
+                    searchDirs.push_back(g_RuntimeRoot / "assets");
+                    searchDirs.push_back(g_RuntimeRoot / ".engine" / "meshes");
+                }
+                for (const auto& dir : searchDirs) {
+                    std::error_code ec;
+                    if (!fs::is_directory(dir, ec)) continue;
+                    fs::path candidate = dir / filename;
+                    if (fs::exists(candidate, ec)) {
+                        HP_LOG(Info, "    Fallback found '" + renderer.meshAssetPath + "' at " + candidate.string());
+                        meshPath = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 5. Try as absolute (legacy scenes from the original device)
+        if (meshPath.empty() && assetP.is_absolute() && fs::exists(assetP)) {
+            meshPath = assetP;
+        }
+
+        // 6. Fallback: map engine mesh paths to builtin:// equivalents.
+        //    Handles .engine/meshes/X.glb or bare filenames like Cube.glb
+        //    when the .engine/ directory wasn't deployed and the
+        //    procedural builtin equivalent exists.
+        if (!fs::exists(meshPath)) {
+            std::string rel = assetP.generic_string();
+            std::string stem;
+            const std::string engineMeshPrefix = ".engine/meshes/";
+            if (rel.rfind(engineMeshPrefix, 0) == 0) {
+                stem = rel.substr(engineMeshPrefix.size());
+            } else {
+                // Bare filename (e.g. "Cube.glb") — try as builtin
+                stem = assetP.filename().string();
+            }
+            // Strip extension to get base name
+            auto dotPos = stem.rfind('.');
+            if (dotPos != std::string::npos)
+                stem = stem.substr(0, dotPos);
+            if (!stem.empty()) {
+                // Lowercase for builtin:// key matching
+                std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
+                std::string builtinKey = "builtin://" + stem;
+                size_t builtinHandle = frameRenderer.GetMeshHandle(builtinKey);
+                if (builtinHandle != SIZE_MAX) {
+                    renderer.meshHandle = builtinHandle;
+                    HP_LOG(Warning, "  " + entityName + ": mesh file " + renderer.meshAssetPath + " is missing; using " + builtinKey + " instead, which may differ in size");
+                    loaded = true;
+                    return loaded;
+                }
+            }
+        }
+
+        if (!fs::exists(meshPath)) {
+            HP_LOG(Warning, "    Mesh not found: " + renderer.meshAssetPath
+                + " (tried project root, .engine/meshes, assets/meshes, filename search)");
+            return loaded;
+        }
+
+        MeshData meshData;
+        std::string importError;
+        HP_LOG(Info, "    Loading from: " + meshPath.string());
+
+        if (ModelImporter::LoadModel(meshPath, meshData, importError)) {
+            HP_LOG(Info, "    Model imported, uploading to GPU...");
+            size_t idx = frameRenderer.AddStaticMesh(meshKey, meshData, meshKey, false);
+            if (idx != MeshRendererComponent::InvalidMesh) {
+                renderer.meshHandle = idx;
+                frameRenderer.AddMeshAlias(meshKey, idx);
+                frameRenderer.AddMeshAlias(meshPath.lexically_normal().generic_string(), idx);
+
+                // Update submesh count from the loaded mesh data
+                const MeshGPU& loadedMesh = *frameRenderer.GetMesh(idx);
+                int newSubmeshCount = loadedMesh.submeshes.empty() ? 1 : static_cast<int>(loadedMesh.submeshes.size());
+                if (renderer.submeshCount != newSubmeshCount) {
+                    HP_LOG(Info, "    Updating submeshCount: " + std::to_string(renderer.submeshCount) + " -> " + std::to_string(newSubmeshCount));
+                    renderer.submeshCount = newSubmeshCount;
+                }
+
+                // Log submesh/material debug info
+                HP_LOG(Info, "    Loaded mesh: " + meshKey + " (submeshes=" + std::to_string(loadedMesh.submeshes.size()) +
+                    ", materialSlots=" + std::to_string(renderer.appliedMaterialPaths.size()) + ")");
+
+                // Warn if submesh count doesn't match material slot count
+                if (!loadedMesh.submeshes.empty() &&
+                    renderer.appliedMaterialPaths.size() != loadedMesh.submeshes.size()) {
+                    HP_LOG(Warning, "    Mesh '" + meshKey + "' has " + std::to_string(loadedMesh.submeshes.size()) +
+                        " submeshes but " + std::to_string(renderer.appliedMaterialPaths.size()) +
+                        " material paths assigned. Some sections may use fallback materials.");
+                }
+
+                loaded = true;
+            } else {
+                HP_LOG(Warning, "    GPU upload failed for: " + meshKey);
+            }
+        } else {
+            HP_LOG(Warning, "    Failed to load mesh " + meshPath.string() + ": " + importError);
+        }
+        return loaded;
+    };
+    luaEngine.SetSpawnedMeshLoader([loadRendererMesh](MeshRendererComponent& renderer) {
+        loadRendererMesh(renderer, "Spawned prefab");
+    });
+
+    auto loadSceneMeshes = [&]() {
+        try {
+            auto meshView = scene.GetEntitiesWith<MeshRendererComponent>();
+            int meshEntityCount = 0;
+            int loadedCount = 0;
+            
+            for (auto entityHandle : meshView) {
+                meshEntityCount++;
+                
+                try {
+                    Entity entity(entityHandle, &scene);
+                    
+                    // Get entity name for better logging
+                    std::string entityName = "Entity_" + std::to_string(meshEntityCount);
+                    if (entity.HasComponent<TagComponent>()) {
+                        entityName = entity.GetComponent<TagComponent>().tag;
+                    }
+                    
+                    auto& renderer = entity.GetComponent<MeshRendererComponent>();
+                    if (loadRendererMesh(renderer, entityName)) {
+                        loadedCount++;
+                    }
+                } catch (const std::exception& e) {
+                    HP_LOG(Error, "  Exception processing entity " + std::to_string(meshEntityCount) + ": " + std::string(e.what()));
+                } catch (...) {
+                    HP_LOG(Error, "  Unknown exception processing entity " + std::to_string(meshEntityCount));
+                }
+            }
+            
+            HP_LOG(Info, "Mesh loading complete. Processed " + std::to_string(meshEntityCount) + " entities, loaded " + std::to_string(loadedCount) + " meshes");
+        } catch (const std::exception& e) {
+            HP_LOG(Error, "Exception during mesh loading: " + std::string(e.what()));
+        } catch (...) {
+            HP_LOG(Error, "Unknown exception during mesh loading");
+        }
         
-        HP_LOG(Info, "Mesh loading complete. Processed " + std::to_string(meshEntityCount) + " entities, loaded " + std::to_string(loadedCount) + " meshes");
-    } catch (const std::exception& e) {
-        HP_LOG(Error, "Exception during mesh loading: " + std::string(e.what()));
-    } catch (...) {
-        HP_LOG(Error, "Unknown exception during mesh loading");
-    }
+    };
+    loadSceneMeshes();
     
     HP_LOG(Info, "Loaded " + std::to_string(frameRenderer.GetMeshCount()) + " unique meshes to GPU");
     
@@ -1252,13 +1291,21 @@ int main(int argc, char* argv[]) {
         if (!sceneReloadRequested) return false;
         sceneReloadRequested = false;
         sceneReloadProcessing = true;
-        const fs::path sourcePath = fs::u8path(scene.GetSourceAssetPath());
+        // Scene.load names a project path; Scene.reload rebuilds the current scene from its file.
+        fs::path sourcePath = fs::u8path(scene.GetSourceAssetPath());
+        if (!pendingScenePath.empty()) {
+            sourcePath = fs::u8path(pendingScenePath);
+            if (sourcePath.is_relative()) {
+                sourcePath = (!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot) / sourcePath;
+            }
+            pendingScenePath.clear();
+        }
         Scene staged;
         std::string reloadError;
-        if (!scene.IsReloadable() || !SceneSerializer::Deserialize(staged, sourcePath, reloadError)) {
+        if (sourcePath.empty() || !SceneSerializer::Deserialize(staged, sourcePath, reloadError)) {
             if (reloadError.empty()) reloadError = "current scene has no authored source asset";
             sceneReloadFailed = true;
-            HP_LOG(Error, "Cannot reload scene from '" + scene.GetSourceAssetPath() + "': " + reloadError);
+            HP_LOG(Error, "Cannot load scene from '" + sourcePath.string() + "': " + reloadError);
             Bootstrap::ShowFatalError("Scene Restart Error",
                 "Cannot reload the current authored scene:\n" + reloadError);
             sceneReloadProcessing = false;
@@ -1288,6 +1335,7 @@ int main(int argc, char* argv[]) {
             return true;
         }
 
+        loadSceneMeshes();
         const fs::path characterRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
         Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
         luaEngine.OnSimulationStarted();
@@ -1392,6 +1440,10 @@ int main(int argc, char* argv[]) {
         auto currentTime = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
+        // The renderer's paced interval is when frames are shown; this clock also counts the last frame's CPU work.
+        if (frameRenderer.PacedFrameSeconds() > 0.0) {
+            deltaTime = static_cast<float>(frameRenderer.PacedFrameSeconds());
+        }
         uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
 
 #if HEPHAESTUS_RUNTIME_AUTOMATION

@@ -62,6 +62,9 @@ using UIDrawCommand = std::variant<UIDrawRectCommand,
 class UIRenderer {
 public:
     void Reset();
+    /// Viewport pixels per layout unit: commands are recorded in layout units and stored in pixels.
+    void SetScale(float scale) { m_Scale = scale > 0.0f ? scale : 1.0f; }
+    [[nodiscard]] float GetScale() const { return m_Scale; }
 
     void DrawRect(const UIDrawRectCommand& command);
     void DrawImage(const UIDrawImageCommand& command);
@@ -73,6 +76,7 @@ public:
 
 private:
     std::vector<UIDrawCommand> m_Commands;
+    float m_Scale = 1.0f;
 };
 
 } // namespace Hephaestus::HephaestusUI

@@ -2,6 +2,7 @@
 #include "../Core/Math.h"
 #include <entt/entt.hpp>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <limits>
 #include <utility>
@@ -124,6 +125,14 @@ struct MeshRendererComponent {
     AABB localBounds; // Bounding box in local space
     bool visible = true;
     bool hideInGame = false;
+    /// In play, drawn in the active camera's view frame (+X forward, +Y up, +Z right relative to the camera
+    /// entity), in its own depth range so it never clips into the world, and casts no shadows.
+    bool viewModel = false;
+    /// In play, drawn in the view model depth range so world geometry never covers it, but at its own world
+    /// transform and the camera's field of view, such as the player's own first-person body.
+    bool drawOverWorld = false;
+    /// False keeps the mesh out of shadow maps, such as the player's own first-person body.
+    bool castShadows = true;
     // Editor-only: when not visible, still draw a selection-style outline and allow viewport picking.
     bool showHiddenOutline = false;
     bool backfaceCulling = false;
@@ -139,6 +148,8 @@ struct MeshRendererComponent {
     std::vector<size_t> meshPartHandles;
     /// Stamped only by CharacterRuntime bind. Never authored or serialized.
     bool runtimeGenerated = false;
+    /// Set by the renderer once a hidden mesh's material textures are loaded. Never authored or serialized.
+    bool texturesWarmed = false;
 
     MeshRendererComponent() 
         : localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}
@@ -486,6 +497,7 @@ struct CameraComponent {
     float fov = 60.0f;           // Field of view in degrees (perspective only)
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;    // Increased default for larger scenes
+    float viewModelFov = 0.0f;   // Field of view for view model meshes; 0 uses fov
     CameraProjection projection = CameraProjection::Perspective;
     bool isActive = false;       // If true, this camera is the active runtime camera
     bool isPrimary = false;      // Legacy/compat: maps to isActive
@@ -503,6 +515,56 @@ struct CameraComponent {
     }
 };
 
+/// One live particle, simulated in world space.
+struct Particle {
+    Vec3 position{0.0f, 0.0f, 0.0f};
+    Vec3 velocity{0.0f, 0.0f, 0.0f};
+    float age = 0.0f;
+    float lifetime = 1.0f;
+    float rotation = 0.0f; ///< radians, about the view direction
+    float spin = 0.0f;     ///< radians per second
+    float sizeScale = 1.0f;
+};
+
+/**
+ * Particle emitter - spawns camera-facing quads drawn with materialPath (use an alpha-blended or additive
+ * material). Particles leave along the entity's local +Y within spreadDegrees and live in world space.
+ * Runtime fields are not serialized.
+ */
+struct ParticleEmitterComponent {
+    std::string materialPath;
+    bool playOnStart = true;
+    bool loop = true;
+    bool destroyWhenDone = false; ///< remove the entity once a non-looping emitter has no particles left
+    float duration = 1.0f;        ///< seconds of emission per cycle
+    float rate = 10.0f;           ///< particles per second while emitting
+    int burst = 0;                ///< particles at the start of each cycle
+    int maxParticles = 100;
+    float lifetimeMin = 1.0f;
+    float lifetimeMax = 1.0f;
+    float speedMin = 1.0f;        ///< metres per second
+    float speedMax = 1.0f;
+    float spreadDegrees = 15.0f;  ///< half angle of the cone around local +Y
+    float gravity = 0.0f;         ///< multiple of world gravity (9.81 m/s^2 down)
+    float drag = 0.0f;            ///< velocity lost per second, as a rate
+    float sizeStart = 0.1f;       ///< metres across
+    float sizeEnd = 0.1f;
+    float sizeJitter = 0.0f;      ///< size varies by up to this fraction per particle
+    Vec4 colorStart{1.0f, 1.0f, 1.0f, 1.0f};
+    Vec4 colorEnd{1.0f, 1.0f, 1.0f, 0.0f};
+    float spinMin = 0.0f;         ///< degrees per second
+    float spinMax = 0.0f;
+    uint32_t seed = 1;
+
+    // Runtime-only state
+    std::vector<Particle> particles;
+    float time = 0.0f;
+    float emitCarry = 0.0f;
+    bool playing = false;
+    bool started = false;
+    uint32_t rngState = 0;
+};
+
 /**
  * Audio source component - declarative scene audio playback.
  * Runtime fields are not serialized and are managed by the audio system.
@@ -513,6 +575,10 @@ struct AudioSourceComponent {
     bool playOnStart = true;
     bool loop = false;
     float volume = 1.0f;        // 0..1
+    std::string bus = "sfx";    // master, sfx, weapons, music or ui
+    bool spatial = false;       // heard from the entity's position by the active camera
+    float minDistance = 1.0f;   // metres at full volume
+    float maxDistance = 40.0f;  // metres where it fades out
 
     // Runtime-only state
     uint32_t runtimeHandle = 0;
@@ -537,6 +603,37 @@ struct RelationshipComponent {
 // MATERIAL & LIGHTING COMPONENTS
 // ═══════════════════════════════════════════════════════════════
 
+/// How a material's surface combines with what is behind it.
+enum class MaterialBlendMode : uint32_t {
+    Opaque = 0,     ///< writes depth; opacity below opacityMask is cut out
+    AlphaBlend = 1, ///< lit, blended by opacity times the albedo texture's alpha, drawn after opaque surfaces
+    Additive = 2,   ///< unlit, (albedo + emissive) times opacity added to the image; for flashes and glows
+    Masked = 3,     ///< opaque pass and shadows; opacity times the albedo texture's alpha below opacityMask is cut out
+};
+
+/// File-format name of a blend mode, as written to "blendMode" in .hematerial files.
+inline const char* MaterialBlendModeName(MaterialBlendMode mode) {
+    switch (mode) {
+    case MaterialBlendMode::AlphaBlend: return "alphaBlend";
+    case MaterialBlendMode::Additive: return "additive";
+    case MaterialBlendMode::Masked: return "masked";
+    default: return "opaque";
+    }
+}
+
+/// Unknown names read as Opaque, matching files written before a mode existed.
+inline MaterialBlendMode MaterialBlendModeFromName(std::string_view name) {
+    if (name == "alphaBlend") return MaterialBlendMode::AlphaBlend;
+    if (name == "additive") return MaterialBlendMode::Additive;
+    if (name == "masked") return MaterialBlendMode::Masked;
+    return MaterialBlendMode::Opaque;
+}
+
+/// AlphaBlend and Additive surfaces are sorted and drawn after opaque ones and cast no shadows.
+inline bool IsTranslucentBlendMode(MaterialBlendMode mode) {
+    return mode == MaterialBlendMode::AlphaBlend || mode == MaterialBlendMode::Additive;
+}
+
 /**
  * Material component - defines surface properties for rendering
  * Uses PBR (Physically Based Rendering) workflow with full texture support
@@ -554,6 +651,7 @@ struct MaterialComponent {
     float opacity;      // Surface opacity (1 = opaque)
     float opacityMask;  // Mask threshold/input for cutout workflows
     float refraction;   // Reserved for future translucent/refraction shaders
+    MaterialBlendMode blendMode = MaterialBlendMode::Opaque;
     
     // Albedo (diffuse) texture
     std::string albedoTexturePath;
@@ -574,6 +672,11 @@ struct MaterialComponent {
     // Ambient occlusion texture
     std::string aoTexturePath;
     bool useAoTexture = false;
+
+    // Channel (0 R, 1 G, 2 B, 3 A) each scalar map is read from, so one packed ORM-style texture can feed all three
+    uint32_t roughnessChannel = 0;
+    uint32_t metallicChannel = 0;
+    uint32_t aoChannel = 0;
 
     // World-aligned texture settings
     // When enabled, textures use world position instead of UV coordinates
@@ -730,6 +833,20 @@ struct EnvironmentComponent {
     bool enableRenderDistance = false;   // Whether to cull objects beyond render distance
     float renderDistance = 500.0f;       // Distance in world units; objects beyond this are not rendered
     bool infiniteRenderDistance = false; // If true, ignores renderDistance and renders all objects
+
+    // Applied to the whole frame when it is tone mapped. The defaults change nothing.
+    struct PostProcess {
+        float exposure = 0.0f;   // stops
+        float contrast = 1.0f;
+        float saturation = 1.0f;
+        Vec3 colorFilter{1.0f, 1.0f, 1.0f};
+        float vignette = 0.0f;   // 0..1
+        float grain = 0.0f;      // 0..1
+        float scanlines = 0.0f;  // 0..1
+        float bloomIntensity = 0.0f;
+        float bloomThreshold = 1.0f;  // scene brightness where glow starts
+        float bloomRadius = 0.65f;    // 0..1, how far the glow spreads
+    } post;
 
     EnvironmentComponent()
         : type(BackgroundType::SolidColor)

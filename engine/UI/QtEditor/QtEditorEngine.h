@@ -51,6 +51,7 @@ class PluginScriptHost;
 class ScriptEngine;
 class AudioEngine;
 struct GLFWwindow;
+struct MeshRendererComponent;
 
 namespace Physics {
 class JoltPhysicsEngine;
@@ -105,6 +106,15 @@ public:
      * @return true on success.
      */
     bool AttachToViewport(QtViewportWindow* viewport);
+
+    /**
+     * @brief Move rendering and game input to another window, such as a separate Play window; nullptr returns
+     * to the editor viewport. Applied at the start of the next frame (never mid-frame), then
+     * presentationTargetChanged is emitted. The window must stay alive until it is no longer the target.
+     */
+    void PresentTo(QtViewportWindow* window);
+    QtViewportWindow* PresentationTarget() const { return m_viewport; }
+    bool IsPresentingToPlayWindow() const { return m_viewport && m_viewport != m_editorViewport; }
 
     /**
      * @brief Start the render loop timer.
@@ -163,6 +173,7 @@ public:
      * to the GPU and entity handles are set correctly.
      */
     void RebuildSceneMeshes();
+    AudioEngine* GetAudioEngine() const { return m_audioEngine.get(); }
 
     /**
      * @brief Focus the camera on the currently selected entity.
@@ -318,6 +329,9 @@ public:
     size_t uploadMeshToGPU(const std::string& name, const MeshData& data,
                            const std::filesystem::path& sourcePath, bool imported);
 
+    /// Finds, loads and uploads a renderer's mesh (or reuses a loaded one) and sets its handle.
+    void loadRendererMesh(MeshRendererComponent& renderer);
+
 signals:
     void sceneHierarchyChanged();
     void deleteSelectionRequested();
@@ -347,6 +361,9 @@ signals:
      */
     void playStateChanged(bool playing, bool paused);
 
+    /** @brief Rendering moved to this window (the editor viewport, or a Play window). */
+    void presentationTargetChanged(QtViewportWindow* window);
+
 private slots:
     /**
      * @brief Called by QTimer to tick the engine.
@@ -356,6 +373,8 @@ private slots:
 private:
     bool createVulkanInstance();
     bool initializeVulkanDevice();
+    void applyPresentationTarget();
+    void connectViewport(QtViewportWindow* window);
     bool createSwapchain();
     void renderFrame();
     /** Applies GPU viewport pick once readback completes (see EngineFrameRenderer::TakeViewportPickResult). */
@@ -363,6 +382,7 @@ private:
     void createTestMesh();
     void cleanupVulkanResources();
     void createBuiltinMeshes();
+    void loadEditorCameraMesh(const std::filesystem::path& projectRoot);
     std::string normalizeAssetPath(const std::string& assetPath) const;
     
     // Input helper methods
@@ -373,7 +393,7 @@ private:
     void syncViewportCursorCapture();
     void runSimulationFrame(float dt);
     void simulateGameplayFrame(float dt);
-    bool reloadRuntimeScene(std::string& outError);
+    bool reloadRuntimeScene(const std::string& scenePath, std::string& outError);
     void captureGizmoMultiDragWorldStarts(Scene* scene);
     void clearGizmoMultiDragWorldStarts();
     void selectEntitiesInViewportRect(float x0, float y0, float x1, float y1,
@@ -385,6 +405,8 @@ private:
     // Project root directory for mesh path resolution (set by EditorMainWindow)
     std::string m_projectRoot;
     std::string m_assetRoot;
+    // Resolves mesh asset keys to files; set by RebuildSceneMeshes for the loaded scene's project.
+    std::function<std::filesystem::path(const std::string&)> m_meshFileResolver;
 
     // Runtime input tracking (for Lua scripts in Qt path)
     // Indexed by GLFW key codes; true = pressed.
@@ -459,6 +481,9 @@ private:
 
     // Viewport connection
     QtViewportWindow* m_viewport = nullptr;
+    QtViewportWindow* m_editorViewport = nullptr;
+    QtViewportWindow* m_pendingPresentTarget = nullptr;
+    bool m_presentPending = false;
     NativeSurface m_currentSurface;
 
     // Render loop

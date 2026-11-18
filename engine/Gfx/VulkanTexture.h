@@ -4,6 +4,14 @@
 #include <string>
 #include <vector>
 
+/// The size an image loads at under a cap on its longer side: halved until neither side exceeds `maxDimension`
+/// (0 = no cap). VulkanTexture::LoadFromFile and EngineFrameRenderer::SetMaxMaterialTextureSize share it.
+void CappedTextureExtent(uint32_t width, uint32_t height, uint32_t maxDimension, uint32_t& outWidth, uint32_t& outHeight);
+
+/// Box-filters an RGBA8 image down to CappedTextureExtent; returns false (out untouched) when it already fits.
+bool DownscaleRgba8ToFit(const unsigned char* pixels, uint32_t width, uint32_t height, uint32_t maxDimension,
+                         std::vector<unsigned char>& out, uint32_t& outWidth, uint32_t& outHeight);
+
 /**
  * VulkanTexture - Manages a Vulkan texture (image + view + sampler)
  * Supports loading from PNG/JPG files using stb_image
@@ -18,6 +26,8 @@ public:
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t mipLevels = 1;
+    uint32_t sourceWidth = 0;  ///< the file's size before LoadFromFile's maxDimension halved it
+    uint32_t sourceHeight = 0;
 
     // Create texture from file
     bool LoadFromFile(
@@ -27,7 +37,9 @@ public:
         VkCommandPool commandPool,
         VkQueue graphicsQueue,
         const std::string& filepath,
-        bool generateMipmaps = false);
+        bool generateMipmaps = false,
+        bool srgb = true, ///< false for data textures (normal, roughness, metallic, AO)
+        uint32_t maxDimension = 0); ///< halves the image until neither side exceeds this; 0 keeps its size
 
     // Create HDR texture from file (HDRI, EXR)
     bool LoadHDRFromFile(
@@ -37,7 +49,8 @@ public:
         VkCommandPool commandPool,
         VkQueue graphicsQueue,
         const std::string& filepath,
-        std::vector<float>* outPixels = nullptr);
+        std::vector<float>* outPixels = nullptr,
+        bool generateMipmaps = false);
 
     // Create 1x1 solid color texture
     bool CreateSolidColor(

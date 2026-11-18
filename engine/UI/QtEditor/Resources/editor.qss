@@ -617,6 +617,9 @@ QWidget#EditorHeader QMenuBar {
     border: none;
     background: transparent;
 }
+QWidget#PluginHeaderButtons {
+    background: transparent;
+}
 QLabel#EditorBrand {
     font-weight: 600;
 }

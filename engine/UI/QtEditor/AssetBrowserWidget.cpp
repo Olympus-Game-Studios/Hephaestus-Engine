@@ -27,6 +27,8 @@
 #include "../../Assets/CharacterRuntime.h"
 #include "../../Assets/FbxDocument.h"
 #include "../../Assets/AssetPathPolicy.h"
+#include "../../Assets/AssetIntake.h"
+#include "../../Assets/UsdModel.h"
 #include "CharacterImportDialog.h"
 
 #include <QVBoxLayout>
@@ -730,7 +732,10 @@ void AssetBrowserWidget::rebuildContentsView()
                                                Qt::SkipEmptyParts);
         int matchCount = 0;
         for (const auto& asset : allAssets) {
-            if (asset.isDirectory) {
+            // A model's settings file (MeshSettings) belongs to the model, like Unity's .meta files.
+            const QString assetName = QString::fromStdString(asset.name);
+            if (asset.isDirectory || assetName.endsWith(".hpmesh", Qt::CaseInsensitive) ||
+                assetName.endsWith(".hemshader", Qt::CaseInsensitive)) {
                 continue;
             }
             const AssetType type = asset.type;
@@ -784,6 +789,10 @@ void AssetBrowserWidget::rebuildContentsView()
 
     for (const auto& entry : entries) {
         const QString name = QString::fromStdString(entry.name);
+        if (!entry.isDirectory && (name.endsWith(".hpmesh", Qt::CaseInsensitive) ||
+                                    name.endsWith(".hemshader", Qt::CaseInsensitive))) {
+            continue;
+        }
         const AssetType type = static_cast<AssetType>(entry.type);
         const QString customType = (!entry.isDirectory && m_mainWindow && m_mainWindow->PluginHost())
             ? m_mainWindow->PluginHost()->CustomAssetDisplayName(QString::fromStdString(entry.relativePath))
@@ -1906,7 +1915,7 @@ void AssetBrowserWidget::importAssets()
         this,
         tr("Import Assets"),
         QString(),
-        tr("Supported Assets (*.obj *.fbx *.gltf *.glb *.png *.jpg *.jpeg *.tga *.hdr *.exr *.wav *.mp3 *.ogg *.lua *.hematerial *.hpscene *.hpprefab *.hui);;All Files (*)"));
+        tr("Supported Assets (*.obj *.fbx *.gltf *.glb *.usd *.usda *.usdc *.usdz *.png *.jpg *.jpeg *.tga *.hdr *.exr *.wav *.mp3 *.ogg *.lua *.hematerial *.hpscene *.hpprefab *.hui);;All Files (*)"));
     if (files.isEmpty()) {
         return;
     }
@@ -1920,6 +1929,22 @@ void AssetBrowserWidget::importAssets()
     for (const QString& src : files) {
         const QFileInfo info(src);
         const std::filesystem::path srcPath = std::filesystem::path(src.toStdString());
+        if (Hephaestus::Usd::IsUsd(srcPath)) {
+            Hephaestus::AssetIntakeRequest request;
+            request.source = srcPath;
+            request.projectRoot = assetMgr.GetProjectRoot();
+            request.targetFolder = (m_currentPath.isEmpty() ? std::string("assets")
+                                                            : "assets/" + m_currentPath.toStdString()) +
+                                   "/" + Hephaestus::SanitizeAssetName(srcPath.stem().string());
+            Hephaestus::AssetIntakeResult result;
+            std::string error;
+            if (Hephaestus::AssetIntake::Import(request, result, error)) {
+                ++imported;
+            } else {
+                failures << QString("%1 (%2)").arg(info.fileName(), QString::fromStdString(error));
+            }
+            continue;
+        }
         if (Hephaestus::CharacterImporter::IsFbxPath(srcPath)) {
             bool hasSkin = false;
             std::string skinError;

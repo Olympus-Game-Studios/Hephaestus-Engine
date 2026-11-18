@@ -111,6 +111,65 @@ bool TestMapRoundTrip()
     return ok;
 }
 
+bool TestRuntimeRebinding()
+{
+    using Hephaestus::InputBinding;
+    using Hephaestus::InputBindingType;
+    bool ok = true;
+    Hephaestus::InputSystem input;
+    std::string error;
+
+    InputBinding j;
+    j.type = InputBindingType::Keyboard;
+    j.control = "J";
+    ok &= Check(input.SetBindings("Jump", {j}, error), "Jump rebinds to J: " + error);
+    input.BeginFrame();
+    input.SetKeyState(GLFW_KEY_SPACE, true);
+    ok &= Check(!input.IsActionDown("Jump"), "the old key no longer triggers a rebound action");
+    input.SetKeyState(GLFW_KEY_J, true);
+    ok &= Check(input.IsActionDown("Jump") && input.IsActionPressed("Jump"), "the new key triggers it");
+    ok &= Check(input.GetBindings("Jump")->front().control == "J" &&
+                    input.GetDefaultBindings("Jump")->front().control == "SPACE",
+                "the loaded map's bindings stay available for a reset");
+
+    InputBinding upKey = j;
+    upKey.control = "UP";
+    ok &= Check(input.SetBindings("MoveForward", {upKey}, error) && Near(input.GetAxis("MoveForward"), 0.0f),
+                "an axis takes new bindings");
+    input.SetKeyState(GLFW_KEY_UP, true);
+    ok &= Check(Near(input.GetAxis("MoveForward"), 1.0f), "the axis follows its new key");
+
+    InputBinding bad = j;
+    bad.control = "NOT_A_KEY";
+    ok &= Check(!input.SetBindings("Jump", {bad}, error) && !error.empty() &&
+                    input.GetBindings("Jump")->front().control == "J",
+                "an unknown control is refused and leaves the bindings alone");
+    ok &= Check(!input.SetBindings("Missing", {j}, error) && input.GetBindings("Missing") == nullptr,
+                "an unknown action is refused");
+
+    input.BeginFrame();
+    InputBindingType type = InputBindingType::Keyboard;
+    int code = -1;
+    ok &= Check(!input.GetPressedControl(type, code), "nothing newly pressed while keys are only held");
+    input.SetMouseButtonState(GLFW_MOUSE_BUTTON_RIGHT, true);
+    ok &= Check(input.GetPressedControl(type, code) && type == InputBindingType::MouseButton &&
+                    Hephaestus::InputControlName(type, code) == "RIGHT",
+                "a newly pressed mouse button is reported by name");
+    input.BeginFrame();
+    input.SetKeyState(GLFW_KEY_LEFT_CONTROL, true);
+    ok &= Check(input.GetPressedControl(type, code) && type == InputBindingType::Keyboard &&
+                    Hephaestus::InputControlName(type, code) == "LEFT_CONTROL",
+                "a newly pressed key is reported by its canonical name");
+    for (const char* name : {"A", "7", "SPACE", "ESCAPE", "ENTER", "LEFT_SHIFT", "F12", "RIGHT_CONTROL"}) {
+        const int key = Hephaestus::ResolveInputControl(InputBindingType::Keyboard, name);
+        ok &= Check(Hephaestus::InputControlName(InputBindingType::Keyboard, key) == name,
+                    std::string("key name round-trips: ") + name);
+    }
+    ok &= Check(Hephaestus::InputControlName(InputBindingType::GamepadButton, GLFW_GAMEPAD_BUTTON_A) == "SOUTH",
+                "gamepad buttons use the face names");
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -119,6 +178,7 @@ int main()
     ok &= TestActionSemantics();
     ok &= TestAxesAndMultipleBindings();
     ok &= TestMapRoundTrip();
+    ok &= TestRuntimeRebinding();
     if (ok) {
         std::cout << "InputSystemTests passed\n";
         return 0;

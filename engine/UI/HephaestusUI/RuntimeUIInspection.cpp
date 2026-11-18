@@ -113,7 +113,7 @@ std::vector<Match> FindMatches(UISystem& system, const RuntimeUISelector& select
 
 void RefreshRuntimeUILayout(UISystem& system, const UIContext& context)
 {
-    const UIVec2 size = context.GetViewportSize();
+    const UIVec2 size = context.GetLayoutSize();
     for (const std::shared_ptr<UIScreen>& screen : system.GetScreens()) {
         if (!screen) continue;
         screen->SetViewportSize(size);

@@ -48,6 +48,7 @@ ComponentMetadataRegistry::ComponentMetadataRegistry()
     m_Descriptors.push_back(Component("LuaScript", "Lua Script", "Scripting"));
     m_Descriptors.push_back(Component("Material", "Material", "Rendering"));
     m_Descriptors.push_back(Component("MeshCollider", "Mesh Collider", "Physics"));
+    m_Descriptors.push_back(Component("ParticleEmitter", "Particle Emitter", "Rendering"));
     m_Descriptors.push_back(Component("MeshRenderer", "Mesh Renderer", "Rendering"));
     m_Descriptors.push_back(Component("PhysicsShape", "Physics Shape", "Physics"));
     m_Descriptors.push_back(Component("RigidBody", "Rigid Body", "Physics"));

@@ -127,6 +127,16 @@ public:
     bool LoadScene(const std::string& filepath);
 
     /**
+     * @brief Restore a recovery snapshot into the scene it was taken from.
+     * Opens sourcePath, or a new unsaved scene when it is empty or the file no longer exists, and replaces that
+     * scene's contents with the snapshot, leaving it unsaved. The scene that was open before is never changed.
+     * @param outOpenedSource false when the snapshot went into a new unsaved scene
+     * @return false when the scene could not be opened or the snapshot could not be read
+     */
+    bool RestoreSceneSnapshot(const std::string& sourcePath, const std::string& content, bool& outOpenedSource,
+                              std::string& outError);
+
+    /**
      * @brief Save the active scene to its current path.
      * @return true if saving succeeded (false if no path set)
      */
@@ -267,6 +277,11 @@ public:
     }
     void SetEditorHidden(entt::entity entity, bool hidden);
     void SetEditorLocked(entt::entity entity, bool locked);
+    /// Whether the editor shows an entity: not if it or any ancestor is hidden, and while isolating only if it or an
+    /// ancestor is isolated (isolating a weapon keeps its parts).
+    bool IsEditorEntityShown(entt::entity entity) const;
+    /// Every entity of the active scene the editor does not show, sorted (empty when nothing is hidden or isolated).
+    std::vector<uint32_t> EditorHiddenIdsForRender() const;
     void ShowAllEditorEntities() { m_editorHidden.clear(); m_isolated.clear(); }
     void IsolateEntities(const std::vector<entt::entity>& entities);
     void ExitIsolation() { m_isolated.clear(); }

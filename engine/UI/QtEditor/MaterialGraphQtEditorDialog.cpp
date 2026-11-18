@@ -7,6 +7,7 @@
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "../MaterialEditor/MaterialGraphEvaluator.h"
 #include "../MaterialEditor/MaterialNodeDefinitions.h"
+#include "../MaterialEditor/MaterialShaderCompiler.h"
 #include "../MaterialEditor/MaterialShaderGenerator.h"
 #include "../MaterialEditor/TextureDiscovery.h"
 #include "QtEditorEngine.h"
@@ -16,6 +17,7 @@
 #include "../../Assets/AssetPathPolicy.h"
 #include "../../Scene/Scene.h"
 
+#include <map>
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -112,26 +114,42 @@ void SetStyleProperty(QWidget* widget, const char* name, const QString& value) {
     widget->style()->polish(widget);
 }
 
-QString NodeTypeLabel(NodeType type) {
-    return QString::fromUtf8(GetNodeDefinition(type).typeName.data(), static_cast<int>(GetNodeDefinition(type).typeName.size()));
+QString FromView(std::string_view text) {
+    return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 }
 
-QString NodeTooltip(NodeType type) {
-    const auto tooltip = GetNodeDefinition(type).tooltip;
-    QString text = QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size()));
-    if (!NodeAffectsRenderedMaterial(type)) {
+/// Nodes are identified in the library and undo commands by type name, which covers plugin nodes too.
+const NodeDefinition& DefinitionFor(const QString& key) {
+    if (const NodeDefinition* definition = FindNodeDefinition(key.toStdString())) {
+        return *definition;
+    }
+    return GetNodeDefinition(NodeType::Unknown);
+}
+
+QString NodeKeyOf(const Node& node) {
+    return node.type == NodeType::Custom ? QString::fromStdString(node.serializedType)
+                                         : FromView(GetNodeDefinition(node.type).typeName);
+}
+
+QString NodeTypeLabel(const QString& key) {
+    return FromView(DefinitionFor(key).displayName);
+}
+
+QString NodeTooltip(const QString& key) {
+    const NodeDefinition& definition = DefinitionFor(key);
+    QString text = FromView(definition.tooltip);
+    if (!NodeAffectsRenderedMaterial(definition.type)) {
         text += QObject::tr("\nDoes not affect the rendered material yet: its output is ignored.");
     }
     return text;
 }
 
-QString NodeMenuLabel(NodeType type, const QString& label) {
-    return NodeAffectsRenderedMaterial(type) ? label : QObject::tr("%1 (no effect yet)").arg(label);
+QString NodeMenuLabel(const QString& key, const QString& label) {
+    return NodeAffectsRenderedMaterial(DefinitionFor(key).type) ? label : QObject::tr("%1 (no effect yet)").arg(label);
 }
 
-QString NodeCategory(NodeType type) {
-    const auto category = GetNodeDefinition(type).category;
-    return QString::fromUtf8(category.data(), static_cast<int>(category.size()));
+QString NodeCategory(const QString& key) {
+    return FromView(DefinitionFor(key).category);
 }
 
 QColor PinColor(ValueType type) {
@@ -145,8 +163,8 @@ QColor PinColor(ValueType type) {
     return QColor(180, 180, 180);
 }
 
-QColor NodeTitleColor(NodeType type) {
-    const QString category = NodeCategory(type);
+QColor NodeTitleColor(const QString& key) {
+    const QString category = NodeCategory(key);
     if (category == "Textures") return QColor(180, 100, 42);
     if (category == "Math") return QColor(58, 112, 175);
     if (category == "Inputs") return QColor(92, 92, 96);
@@ -155,8 +173,8 @@ QColor NodeTitleColor(NodeType type) {
     return QColor(82, 82, 82);
 }
 
-bool IsTextureNode(NodeType type) {
-    return GetNodeDefinition(type).textureNode;
+bool IsTextureNode(const QString& key) {
+    return DefinitionFor(key).textureNode;
 }
 
 bool IsScalarNode(NodeType type) {
@@ -169,7 +187,7 @@ bool IsColorNode(NodeType type) {
 
 struct NodeMenuEntry {
     QString label;
-    NodeType type;
+    QString key;
 };
 
 QString ValueTypeLabel(ValueType type) {
@@ -191,71 +209,11 @@ bool FuzzyMatch(const QString& needle, const QString& haystack) {
     return n == a.size();
 }
 
-const std::vector<NodeMenuEntry>& NodeMenuEntries() {
-    static const std::vector<NodeMenuEntry> entries = {
-        {QObject::tr("MaterialOutput"), NodeType::MaterialOutput},
-        {QObject::tr("Scalar"), NodeType::ConstantFloat},
-        {QObject::tr("Vector3"), NodeType::ConstantVec3},
-        {QObject::tr("ConstantScalar"), NodeType::ConstantFloat},
-        {QObject::tr("ConstantColor"), NodeType::ConstantVec3},
-        {QObject::tr("FloatParameter"), NodeType::FloatParameter},
-        {QObject::tr("ColorParameter"), NodeType::ColorParameter},
-        {QObject::tr("TextureParameter"), NodeType::TextureParameter},
-        {QObject::tr("BoolParameter"), NodeType::BoolParameter},
-        {QObject::tr("Vector2Parameter"), NodeType::Vector2Parameter},
-        {QObject::tr("StaticSwitchParameter"), NodeType::StaticSwitchParameter},
-        {QObject::tr("AlbedoTextureSample"), NodeType::AlbedoTextureSample},
-        {QObject::tr("NormalTextureSample"), NodeType::NormalTextureSample},
-        {QObject::tr("RoughnessTextureSample"), NodeType::RoughnessTextureSample},
-        {QObject::tr("AOTextureSample"), NodeType::AoTextureSample},
-        {QObject::tr("WorldAlignedTexture"), NodeType::WorldAlignedTexture},
-        {QObject::tr("TextureSample"), NodeType::TextureSample},
-        {QObject::tr("TextureObject"), NodeType::TextureObject},
-        {QObject::tr("TextureSampleFromObject"), NodeType::TextureSampleFromObject},
-        {QObject::tr("TextureTilingOffset"), NodeType::TextureTilingOffset},
-        {QObject::tr("TriplanarTexture"), NodeType::TriplanarTexture},
-        {QObject::tr("NormalUnpack"), NodeType::NormalUnpack},
-        {QObject::tr("Add"), NodeType::Add},
-        {QObject::tr("Subtract"), NodeType::Subtract},
-        {QObject::tr("Multiply"), NodeType::Multiply},
-        {QObject::tr("Divide"), NodeType::Divide},
-        {QObject::tr("Clamp"), NodeType::Clamp},
-        {QObject::tr("Saturate"), NodeType::Saturate},
-        {QObject::tr("Power"), NodeType::Power},
-        {QObject::tr("Abs"), NodeType::Abs},
-        {QObject::tr("Min"), NodeType::Min},
-        {QObject::tr("Max"), NodeType::Max},
-        {QObject::tr("OneMinus"), NodeType::OneMinus},
-        {QObject::tr("DotProduct"), NodeType::DotProduct},
-        {QObject::tr("CrossProduct"), NodeType::CrossProduct},
-        {QObject::tr("Normalize"), NodeType::Normalize},
-        {QObject::tr("Length"), NodeType::Length},
-        {QObject::tr("ComponentMask"), NodeType::ComponentMask},
-        {QObject::tr("AppendVector"), NodeType::AppendVector},
-        {QObject::tr("BreakVector"), NodeType::BreakVector},
-        {QObject::tr("Transform"), NodeType::Transform},
-        {QObject::tr("TexCoord"), NodeType::TexCoord},
-        {QObject::tr("ScreenPosition"), NodeType::ScreenPosition},
-        {QObject::tr("Noise"), NodeType::Noise},
-        {QObject::tr("Gradient"), NodeType::Gradient},
-        {QObject::tr("Fresnel"), NodeType::Fresnel},
-        {QObject::tr("UVDistortion"), NodeType::UVDistortion},
-        {QObject::tr("Time"), NodeType::Time},
-        {QObject::tr("CameraVector"), NodeType::CameraVector},
-        {QObject::tr("ViewDirection"), NodeType::ViewDirection},
-        {QObject::tr("ReflectionVector"), NodeType::ReflectionVector},
-        {QObject::tr("WorldPosition"), NodeType::WorldPosition},
-        {QObject::tr("ObjectPosition"), NodeType::ObjectPosition},
-        {QObject::tr("DistanceToCamera"), NodeType::DistanceToCamera},
-        {QObject::tr("If"), NodeType::If},
-        {QObject::tr("Step"), NodeType::Step},
-        {QObject::tr("SmoothStep"), NodeType::SmoothStep},
-        {QObject::tr("Compare"), NodeType::Compare},
-        {QObject::tr("Lerp"), NodeType::Lerp},
-        {QObject::tr("Overlay"), NodeType::Overlay},
-        {QObject::tr("Screen"), NodeType::Screen},
-        {QObject::tr("HeightBlend"), NodeType::HeightBlend}
-    };
+std::vector<NodeMenuEntry> NodeMenuEntries() {
+    std::vector<NodeMenuEntry> entries;
+    for (const NodeDefinition* definition : GetPlaceableNodeDefinitions()) {
+        entries.push_back({FromView(definition->displayName), FromView(definition->typeName)});
+    }
     return entries;
 }
 
@@ -339,9 +297,12 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
         if (!NodeAffectsRenderedMaterial(node.type)) {
             result.issues.push_back({QObject::tr("%1 does not affect the rendered material yet. Its output is ignored.").arg(QString::fromStdString(node.displayName)), node.id, GraphIssue::Severity::Warning});
         }
-        if (IsTextureNode(node.type) && node.resourcePath.empty()) {
+        if (node.type == NodeType::Unknown) {
+            result.issues.push_back({QObject::tr("%1 is not a node this editor knows (a plugin node whose plugin is off?). It is kept in the file but does nothing.").arg(QString::fromStdString(node.serializedType.empty() ? node.displayName : node.serializedType)), node.id, GraphIssue::Severity::Warning});
+        }
+        if (IsTextureNode(NodeKeyOf(node)) && node.resourcePath.empty()) {
             result.issues.push_back({QObject::tr("%1 has no texture assigned.").arg(QString::fromStdString(node.displayName)), node.id, GraphIssue::Severity::Warning});
-        } else if (IsTextureNode(node.type) && !node.resourcePath.empty()) {
+        } else if (IsTextureNode(NodeKeyOf(node)) && !node.resourcePath.empty()) {
             std::filesystem::path texturePath(node.resourcePath);
             if (texturePath.is_absolute() && !std::filesystem::exists(texturePath)) {
                 result.issues.push_back({QObject::tr("Texture file is missing: %1").arg(QString::fromStdString(node.resourcePath)), node.id, GraphIssue::Severity::Warning});
@@ -400,141 +361,6 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
     }
 
     return result;
-}
-
-struct SyncResult {
-    bool representable = true;
-    QString warning;
-};
-
-SyncResult SyncLegacyFieldsFromGraph(const Graph& graph, MaterialComponent& ioMaterial) {
-    SyncResult sync;
-
-    const Node* output = nullptr;
-    for (const Node& node : graph.GetNodes()) {
-        if (node.type == NodeType::MaterialOutput) {
-            output = &node;
-            break;
-        }
-    }
-    if (!output) {
-        sync.representable = false;
-        sync.warning = QObject::tr("Missing MaterialOutput node.");
-        return sync;
-    }
-
-    auto findDirectNode = [&](int inputIndex) -> const Node* {
-        if (inputIndex < 0 || inputIndex >= static_cast<int>(output->inputs.size())) {
-            return nullptr;
-        }
-        const PinID sourcePin = graph.FindInputSource(output->inputs[inputIndex]);
-        if (sourcePin == 0) {
-            return nullptr;
-        }
-        const Pin* pin = graph.FindPin(sourcePin);
-        if (!pin) {
-            return nullptr;
-        }
-        return graph.FindNode(pin->node);
-    };
-
-    auto markComplex = [&]() {
-        sync.representable = false;
-        if (sync.warning.isEmpty()) {
-            sync.warning = QObject::tr("Graph uses features not representable in legacy fields. Legacy values preserved.");
-        }
-    };
-
-    if (const Node* n = findDirectNode(0)) {
-        if (n->type == NodeType::ConstantVec3 || n->type == NodeType::ColorParameter) {
-            ioMaterial.albedo = Vec3(n->color.x, n->color.y, n->color.z);
-            ioMaterial.useAlbedoTexture = false;
-            ioMaterial.albedoTexturePath.clear();
-        } else if (n->type == NodeType::AlbedoTextureSample || n->type == NodeType::WorldAlignedTexture) {
-            ioMaterial.useAlbedoTexture = true;
-            ioMaterial.albedoTexturePath = n->resourcePath;
-            ioMaterial.useWorldAlignedTexture = (n->type == NodeType::WorldAlignedTexture);
-            ioMaterial.worldTextureScale = n->worldAlignedScale;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(1)) {
-        if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.metallic = n->scalar;
-            ioMaterial.useMetallicTexture = false;
-            ioMaterial.metallicTexturePath.clear();
-        } else if (n->type == NodeType::MetallicTextureSample || n->type == NodeType::WorldAlignedTexture ||
-                   n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useMetallicTexture = true;
-            ioMaterial.metallicTexturePath = n->resourcePath;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(2)) {
-        if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.roughness = n->scalar;
-            ioMaterial.useRoughnessTexture = false;
-            ioMaterial.roughnessTexturePath.clear();
-        } else if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture ||
-                   n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useRoughnessTexture = true;
-            ioMaterial.roughnessTexturePath = n->resourcePath;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(3)) {
-        if (n->type == NodeType::ConstantVec3 || n->type == NodeType::ColorParameter) {
-            ioMaterial.emissive = Vec3(n->color.x, n->color.y, n->color.z);
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(4)) {
-        if (n->type == NodeType::NormalTextureSample || n->type == NodeType::WorldAlignedTexture ||
-            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useNormalTexture = true;
-            ioMaterial.normalTexturePath = n->resourcePath;
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(5)) {
-        if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture ||
-            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useRoughnessTexture = true;
-            ioMaterial.roughnessTexturePath = n->resourcePath;
-        } else if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.roughness = n->scalar;
-            ioMaterial.useRoughnessTexture = false;
-            ioMaterial.roughnessTexturePath.clear();
-        } else {
-            markComplex();
-        }
-    }
-
-    if (const Node* n = findDirectNode(6)) {
-        if (n->type == NodeType::AoTextureSample || n->type == NodeType::WorldAlignedTexture ||
-            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
-            ioMaterial.useAoTexture = true;
-            ioMaterial.aoTexturePath = n->resourcePath;
-        } else if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
-            ioMaterial.ao = n->scalar;
-            ioMaterial.useAoTexture = false;
-            ioMaterial.aoTexturePath.clear();
-        } else {
-            markComplex();
-        }
-    }
-
-    return sync;
 }
 
 class PinItem final : public QGraphicsItem {
@@ -626,11 +452,12 @@ public:
     enum { Type = QGraphicsItem::UserType + 4003 };
 
     explicit NodeItem(const Node& node, QGraphicsItem* parent = nullptr)
-        : QGraphicsItem(parent), m_nodeId(node.id), m_title(QString::fromStdString(node.displayName)), m_type(node.type) {
+        : QGraphicsItem(parent), m_nodeId(node.id), m_title(QString::fromStdString(node.displayName)), m_type(node.type),
+          m_key(NodeKeyOf(node)) {
         setFlag(QGraphicsItem::ItemIsMovable, true);
         setFlag(QGraphicsItem::ItemIsSelectable, true);
         setFlag(QGraphicsItem::ItemSendsGeometryChanges, true);
-        setToolTip(NodeTooltip(node.type));
+        setToolTip(NodeTooltip(m_key));
         setZValue(3.0);
         if (m_type == NodeType::MaterialOutput) {
             m_width = 270.0;
@@ -706,7 +533,7 @@ public:
 
         QRectF titleRect(0.0, 0.0, rect.width(), 30.0);
         painter->setPen(Qt::NoPen);
-        painter->setBrush(NodeTitleColor(m_type));
+        painter->setBrush(NodeTitleColor(m_key));
         painter->drawRoundedRect(titleRect, 6.0, 6.0);
         painter->setBrush(Theme::Color(Theme::Token::SurfaceRaised));
         painter->drawRect(0.0, 26.0, rect.width(), 4.0);
@@ -776,6 +603,7 @@ private:
     NodeID m_nodeId;
     QString m_title;
     NodeType m_type;
+    QString m_key;
     qreal m_width = 220.0;
     qreal m_height = 120.0;
     QPointF m_dragStart;
@@ -791,13 +619,13 @@ class MaterialGraphScene;
 
 class AddNodeCommand final : public QUndoCommand {
 public:
-    AddNodeCommand(MaterialGraphScene* scene, NodeType type, const QPointF& pos, std::optional<Node> source = std::nullopt);
+    AddNodeCommand(MaterialGraphScene* scene, QString key, const QPointF& pos, std::optional<Node> source = std::nullopt);
     void undo() override;
     void redo() override;
 
 private:
     MaterialGraphScene* m_scene;
-    NodeType m_type;
+    QString m_key;
     QPointF m_pos;
     std::optional<Node> m_source;
     Node m_snapshot;
@@ -1105,12 +933,12 @@ public:
                 continue;
             }
             const QPointF pos(source->posX + 40.0f, source->posY + 30.0f);
-            m_undo->push(new AddNodeCommand(this, source->type, pos, *source));
+            m_undo->push(new AddNodeCommand(this, NodeKeyOf(*source), pos, *source));
         }
     }
 
-    void addNode(NodeType type, const QPointF& scenePos) {
-        m_undo->push(new AddNodeCommand(this, type, scenePos));
+    void addNode(const QString& key, const QPointF& scenePos) {
+        m_undo->push(new AddNodeCommand(this, key, scenePos));
     }
 
     void addLink(PinID outputPin, PinID inputPin) {
@@ -1118,7 +946,7 @@ public:
     }
 
     bool restoreNodeFromSnapshot(const Node& node) {
-        Node& restored = m_graph->CreateNodeWithID(node.id, node.type, node.displayName);
+        Node& restored = m_graph->CreateNodeWithID(node.id, node.type, node.displayName, node.serializedType);
         restored.serializedType = node.serializedType;
         restored.parameterName = node.parameterName;
         restored.operation = node.operation;
@@ -1329,8 +1157,9 @@ protected:
             QMenu* logicMenu = add->addMenu(QObject::tr("Logic"));
             QMenu* blendMenu = add->addMenu(QObject::tr("Blend"));
 
-            auto categoryMenu = [&](NodeType type) -> QMenu* {
-                const QString cat = NodeCategory(type);
+            std::map<QString, QMenu*> pluginMenus;
+            auto categoryMenu = [&](const QString& key) -> QMenu* {
+                const QString cat = NodeCategory(key);
                 if (cat == "PBR") return outputMenu;
                 if (cat == "Inputs") return inputsMenu;
                 if (cat == "Textures") return texturesMenu;
@@ -1339,18 +1168,21 @@ protected:
                 if (cat == "Procedural") return proceduralMenu;
                 if (cat == "Logic") return logicMenu;
                 if (cat == "Blend") return blendMenu;
-                return utilitiesMenu;
+                if (cat == "Utility") return utilitiesMenu;
+                QMenu*& custom = pluginMenus[cat];
+                if (!custom) custom = add->addMenu(cat);
+                return custom;
             };
 
-            auto addAction = [&](QMenu* targetMenu, const QString& label, NodeType type) {
+            auto addAction = [&](QMenu* targetMenu, const QString& label, const QString& key) {
                 QAction* a = targetMenu->addAction(label);
-                connect(a, &QAction::triggered, this, [this, type, event]() {
-                    addNode(type, event->scenePos());
+                connect(a, &QAction::triggered, this, [this, key, event]() {
+                    addNode(key, event->scenePos());
                 });
             };
 
             for (const NodeMenuEntry& entry : NodeMenuEntries()) {
-                addAction(categoryMenu(entry.type), NodeMenuLabel(entry.type, entry.label), entry.type);
+                addAction(categoryMenu(entry.key), NodeMenuLabel(entry.key, entry.label), entry.key);
             }
 
             menu.addSeparator();
@@ -1569,16 +1401,22 @@ private:
     std::function<void(const QPoint&, const QPointF&)> m_nodeSearchRequested;
 };
 
-AddNodeCommand::AddNodeCommand(MaterialGraphScene* scene, NodeType type, const QPointF& pos, std::optional<Node> source)
-    : m_scene(scene), m_type(type), m_pos(pos), m_source(std::move(source)) {
+AddNodeCommand::AddNodeCommand(MaterialGraphScene* scene, QString key, const QPointF& pos, std::optional<Node> source)
+    : m_scene(scene), m_key(std::move(key)), m_pos(pos), m_source(std::move(source)) {
     setText(QObject::tr("Add Node"));
 }
 
 void AddNodeCommand::redo() {
     Graph* graph = m_scene->graph();
     if (!m_created) {
-        Node& node = graph->CreateNode(m_type, m_source ? m_source->displayName : std::string{});
+        Node* created = graph->CreateNodeOfType(m_key.toStdString());
+        if (!created) {
+            setObsolete(true);
+            return;
+        }
+        Node& node = *created;
         if (m_source) {
+            node.displayName = m_source->displayName;
             node.scalar = m_source->scalar;
             node.color = m_source->color;
             node.resourcePath = m_source->resourcePath;
@@ -1815,6 +1653,16 @@ private:
         if (!LoadMaterialAssetCompat(fs::path(m_absolutePath.toStdString()), m_material, m_displayName, m_graph, m_lastError)) {
             return false;
         }
+        if (!m_graph.HasSourceGraph()) {
+            Graph migrated = m_graph;
+            BuildMinimalGraphFromLegacyPbr(m_material, migrated);
+            MaterialComponent evaluated = m_material;
+            std::string evalError;
+            if (EvaluateGraph(migrated, evaluated, evalError) &&
+                DescribeRenderedDifferences(m_material, evaluated).empty()) {
+                m_graph = std::move(migrated);
+            }
+        }
 
         if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
             MaterialComponent evaluated = m_material;
@@ -1966,10 +1814,17 @@ private:
         materialForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         m_nameEdit = new QLineEdit(QString::fromStdString(m_displayName), materialSection);
         materialForm->addRow(QObject::tr("Name"), m_nameEdit);
-        m_syncLegacyCheck = new QCheckBox(QObject::tr("Sync legacy fields from graph"), materialSection);
-        m_syncLegacyCheck->setChecked(true);
-        m_syncLegacyCheck->setToolTip(QObject::tr("When saving, also write the graph's result into the legacy PBR fields."));
-        materialForm->addRow(QString(), m_syncLegacyCheck);
+        m_blendModeCombo = new QComboBox(materialSection);
+        m_blendModeCombo->addItem(QObject::tr("Opaque"), static_cast<int>(MaterialBlendMode::Opaque));
+        m_blendModeCombo->addItem(QObject::tr("Masked"), static_cast<int>(MaterialBlendMode::Masked));
+        m_blendModeCombo->addItem(QObject::tr("Translucent"), static_cast<int>(MaterialBlendMode::AlphaBlend));
+        m_blendModeCombo->addItem(QObject::tr("Additive"), static_cast<int>(MaterialBlendMode::Additive));
+        m_blendModeCombo->setItemData(0, QObject::tr("Solid surface. Writes depth and casts shadows."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(1, QObject::tr("Cut out where Opacity times the base color texture's alpha is below Opacity Mask Clip. Casts cut-out shadows; use for foliage, fences and grates."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(2, QObject::tr("Blended by Opacity times the base color texture's alpha, drawn after solid surfaces, furthest first. Casts no shadows; use for glass and decals."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(3, QObject::tr("Unlit, added to the image. Casts no shadows; use for flashes, sparks and glows."), Qt::ToolTipRole);
+        m_blendModeCombo->setCurrentIndex(m_blendModeCombo->findData(static_cast<int>(m_material.blendMode)));
+        materialForm->addRow(QObject::tr("Blend Mode"), m_blendModeCombo);
         inspectorLayout->addWidget(materialSection);
 
         auto* scroll = new QScrollArea(inspectorHost);
@@ -2024,8 +1879,7 @@ private:
             if (!item || item->data(0, Qt::UserRole).isNull()) {
                 return;
             }
-            const NodeType type = static_cast<NodeType>(item->data(0, Qt::UserRole).toInt());
-            addNodeFromUi(type, graphViewCenter());
+            addNodeFromUi(item->data(0, Qt::UserRole).toString(), graphViewCenter());
         });
         connect(m_previewMeshCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
             updatePreviewMesh();
@@ -2077,6 +1931,24 @@ private:
             showNodeSearchPopup(m_graphView->mapToGlobal(m_graphView->viewport()->rect().center()), graphViewCenter());
         });
 
+        connect(m_blendModeCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+            const auto oldMode = m_material.blendMode;
+            const auto newMode = static_cast<MaterialBlendMode>(m_blendModeCombo->itemData(index).toInt());
+            if (oldMode == newMode) {
+                return;
+            }
+            auto apply = [this](MaterialBlendMode mode) {
+                m_material.blendMode = mode;
+                const QSignalBlocker blocker(m_blendModeCombo);
+                m_blendModeCombo->setCurrentIndex(m_blendModeCombo->findData(static_cast<int>(mode)));
+                markDirty();
+                schedulePreviewUpdate();
+            };
+            m_undo->push(new EditMaterialPropertyCommand([apply, oldMode]() { apply(oldMode); },
+                                                         [apply, newMode]() { apply(newMode); },
+                                                         QObject::tr("Change Blend Mode")));
+        });
+
         connect(m_nameEdit, &QLineEdit::editingFinished, this, [this]() {
             m_displayName = m_nameEdit->text().trimmed().isEmpty()
                 ? QFileInfo(m_absolutePath).completeBaseName().toStdString()
@@ -2102,7 +1974,7 @@ private:
     void refreshGraphBanner() {
         if (m_graph.IsLegacyMode()) {
             m_graphBanner->setText(QObject::tr("Legacy PBR"));
-            m_graphBanner->setToolTip(QObject::tr("The graph is missing or invalid. Use Convert to graph to enter graph mode."));
+            m_graphBanner->setToolTip(QObject::tr("The graph is missing or invalid, or a graph cannot yet express every setting of this material. Use Convert to graph to enter graph mode."));
             SetStyleProperty(m_graphBanner, "tone", QStringLiteral("warning"));
             m_convertButton->setVisible(true);
         } else if (m_graph.HasSourceGraph()) {
@@ -2149,38 +2021,40 @@ private:
             return item;
         };
 
-        for (NodeType recent : m_recentNodeTypes) {
+        for (const QString& recent : m_recentNodeTypes) {
+            if (!FindNodeDefinition(recent.toStdString())) {
+                continue;
+            }
             const QString label = NodeTypeLabel(recent);
             const QString searchable = QObject::tr("%1 %2 %3")
-                .arg(label, NodeCategory(recent), QString::fromUtf8(GetNodeDefinition(recent).tooltip.data(), static_cast<int>(GetNodeDefinition(recent).tooltip.size())));
+                .arg(label, NodeCategory(recent), FromView(DefinitionFor(recent).tooltip));
             if (!FuzzyMatch(filter, searchable)) {
                 continue;
             }
             auto* child = new QTreeWidgetItem(getCategoryItem(QObject::tr("Recently Used")));
             child->setText(0, NodeMenuLabel(recent, label));
-            child->setData(0, Qt::UserRole, static_cast<int>(recent));
+            child->setData(0, Qt::UserRole, recent);
             child->setToolTip(0, NodeTooltip(recent));
         }
 
         for (const NodeMenuEntry& entry : NodeMenuEntries()) {
-            const auto tooltip = GetNodeDefinition(entry.type).tooltip;
             const QString searchable = QObject::tr("%1 %2 %3")
-                .arg(entry.label, NodeCategory(entry.type), QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
+                .arg(entry.label, NodeCategory(entry.key), FromView(DefinitionFor(entry.key).tooltip));
             if (!FuzzyMatch(filter, searchable)) {
                 continue;
             }
-            auto* child = new QTreeWidgetItem(getCategoryItem(NodeCategory(entry.type)));
-            child->setText(0, NodeMenuLabel(entry.type, entry.label));
-            child->setData(0, Qt::UserRole, static_cast<int>(entry.type));
-            child->setToolTip(0, NodeTooltip(entry.type));
+            auto* child = new QTreeWidgetItem(getCategoryItem(NodeCategory(entry.key)));
+            child->setText(0, NodeMenuLabel(entry.key, entry.label));
+            child->setData(0, Qt::UserRole, entry.key);
+            child->setToolTip(0, NodeTooltip(entry.key));
         }
         m_nodePalette->expandAll();
     }
 
-    void addNodeFromUi(NodeType type, const QPointF& scenePos) {
-        m_graphScene->addNode(type, scenePos);
-        m_recentNodeTypes.erase(std::remove(m_recentNodeTypes.begin(), m_recentNodeTypes.end(), type), m_recentNodeTypes.end());
-        m_recentNodeTypes.insert(m_recentNodeTypes.begin(), type);
+    void addNodeFromUi(const QString& key, const QPointF& scenePos) {
+        m_graphScene->addNode(key, scenePos);
+        m_recentNodeTypes.erase(std::remove(m_recentNodeTypes.begin(), m_recentNodeTypes.end(), key), m_recentNodeTypes.end());
+        m_recentNodeTypes.insert(m_recentNodeTypes.begin(), key);
         if (m_recentNodeTypes.size() > 5) {
             m_recentNodeTypes.resize(5);
         }
@@ -2204,23 +2078,23 @@ private:
         auto rebuildResults = [&]() {
             results->clear();
             const QString filter = search->text().trimmed();
-            auto addEntry = [&](const QString& prefix, NodeType type, const QString& label) {
-                const auto tooltip = GetNodeDefinition(type).tooltip;
-                const QString searchable = QObject::tr("%1 %2 %3")
-                    .arg(label, prefix, QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
+            auto addEntry = [&](const QString& prefix, const QString& key, const QString& label) {
+                const QString searchable = QObject::tr("%1 %2 %3").arg(label, prefix, FromView(DefinitionFor(key).tooltip));
                 if (!FuzzyMatch(filter, searchable)) {
                     return;
                 }
-                const QString shown = NodeMenuLabel(type, label);
+                const QString shown = NodeMenuLabel(key, label);
                 auto* item = new QListWidgetItem(prefix.isEmpty() ? shown : QObject::tr("%1  -  %2").arg(prefix, shown), results);
-                item->setData(Qt::UserRole, static_cast<int>(type));
-                item->setToolTip(NodeTooltip(type));
+                item->setData(Qt::UserRole, key);
+                item->setToolTip(NodeTooltip(key));
             };
-            for (NodeType recent : m_recentNodeTypes) {
-                addEntry(QObject::tr("Recent"), recent, NodeTypeLabel(recent));
+            for (const QString& recent : m_recentNodeTypes) {
+                if (FindNodeDefinition(recent.toStdString())) {
+                    addEntry(QObject::tr("Recent"), recent, NodeTypeLabel(recent));
+                }
             }
             for (const NodeMenuEntry& entry : NodeMenuEntries()) {
-                addEntry(NodeCategory(entry.type), entry.type, entry.label);
+                addEntry(NodeCategory(entry.key), entry.key, entry.label);
             }
             if (results->count() > 0) {
                 results->setCurrentRow(0);
@@ -2232,12 +2106,12 @@ private:
             if (!item) {
                 return;
             }
-            addNodeFromUi(static_cast<NodeType>(item->data(Qt::UserRole).toInt()), scenePos);
+            addNodeFromUi(item->data(Qt::UserRole).toString(), scenePos);
             popup.accept();
         });
         connect(search, &QLineEdit::returnPressed, &popup, [&]() {
             if (auto* item = results->currentItem()) {
-                addNodeFromUi(static_cast<NodeType>(item->data(Qt::UserRole).toInt()), scenePos);
+                addNodeFromUi(item->data(Qt::UserRole).toString(), scenePos);
                 popup.accept();
             }
         });
@@ -2533,11 +2407,33 @@ private:
             auto& registry = m_previewScene->GetRegistry();
             if (registry.valid(m_previewEntity) && registry.all_of<MaterialComponent>(m_previewEntity)) {
                 registry.replace<MaterialComponent>(m_previewEntity, m_previewMaterial);
+                updatePreviewShader(registry.get<MaterialComponent>(m_previewEntity));
             }
         }
         if (m_previewPlaceholderLabel && m_previewPlaceholderLabel->isVisible()) {
             m_previewPlaceholderLabel->setText(QObject::tr("Preview initializing..."));
         }
+    }
+
+    void updatePreviewShader(const MaterialComponent& previewComponent) {
+        EngineFrameRenderer* renderer = m_previewEngine ? m_previewEngine->GetFrameRenderer() : nullptr;
+        if (!renderer) {
+            return;
+        }
+        const bool ownShader = m_graph.HasSourceGraph() && !m_graph.IsLegacyMode() && GraphNeedsCompiledShader(m_graph);
+        const std::uint64_t hash = ownShader
+            ? Hephaestus::HashMaterialShaderSource(BuildMaterialGraphSource(GenerateMaterialShader(m_graph)))
+            : 0;
+        if (hash == m_previewShaderHash) {
+            return;
+        }
+        m_previewShaderHash = hash;
+        if (!ownShader) {
+            renderer->SetMaterialShaderOverride(&previewComponent, nullptr);
+            return;
+        }
+        const MaterialShaderCompileResult compiled = CompileMaterialGraph(m_graph, FindMaterialShaderSourceDirectory());
+        renderer->SetMaterialShaderOverride(&previewComponent, compiled.ok ? &compiled.shader : nullptr);
     }
 
     std::string previewMeshKey() const {
@@ -2591,6 +2487,16 @@ private:
             });
         };
 
+        auto* reflectionStrength = makeSpin(0.0, 10.0, 0.01, m_material.reflectionStrength);
+        auto* emissiveStrength = makeSpin(0.0, 100.0, 0.01, m_material.emissiveStrength);
+        m_inspectorForm->addRow(QObject::tr("Reflection Strength"), reflectionStrength);
+        m_inspectorForm->addRow(QObject::tr("Emissive Strength"), emissiveStrength);
+        addUndoSpin(reflectionStrength, QObject::tr("Edit Reflection Strength"), [this]() { return m_material.reflectionStrength; }, [this](double v) { m_material.reflectionStrength = static_cast<float>(v); });
+        addUndoSpin(emissiveStrength, QObject::tr("Edit Emissive Strength"), [this]() { return m_material.emissiveStrength; }, [this](double v) { m_material.emissiveStrength = static_cast<float>(v); });
+        if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
+            return;
+        }
+
         auto* albedoX = makeSpin(0.0, 10.0, 0.01, m_material.albedo.x);
         auto* albedoY = makeSpin(0.0, 10.0, 0.01, m_material.albedo.y);
         auto* albedoZ = makeSpin(0.0, 10.0, 0.01, m_material.albedo.z);
@@ -2608,8 +2514,6 @@ private:
         auto* metallic = makeSpin(0.0, 1.0, 0.01, m_material.metallic);
         auto* roughness = makeSpin(0.0, 1.0, 0.01, m_material.roughness);
         auto* ao = makeSpin(0.0, 1.0, 0.01, m_material.ao);
-        auto* reflectionStrength = makeSpin(0.0, 10.0, 0.01, m_material.reflectionStrength);
-        auto* emissiveStrength = makeSpin(0.0, 100.0, 0.01, m_material.emissiveStrength);
         auto* specular = makeSpin(0.0, 1.0, 0.01, m_material.specular);
         auto* opacity = makeSpin(0.0, 1.0, 0.01, m_material.opacity);
         auto* opacityMask = makeSpin(0.0, 1.0, 0.01, m_material.opacityMask);
@@ -2618,21 +2522,17 @@ private:
         m_inspectorForm->addRow(QObject::tr("Metallic"), metallic);
         m_inspectorForm->addRow(QObject::tr("Roughness"), roughness);
         m_inspectorForm->addRow(QObject::tr("AO"), ao);
-        m_inspectorForm->addRow(QObject::tr("Reflection Strength"), reflectionStrength);
-        m_inspectorForm->addRow(QObject::tr("Emissive Strength"), emissiveStrength);
         m_inspectorForm->addRow(QObject::tr("Specular"), specular);
         m_inspectorForm->addRow(QObject::tr("Opacity"), opacity);
-        m_inspectorForm->addRow(QObject::tr("Opacity Mask"), opacityMask);
+        m_inspectorForm->addRow(QObject::tr("Opacity Mask Clip"), opacityMask);
         m_inspectorForm->addRow(QObject::tr("Refraction"), refraction);
 
         addUndoSpin(metallic, QObject::tr("Edit Metallic"), [this]() { return m_material.metallic; }, [this](double v) { m_material.metallic = static_cast<float>(v); });
         addUndoSpin(roughness, QObject::tr("Edit Roughness"), [this]() { return m_material.roughness; }, [this](double v) { m_material.roughness = static_cast<float>(v); });
         addUndoSpin(ao, QObject::tr("Edit AO"), [this]() { return m_material.ao; }, [this](double v) { m_material.ao = static_cast<float>(v); });
-        addUndoSpin(reflectionStrength, QObject::tr("Edit Reflection Strength"), [this]() { return m_material.reflectionStrength; }, [this](double v) { m_material.reflectionStrength = static_cast<float>(v); });
-        addUndoSpin(emissiveStrength, QObject::tr("Edit Emissive Strength"), [this]() { return m_material.emissiveStrength; }, [this](double v) { m_material.emissiveStrength = static_cast<float>(v); });
         addUndoSpin(specular, QObject::tr("Edit Specular"), [this]() { return m_material.specular; }, [this](double v) { m_material.specular = static_cast<float>(v); });
         addUndoSpin(opacity, QObject::tr("Edit Opacity"), [this]() { return m_material.opacity; }, [this](double v) { m_material.opacity = static_cast<float>(v); });
-        addUndoSpin(opacityMask, QObject::tr("Edit Opacity Mask"), [this]() { return m_material.opacityMask; }, [this](double v) { m_material.opacityMask = static_cast<float>(v); });
+        addUndoSpin(opacityMask, QObject::tr("Edit Opacity Mask Clip"), [this]() { return m_material.opacityMask; }, [this](double v) { m_material.opacityMask = static_cast<float>(v); });
         addUndoSpin(refraction, QObject::tr("Edit Refraction"), [this]() { return m_material.refraction; }, [this](double v) { m_material.refraction = static_cast<float>(v); });
     }
 
@@ -2663,7 +2563,7 @@ private:
                 QObject::tr("Rename Node")));
         });
 
-        if (GetNodeDefinition(node.type).parameterNode) {
+        if (GetNodeDefinition(node).parameterNode) {
             auto* parameter = new QLineEdit(QString::fromStdString(node.parameterName), m_inspectorContent);
             parameter->setPlaceholderText(QObject::tr("Material parameter name"));
             parameter->setProperty("lastCommitted", parameter->text());
@@ -2688,15 +2588,12 @@ private:
             });
         }
 
-        if (node.type == NodeType::Compare || node.type == NodeType::Gradient) {
+        if (node.type == NodeType::Compare) {
             auto* operation = new QComboBox(m_inspectorContent);
-            const QStringList values = node.type == NodeType::Compare
-                ? QStringList{QStringLiteral(">"), QStringLiteral("<"), QStringLiteral("==")}
-                : QStringList{QObject::tr("Linear"), QObject::tr("Radial")};
-            operation->addItems(values);
+            operation->addItems({QStringLiteral(">"), QStringLiteral("<"), QStringLiteral("==")});
             const int current = operation->findText(QString::fromStdString(node.operation));
             operation->setCurrentIndex(current >= 0 ? current : 0);
-            m_inspectorForm->addRow(node.type == NodeType::Compare ? QObject::tr("Compare") : QObject::tr("Mode"), operation);
+            m_inspectorForm->addRow(QObject::tr("Compare"), operation);
             connect(operation, &QComboBox::currentTextChanged, this, [this, nodeId = node.id](const QString& value) {
                 if (Node* n = m_graph.FindNode(nodeId)) {
                     n->operation = value.toStdString();
@@ -2978,7 +2875,22 @@ private:
             connect(zSpin, &QDoubleSpinBox::editingFinished, this, commitVector);
         }
 
-        if (IsTextureNode(node.type)) {
+        if (IsTextureNode(NodeKeyOf(node))) {
+            if (node.type == NodeType::TextureSample || node.type == NodeType::WorldAlignedTexture ||
+                node.type == NodeType::TriplanarTexture || node.type == NodeType::TextureObject ||
+                node.type == NodeType::TextureParameter) {
+                auto* linear = new QCheckBox(QObject::tr("Linear data"), m_inspectorContent);
+                linear->setChecked(node.boolValue);
+                linear->setToolTip(QObject::tr("Tick for normal maps, roughness, metallic, AO and masks so they are read without colour (sRGB) conversion. Leave off for colour textures."));
+                m_inspectorForm->addRow(QObject::tr("Texture Data"), linear);
+                connect(linear, &QCheckBox::toggled, this, [this, nodeId = node.id](bool checked) {
+                    if (Node* n = m_graph.FindNode(nodeId)) {
+                        n->boolValue = checked;
+                        markDirty();
+                        schedulePreviewUpdate();
+                    }
+                });
+            }
             auto* texturePreviewRow = new QWidget(m_inspectorContent);
             auto* texturePreviewLayout = new QHBoxLayout(texturePreviewRow);
             texturePreviewLayout->setContentsMargins(0, 0, 0, 0);
@@ -3146,9 +3058,15 @@ private:
         }
 
         if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
-            MaterialShaderGenerationResult shaderResult = GenerateMaterialShader(m_graph);
-            for (const std::string& diagnostic : shaderResult.diagnostics) {
-                addIssueItem(QObject::tr("Shader: %1").arg(QString::fromStdString(diagnostic)), 0, GraphIssue::Severity::Error);
+            if (GraphNeedsCompiledShader(m_graph)) {
+                const MaterialShaderCompileResult compiled = CompileMaterialGraph(m_graph, FindMaterialShaderSourceDirectory());
+                for (const std::string& diagnostic : compiled.diagnostics) {
+                    addIssueItem(QObject::tr("Shader: %1").arg(QString::fromStdString(diagnostic)), 0, GraphIssue::Severity::Error);
+                }
+                if (!compiled.ok) {
+                    refreshStatus(QObject::tr("Shader compile error"), false);
+                    return;
+                }
             }
             MaterialComponent evaluated = m_material;
             std::string evalError;
@@ -3160,7 +3078,8 @@ private:
             m_material = evaluated;
         }
 
-        refreshStatus(QObject::tr("Compiled"), true);
+        const bool ownShader = m_graph.HasSourceGraph() && !m_graph.IsLegacyMode() && GraphNeedsCompiledShader(m_graph);
+        refreshStatus(ownShader ? QObject::tr("Compiled to its own shader") : QObject::tr("Compiled"), true);
         schedulePreviewUpdate();
     }
 
@@ -3178,14 +3097,7 @@ private:
     void saveMaterial() {
         compileAndApply();
 
-        MaterialComponent toSave = m_material;
-        if (m_syncLegacyCheck->isChecked() && m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
-            SyncResult sync = SyncLegacyFieldsFromGraph(m_graph, toSave);
-            if (!sync.representable && !sync.warning.isEmpty()) {
-                addIssueItem(sync.warning, 0, GraphIssue::Severity::Warning);
-                refreshIssueCount();
-            }
-        }
+        const MaterialComponent& toSave = m_material;
 
         const std::string saveName = m_nameEdit->text().trimmed().isEmpty()
             ? QFileInfo(m_absolutePath).completeBaseName().toStdString()
@@ -3193,7 +3105,9 @@ private:
 
         std::string error;
         namespace fs = std::filesystem;
-        if (!SaveMaterialAssetCompat(fs::path(m_absolutePath.toStdString()), toSave, saveName, m_graph, {}, error)) {
+        std::vector<std::string> shaderDiagnostics;
+        if (!SaveMaterialAssetCompat(fs::path(m_absolutePath.toStdString()), toSave, saveName, m_graph, {}, error,
+                                     &shaderDiagnostics)) {
             QMessageBox::warning(this, QObject::tr("Save Failed"),
                                  QObject::tr("Failed to save material:\n%1").arg(QString::fromStdString(error)));
             refreshStatus(QObject::tr("Save failed"), false);
@@ -3202,7 +3116,12 @@ private:
 
         m_undo->setClean();
         setDirty(false);
-        refreshStatus(QObject::tr("Saved"), true);
+        for (const std::string& diagnostic : shaderDiagnostics) {
+            addIssueItem(QObject::tr("Shader: %1").arg(QString::fromStdString(diagnostic)), 0, GraphIssue::Severity::Error);
+        }
+        refreshStatus(shaderDiagnostics.empty() ? QObject::tr("Saved")
+                                                : QObject::tr("Saved; the shader did not compile, so it draws without the graph's per-pixel nodes"),
+                      shaderDiagnostics.empty());
     }
 
     void refreshStatus(const QString& text, bool ok) {
@@ -3255,13 +3174,13 @@ private:
     QPushButton* m_addNodeButton = nullptr;
     QToolButton* m_viewButton = nullptr;
     QToolButton* m_snapCheck = nullptr;
-    QCheckBox* m_syncLegacyCheck = nullptr;
+    QComboBox* m_blendModeCombo = nullptr;
     QLabel* m_dirtyLabel = nullptr;
     bool m_dirty = false;
 
     QLineEdit* m_paletteSearchEdit = nullptr;
     QTreeWidget* m_nodePalette = nullptr;
-    std::vector<NodeType> m_recentNodeTypes;
+    std::vector<QString> m_recentNodeTypes;
     QWidget* m_inspectorContent = nullptr;
     QFormLayout* m_inspectorForm = nullptr;
     QLabel* m_statusLabel = nullptr;
@@ -3277,6 +3196,7 @@ private:
     QLabel* m_previewStatusLabel = nullptr;
     QTimer* m_previewUpdateTimer = nullptr;
     MaterialComponent m_previewMaterial;
+    std::uint64_t m_previewShaderHash = 0;
     std::unique_ptr<Scene> m_previewScene;
     entt::entity m_previewEntity = entt::null;
     entt::entity m_previewEnvironmentEntity = entt::null;

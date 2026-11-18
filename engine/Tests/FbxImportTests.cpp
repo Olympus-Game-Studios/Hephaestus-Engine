@@ -76,6 +76,36 @@ bool TestStaticTriangle(const fs::path& repoRoot) {
     return ok;
 }
 
+// skinned_textured.fbx stores V = 1 on the cube's top face and V = 0 on its bottom face.
+template <typename Vertices>
+bool TopSamplesImageTop(const Vertices& vertices, const char* label) {
+    float topY = -1e9f, bottomY = 1e9f, topV = 0.0f, bottomV = 0.0f;
+    for (const auto& v : vertices) {
+        if (v.pos[1] > topY) { topY = v.pos[1]; topV = v.texCoord[1]; }
+        if (v.pos[1] < bottomY) { bottomY = v.pos[1]; bottomV = v.texCoord[1]; }
+    }
+    return Check(std::abs(topV) < 1e-3f && std::abs(bottomV - 1.0f) < 1e-3f,
+                 std::string(label) + ": FBX V is flipped so the top of the model samples the top of the image");
+}
+
+bool TestFbxUvOrientation(const fs::path& repoRoot) {
+    std::string error;
+    MeshData mesh;
+    FbxStaticImportResult meta;
+    bool ok = Check(FbxStaticImporter::Load(Fixture(repoRoot, "skinned_textured.fbx"),
+                                            FbxSpaceConversion::ModifyGeometry, mesh, meta, error),
+                    "load skinned_textured.fbx as a static mesh: " + error);
+    ok &= TopSamplesImageTop(mesh.vertices, "static FBX");
+    SkeletalImportResult skinned;
+    ok &= Check(SkeletalModelImporter::Load(Fixture(repoRoot, "skinned_textured.fbx"), {}, skinned, error) &&
+                    !skinned.meshes.empty(),
+                "load skinned_textured.fbx as a character: " + error);
+    if (!skinned.meshes.empty()) {
+        ok &= TopSamplesImageTop(skinned.meshes[0].vertices, "skinned FBX");
+    }
+    return ok;
+}
+
 const SkeletonBone* FindBone(const Hephaestus::Skeleton& skeleton, const char* name) {
     return skeleton.FindBone(name);
 }
@@ -263,6 +293,7 @@ int main(int argc, char** argv) {
     bool ok = true;
     ok &= TestMalformed(repoRoot);
     ok &= TestStaticTriangle(repoRoot);
+    ok &= TestFbxUvOrientation(repoRoot);
     ok &= TestSkinnedRestAndHelpers(repoRoot);
     ok &= TestLinearBake(repoRoot);
     ok &= TestOwnedMeshFbx(repoRoot);

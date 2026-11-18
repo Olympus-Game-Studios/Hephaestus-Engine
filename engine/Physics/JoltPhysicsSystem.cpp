@@ -372,6 +372,7 @@ struct PhysicsContactListener : public JPH::ContactListener {
 
 JoltPhysicsSystem::JoltPhysicsSystem(JoltPhysicsEngine& physicsEngine)
     : m_PhysicsEngine(physicsEngine)
+    , m_Ragdolls(std::make_unique<RagdollSystem>(physicsEngine, *this))
 {
 }
 
@@ -396,6 +397,7 @@ void JoltPhysicsSystem::RegisterCharacterProxy(entt::entity entity, JPH::BodyID 
     const std::uint32_t key = BodyKey(bodyId);
     m_CharacterProxies.insert(key);
     m_BodyToEntityMap[key] = entity;
+    m_PhysicsEngine.GetBodyInterface().SetCollisionGroup(bodyId, JPH::CollisionGroup(nullptr, kCharacterProxyGroup, 0));
 }
 
 void JoltPhysicsSystem::UnregisterCharacterProxy(JPH::BodyID bodyId)
@@ -408,6 +410,20 @@ void JoltPhysicsSystem::UnregisterCharacterProxy(JPH::BodyID bodyId)
     auto found = m_BodyToEntityMap.find(key);
     if (found != m_BodyToEntityMap.end()) {
         m_BodyToEntityMap.erase(found);
+    }
+}
+
+void JoltPhysicsSystem::RegisterExternalBody(entt::entity entity, JPH::BodyID bodyId)
+{
+    if (!bodyId.IsInvalid()) {
+        m_BodyToEntityMap[BodyKey(bodyId)] = entity;
+    }
+}
+
+void JoltPhysicsSystem::UnregisterExternalBody(JPH::BodyID bodyId)
+{
+    if (!bodyId.IsInvalid()) {
+        m_BodyToEntityMap.erase(BodyKey(bodyId));
     }
 }
 
@@ -589,10 +605,12 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
         if (m_CharacterController) {
             m_CharacterController->FixedStep(scene, kPhysicsFixedDt);
         }
-        if (m_EntityToBodyMap.empty() && !(m_CharacterController && m_CharacterController->ActiveCount() > 0)) {
+        if (m_EntityToBodyMap.empty() && !(m_CharacterController && m_CharacterController->ActiveCount() > 0)
+            && m_Ragdolls->ActiveCount() == 0) {
             return;
         }
         m_PhysicsEngine.Update(kPhysicsFixedDt);
+        m_Ragdolls->AfterStep(scene);
         DispatchContactEvents();
         auto view = scene.GetEntitiesWith<TransformComponent, RigidBodyComponent>();
         for (auto handle : view) {
@@ -755,6 +773,14 @@ void JoltPhysicsSystem::RestoreSimulationPoses(Scene& scene)
 
 namespace {
 
+// Jolt rejects a convex radius larger than the smallest half extent, which thin plates and rails have.
+JPH::BoxShapeSettings MakeBoxSettings(const Vec3& half)
+{
+    const float smallest = std::min(half.x, std::min(half.y, half.z));
+    return JPH::BoxShapeSettings(JPH::Vec3(half.x, half.y, half.z),
+                                 std::min(JPH::cDefaultConvexRadius, smallest));
+}
+
 struct MeshCacheEntry {
     MeshData mesh;
     std::filesystem::file_time_type lastWrite{};
@@ -877,7 +903,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
             std::max(std::abs(scale.z) * half.z, 0.001f)
         );
 
-        JPH::BoxShapeSettings boxSettings(JPH::Vec3(halfScaled.x, halfScaled.y, halfScaled.z));
+        JPH::BoxShapeSettings boxSettings = MakeBoxSettings(halfScaled);
         auto boxResult = boxSettings.Create();
         if (boxResult.HasError()) {
             std::cerr << "Failed to create mesh-bounds box collision shape: " << boxResult.GetError().c_str() << "\n";
@@ -983,7 +1009,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
                     std::max(shapeComp.extents.y * absScale.y, 0.001f),
                     std::max(shapeComp.extents.z * absScale.z, 0.001f)
                 );
-                JPH::BoxShapeSettings settings(JPH::Vec3(half.x, half.y, half.z));
+                JPH::BoxShapeSettings settings = MakeBoxSettings(half);
                 auto result = settings.Create();
                 if (!result.HasError()) {
                     return applyOffset(result.Get());
@@ -1214,7 +1240,8 @@ entt::entity JoltPhysicsSystem::GetEntityForBody(JPH::BodyID bodyId) const {
 
 bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
                                 float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer,
-                                bool ignoreSensors) const {
+                                bool ignoreSensors,
+                                const std::vector<entt::entity>* extraIgnoredEntities) const {
     outHit = RaycastHit{};
 
     JPH::PhysicsSystem* physicsSystem = m_PhysicsEngine.GetPhysicsSystem();
@@ -1245,55 +1272,54 @@ bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, c
     JPH::RayCastResult rayCastResult;
     const JPH::NarrowPhaseQuery& query = physicsSystem->GetNarrowPhaseQuery();
 
-    JPH::BodyID ignoreBody;
-    if (ignoreEntity != entt::null) {
-        ignoreBody = GetBodyID(ignoreEntity);
-        if (ignoreBody.IsInvalid() && m_CharacterController) {
-            const std::uint32_t proxyKey = m_CharacterController->ProxyBodyKey(ignoreEntity);
+    std::vector<JPH::BodyID> ignoredBodies;
+    auto addIgnored = [&](entt::entity entity) {
+        if (entity == entt::null) {
+            return;
+        }
+        JPH::BodyID body = GetBodyID(entity);
+        if (body.IsInvalid() && m_CharacterController) {
+            const std::uint32_t proxyKey = m_CharacterController->ProxyBodyKey(entity);
             if (proxyKey != 0xFFFFFFFFu) {
-                ignoreBody = JPH::BodyID(proxyKey);
+                body = JPH::BodyID(proxyKey);
             }
+        }
+        if (!body.IsInvalid()) {
+            ignoredBodies.push_back(body);
+        }
+    };
+    addIgnored(ignoreEntity);
+    if (extraIgnoredEntities) {
+        for (entt::entity entity : *extraIgnoredEntities) {
+            addIgnored(entity);
         }
     }
 
-    class IgnoreSensorsFilter final : public JPH::BodyFilter {
+    class QueryBodyFilter final : public JPH::BodyFilter {
     public:
-        explicit IgnoreSensorsFilter(JPH::BodyID ignore) : m_Ignore(ignore) {}
-        bool ShouldCollide(const JPH::BodyID& inBodyID) const override { return inBodyID != m_Ignore; }
+        QueryBodyFilter(const std::vector<JPH::BodyID>& ignored, bool ignoreSensors)
+            : m_Ignored(ignored), m_IgnoreSensors(ignoreSensors) {}
+        bool ShouldCollide(const JPH::BodyID& inBodyID) const override {
+            return std::find(m_Ignored.begin(), m_Ignored.end(), inBodyID) == m_Ignored.end();
+        }
         bool ShouldCollideLocked(const JPH::Body& inBody) const override {
-            return inBody.GetID() != m_Ignore && !inBody.IsSensor();
+            return ShouldCollide(inBody.GetID()) && !(m_IgnoreSensors && inBody.IsSensor());
         }
     private:
-        JPH::BodyID m_Ignore;
+        const std::vector<JPH::BodyID>& m_Ignored;
+        bool m_IgnoreSensors;
     };
 
+    const QueryBodyFilter filter(ignoredBodies, ignoreSensors);
     bool hit = false;
-    if (ignoreSensors) {
-        IgnoreSensorsFilter filter(ignoreBody);
-        if (gameplayLayer) {
-            const JPH::ObjectLayer queryLayer = m_PhysicsEngine.ObjectLayerFor(*gameplayLayer, false);
-            hit = query.CastRay(ray, rayCastResult,
-                                physicsSystem->GetDefaultBroadPhaseLayerFilter(queryLayer),
-                                physicsSystem->GetDefaultLayerFilter(queryLayer),
-                                filter);
-        } else {
-            hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
-        }
-    } else if (gameplayLayer) {
+    if (gameplayLayer) {
         const JPH::ObjectLayer queryLayer = m_PhysicsEngine.ObjectLayerFor(*gameplayLayer, false);
-        const JPH::DefaultBroadPhaseLayerFilter broadFilter = physicsSystem->GetDefaultBroadPhaseLayerFilter(queryLayer);
-        const JPH::DefaultObjectLayerFilter objectFilter = physicsSystem->GetDefaultLayerFilter(queryLayer);
-        if (!ignoreBody.IsInvalid()) {
-            JPH::IgnoreSingleBodyFilter filter(ignoreBody);
-            hit = query.CastRay(ray, rayCastResult, broadFilter, objectFilter, filter);
-        } else {
-            hit = query.CastRay(ray, rayCastResult, broadFilter, objectFilter);
-        }
-    } else if (!ignoreBody.IsInvalid()) {
-        JPH::IgnoreSingleBodyFilter filter(ignoreBody);
-        hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
+        hit = query.CastRay(ray, rayCastResult,
+                            physicsSystem->GetDefaultBroadPhaseLayerFilter(queryLayer),
+                            physicsSystem->GetDefaultLayerFilter(queryLayer),
+                            filter);
     } else {
-        hit = query.CastRay(ray, rayCastResult);
+        hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
     }
 
     if (!hit) {
@@ -1317,6 +1343,7 @@ bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, c
                 rayCastResult.mSubShapeID2,
                 JPH::RVec3(outHit.point.x, outHit.point.y, outHit.point.z));
             outHit.normal = Vec3(n.GetX(), n.GetY(), n.GetZ());
+            outHit.sensor = body.IsSensor();
         }
     }
 
@@ -1396,6 +1423,7 @@ void JoltPhysicsSystem::ClearAllBodies() {
     if (m_CharacterController) {
         m_CharacterController->Clear();
     }
+    m_Ragdolls->Clear();
     m_CharacterProxies.clear();
 
     // Destroy all bodies in the physics engine

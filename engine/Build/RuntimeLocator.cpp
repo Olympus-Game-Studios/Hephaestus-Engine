@@ -138,6 +138,10 @@ std::filesystem::path RuntimeLocator::discoverEngineRoot(
     return executableDirectory;
 }
 
+std::filesystem::path RuntimeBuildDirectory(const std::filesystem::path& engineRoot, bool enableRuntimeAutomation) {
+    return engineRoot / (enableRuntimeAutomation ? "build-automation" : "build");
+}
+
 RuntimeLocationResult RuntimeLocator::locate(const std::filesystem::path& engineRoot,
                                              const std::filesystem::path& searchRoot,
                                              BuildConfiguration configuration,
@@ -146,16 +150,19 @@ RuntimeLocationResult RuntimeLocator::locate(const std::filesystem::path& engine
     const std::filesystem::path config(
         configuration == BuildConfiguration::Release ? "Release" : "Debug");
     std::vector<std::filesystem::path> roots;
+    std::error_code ec;
+    const bool hasSourceTree =
+        !engineRoot.empty() &&
+        std::filesystem::is_regular_file(engineRoot / "CMakeLists.txt", ec);
+    if (enableRuntimeAutomation && hasSourceTree) {
+        AddUnique(roots, RuntimeBuildDirectory(engineRoot, true) / config);
+    }
     if (!searchRoot.empty()) {
         AddUnique(roots, searchRoot / config);
         if (configuration == BuildConfiguration::Release) {
             AddUnique(roots, searchRoot);
         }
     }
-    std::error_code ec;
-    const bool hasSourceTree =
-        !engineRoot.empty() &&
-        std::filesystem::is_regular_file(engineRoot / "CMakeLists.txt", ec);
     if (hasSourceTree) {
         AddUnique(roots, engineRoot / "build" / config);
         AddUnique(roots, engineRoot / "bin" / config);
@@ -259,7 +266,8 @@ bool CMakeRuntimeBuilder::build(const std::filesystem::path& engineRoot,
         }
         return false;
     }
-    const auto buildDirectory = m_buildDirectory.empty() ? engineRoot / "build" : m_buildDirectory;
+    const auto buildDirectory =
+        m_buildDirectory.empty() ? RuntimeBuildDirectory(engineRoot, enableRuntimeAutomation) : m_buildDirectory;
     const char* cmakeConfiguration =
         configuration == BuildConfiguration::Release ? "Release" : "Debug";
     if (!applicationIcon.empty() &&

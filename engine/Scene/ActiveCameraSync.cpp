@@ -18,6 +18,23 @@ Vec3 RenderForward(float yawRadians, float pitchRadians)
         std::sin(yawRadians) * cosPitch);
 }
 
+float WrapPi(float radians)
+{
+    constexpr float kPi = 3.14159265358979f;
+    return radians - 2.0f * kPi * std::floor((radians + kPi) / (2.0f * kPi));
+}
+
+// The same rotation matrix is (x, y, z) or (x + pi, pi - y, z + pi); the gizmo can store either, and the camera
+// angles are only meaningful in the form whose pitch is within +-90 degrees.
+Vec3 CameraEuler(const Vec3& rotation)
+{
+    constexpr float kPi = 3.14159265358979f;
+    if (std::fabs(WrapPi(rotation.x)) <= kPi * 0.5f) {
+        return rotation;
+    }
+    return Vec3(WrapPi(rotation.x + kPi), WrapPi(kPi - rotation.y), WrapPi(rotation.z + kPi));
+}
+
 Vec3 RotateDirection(const Mat4& world, const Vec3& direction)
 {
     const Vec4 rotated = Mat4::TransformVec4(
@@ -65,7 +82,8 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out)
     const TransformComponent& local = camera.GetComponent<TransformComponent>();
     const Mat4 world = scene.GetWorldTransform(camera);
 
-    Vec3 forward = RenderForward(local.rotation.y, local.rotation.x);
+    const Vec3 euler = CameraEuler(local.rotation);
+    Vec3 forward = RenderForward(euler.y, euler.x);
     if (local.parent != entt::null) {
         Entity parent{local.parent, &scene};
         if (parent && parent.HasComponent<TransformComponent>()) {
@@ -79,11 +97,41 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out)
     out.entity = static_cast<entt::entity>(camera);
     out.position = Vec3(world.m[12], world.m[13], world.m[14]);
     AssignAnglesFromForward(forward, out);
-    out.rollRadians = local.rotation.z;
+    out.rollRadians = euler.z;
     out.fovDegrees = cameraComponent.fov;
     out.nearPlane = cameraComponent.nearPlane;
     out.farPlane = cameraComponent.farPlane;
+    out.viewModelFovDegrees = cameraComponent.viewModelFov;
     return true;
+}
+
+Mat4 MakeCameraViewFrame(const Vec3& position, float yawRadians, float pitchRadians, float rollRadians)
+{
+    const Vec3 forward = RenderForward(yawRadians, pitchRadians);
+    const Vec3 level(-std::sin(yawRadians), 0.0f, std::cos(yawRadians));
+    const Vec3 levelUp = vcross(level, forward);
+    const float c = std::cos(rollRadians);
+    const float s = std::sin(rollRadians);
+    const Vec3 up = vsub(vscale(levelUp, c), vscale(level, s));
+    const Vec3 right = vadd(vscale(level, c), vscale(levelUp, s));
+    Mat4 frame = Mat4::Identity();
+    frame.m[0] = forward.x; frame.m[1] = forward.y; frame.m[2] = forward.z;
+    frame.m[4] = up.x;      frame.m[5] = up.y;      frame.m[6] = up.z;
+    frame.m[8] = right.x;   frame.m[9] = right.y;   frame.m[10] = right.z;
+    frame.m[12] = position.x; frame.m[13] = position.y; frame.m[14] = position.z;
+    return frame;
+}
+
+Mat4 MakeViewModelFovAdjust(const Mat4& view, float worldFovDegrees, float viewModelFovDegrees)
+{
+    if (viewModelFovDegrees <= 0.0f || worldFovDegrees <= 0.0f || viewModelFovDegrees == worldFovDegrees) {
+        return Mat4::Identity();
+    }
+    // Projected x and y are the focal length times view-space x and y, so scaling them by the focal ratio
+    // is the same as projecting with the view model's field of view.
+    constexpr float kDegToRad = 3.1415926535f / 180.0f;
+    const float k = std::tan(worldFovDegrees * 0.5f * kDegToRad) / std::tan(viewModelFovDegrees * 0.5f * kDegToRad);
+    return Mat4::Multiply(Mat4::Invert(view), Mat4::Multiply(Mat4::Scale(Vec3(k, k, 1.0f)), view));
 }
 
 std::optional<ActiveCameraView> TryReadActiveCameraView(Scene& scene)

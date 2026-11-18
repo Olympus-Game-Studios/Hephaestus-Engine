@@ -254,6 +254,7 @@ void EditorCameraController::BuildRenderCamera(RenderCamera& outCamera) const
     outCamera.positionZ = positionZ;
     outCamera.yawDeg = yawDeg;
     outCamera.pitchDeg = pitchDeg;
+    outCamera.rollDeg = 0.0f;
     outCamera.nearPlane = nearPlane;
     outCamera.farPlane = farPlane;
     outCamera.fovDeg = fovDeg;

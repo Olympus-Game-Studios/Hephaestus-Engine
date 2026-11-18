@@ -172,6 +172,7 @@ std::string WriteCharacterControllerJson(const CharacterControllerComponent& com
     oss << "          \"height\": " << FormatFloat(component.height) << ",\n";
     oss << "          \"radius\": " << FormatFloat(component.radius) << ",\n";
     oss << "          \"crouchedHeight\": " << FormatFloat(component.crouchedHeight) << ",\n";
+    oss << "          \"proneHeight\": " << FormatFloat(component.proneHeight) << ",\n";
     oss << "          \"maxSlopeAngleDegrees\": " << FormatFloat(component.maxSlopeAngleDegrees) << ",\n";
     oss << "          \"stepHeight\": " << FormatFloat(component.stepHeight) << ",\n";
     oss << "          \"groundSnapDistance\": " << FormatFloat(component.groundSnapDistance) << ",\n";
@@ -181,6 +182,8 @@ std::string WriteCharacterControllerJson(const CharacterControllerComponent& com
     oss << "          \"airAcceleration\": " << FormatFloat(component.airAcceleration) << ",\n";
     oss << "          \"airControl\": " << FormatFloat(component.airControl) << ",\n";
     oss << "          \"jumpSpeed\": " << FormatFloat(component.jumpSpeed) << ",\n";
+    oss << "          \"coyoteTime\": " << FormatFloat(component.coyoteTime) << ",\n";
+    oss << "          \"jumpBufferTime\": " << FormatFloat(component.jumpBufferTime) << ",\n";
     oss << "          \"gravityScale\": " << FormatFloat(component.gravityScale) << ",\n";
     oss << "          \"maxFallSpeed\": " << FormatFloat(component.maxFallSpeed) << ",\n";
     oss << "          \"collisionLayer\": " << component.collisionLayer << ",\n";
@@ -209,6 +212,7 @@ bool ApplyCharacterControllerJson(CharacterControllerComponent& component, const
     readFloat("height", component.height);
     readFloat("radius", component.radius);
     readFloat("crouchedHeight", component.crouchedHeight);
+    readFloat("proneHeight", component.proneHeight);
     readFloat("maxSlopeAngleDegrees", component.maxSlopeAngleDegrees);
     readFloat("stepHeight", component.stepHeight);
     readFloat("groundSnapDistance", component.groundSnapDistance);
@@ -218,6 +222,8 @@ bool ApplyCharacterControllerJson(CharacterControllerComponent& component, const
     readFloat("airAcceleration", component.airAcceleration);
     readFloat("airControl", component.airControl);
     readFloat("jumpSpeed", component.jumpSpeed);
+    readFloat("coyoteTime", component.coyoteTime);
+    readFloat("jumpBufferTime", component.jumpBufferTime);
     readFloat("gravityScale", component.gravityScale);
     readFloat("maxFallSpeed", component.maxFallSpeed);
     readFloat("mass", component.mass);
@@ -372,7 +378,9 @@ PropertyValue ParsePropertyValue(const JsonValue& value)
 void WritePrefabInstance(std::ostream& stream, const PrefabInstanceComponent& instance)
 {
     stream << "    {\n";
-    stream << "      \"prefabPath\": \"" << EscapeString(instance.prefabPath) << "\",\n";
+    stream << "      \"prefabPath\": \""
+           << EscapeString(Hephaestus::AssetPathPolicy::ToPortableKey(std::filesystem::path{}, instance.prefabPath))
+           << "\",\n";
     stream << "      \"prefabGuid\": \"" << EscapeString(instance.prefabGuid) << "\",\n";
     stream << "      \"instanceId\": \"" << EscapeString(instance.instanceId) << "\",\n";
     stream << "      \"rootNodeId\": \"" << EscapeString(instance.rootNodeId) << "\",\n";
@@ -571,6 +579,59 @@ static std::string NormalizeAssetPathForSave(const std::string& rawPath)
 
     // Fallback: return just the filename to avoid baking in machine-specific paths
     return std::filesystem::path(rawPath).filename().generic_string();
+}
+
+std::string WritePostProcessJson(const EnvironmentComponent::PostProcess& post)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "          \"postProcess\": {\n";
+    oss << "            \"exposure\": " << FormatFloat(post.exposure) << ",\n";
+    oss << "            \"contrast\": " << FormatFloat(post.contrast) << ",\n";
+    oss << "            \"saturation\": " << FormatFloat(post.saturation) << ",\n";
+    oss << "            \"colorFilter\": " << FormatVec3(post.colorFilter) << ",\n";
+    oss << "            \"vignette\": " << FormatFloat(post.vignette) << ",\n";
+    oss << "            \"grain\": " << FormatFloat(post.grain) << ",\n";
+    oss << "            \"scanlines\": " << FormatFloat(post.scanlines) << ",\n";
+    oss << "            \"bloomIntensity\": " << FormatFloat(post.bloomIntensity) << ",\n";
+    oss << "            \"bloomThreshold\": " << FormatFloat(post.bloomThreshold) << ",\n";
+    oss << "            \"bloomRadius\": " << FormatFloat(post.bloomRadius) << "\n";
+    oss << "          }\n";
+    return oss.str();
+}
+
+std::string WriteParticleEmitterJson(const ParticleEmitterComponent& emitter)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "        \"ParticleEmitter\": {\n";
+    oss << "          \"materialPath\": \"" << EscapeString(NormalizeAssetPathForSave(emitter.materialPath)) << "\",\n";
+    oss << "          \"playOnStart\": " << (emitter.playOnStart ? "true" : "false") << ",\n";
+    oss << "          \"loop\": " << (emitter.loop ? "true" : "false") << ",\n";
+    oss << "          \"destroyWhenDone\": " << (emitter.destroyWhenDone ? "true" : "false") << ",\n";
+    oss << "          \"duration\": " << FormatFloat(emitter.duration) << ",\n";
+    oss << "          \"rate\": " << FormatFloat(emitter.rate) << ",\n";
+    oss << "          \"lifetimeMin\": " << FormatFloat(emitter.lifetimeMin) << ",\n";
+    oss << "          \"lifetimeMax\": " << FormatFloat(emitter.lifetimeMax) << ",\n";
+    oss << "          \"speedMin\": " << FormatFloat(emitter.speedMin) << ",\n";
+    oss << "          \"speedMax\": " << FormatFloat(emitter.speedMax) << ",\n";
+    oss << "          \"spreadDegrees\": " << FormatFloat(emitter.spreadDegrees) << ",\n";
+    oss << "          \"gravity\": " << FormatFloat(emitter.gravity) << ",\n";
+    oss << "          \"drag\": " << FormatFloat(emitter.drag) << ",\n";
+    oss << "          \"sizeStart\": " << FormatFloat(emitter.sizeStart) << ",\n";
+    oss << "          \"sizeEnd\": " << FormatFloat(emitter.sizeEnd) << ",\n";
+    oss << "          \"sizeJitter\": " << FormatFloat(emitter.sizeJitter) << ",\n";
+    oss << "          \"spinMin\": " << FormatFloat(emitter.spinMin) << ",\n";
+    oss << "          \"spinMax\": " << FormatFloat(emitter.spinMax) << ",\n";
+    oss << "          \"burst\": " << emitter.burst << ",\n";
+    oss << "          \"maxParticles\": " << emitter.maxParticles << ",\n";
+    oss << "          \"seed\": " << emitter.seed << ",\n";
+    oss << "          \"colorStart\": [" << FormatFloat(emitter.colorStart.x) << ", " << FormatFloat(emitter.colorStart.y) << ", "
+        << FormatFloat(emitter.colorStart.z) << ", " << FormatFloat(emitter.colorStart.w) << "],\n";
+    oss << "          \"colorEnd\": [" << FormatFloat(emitter.colorEnd.x) << ", " << FormatFloat(emitter.colorEnd.y) << ", "
+        << FormatFloat(emitter.colorEnd.z) << ", " << FormatFloat(emitter.colorEnd.w) << "]\n";
+    oss << "        }";
+    return oss.str();
 }
 
 static EnvironmentComponent::BackgroundType ParseBackgroundType(const JsonValue& value)
@@ -806,6 +867,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const ScriptComponent* scriptComponent = registry.try_get<ScriptComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
+        const ParticleEmitterComponent* particles = registry.try_get<ParticleEmitterComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
@@ -844,6 +906,15 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "        \"MeshRenderer\": {\n";
             oss << "          \"visible\": " << (mesh->visible ? "true" : "false") << ",\n";
             oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
+            if (mesh->viewModel) {
+                oss << "          \"viewModel\": true,\n";
+            }
+            if (mesh->drawOverWorld) {
+                oss << "          \"drawOverWorld\": true,\n";
+            }
+            if (!mesh->castShadows) {
+                oss << "          \"castShadows\": false,\n";
+            }
             oss << "          \"showHiddenOutline\": " << (mesh->showHiddenOutline ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";
             if (mesh->HasValidMesh()) {
@@ -950,6 +1021,13 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"metallicTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->metallicTexturePath)) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
             oss << "          \"aoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->aoTexturePath)) << "\",\n";
+            for (const auto& [key, channel] : {std::pair{"roughnessChannel", material->roughnessChannel},
+                                               std::pair{"metallicChannel", material->metallicChannel},
+                                               std::pair{"aoChannel", material->aoChannel}}) {
+                if (channel != 0) {
+                    oss << "          \"" << key << "\": " << channel << ",\n";
+                }
+            }
             oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
             oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
@@ -998,6 +1076,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"fov\": " << FormatFloat(camera->fov) << ",\n";
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
+            if (camera->viewModelFov > 0.0f) {
+                oss << "          \"viewModelFov\": " << FormatFloat(camera->viewModelFov) << ",\n";
+            }
             oss << "          \"projection\": \"" << (camera->projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective") << "\",\n";
             oss << "          \"isActive\": " << (camera->isActive ? "true" : "false") << ",\n";
             oss << "          \"isPrimary\": " << (camera->isPrimary || camera->isActive ? "true" : "false") << ",\n";
@@ -1057,7 +1138,11 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"enabled\": " << (audio->enabled ? "true" : "false") << ",\n";
             oss << "          \"playOnStart\": " << (audio->playOnStart ? "true" : "false") << ",\n";
             oss << "          \"loop\": " << (audio->loop ? "true" : "false") << ",\n";
-            oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
+            oss << "          \"volume\": " << FormatFloat(audio->volume) << ",\n";
+            oss << "          \"bus\": \"" << EscapeString(audio->bus) << "\",\n";
+            oss << "          \"spatial\": " << (audio->spatial ? "true" : "false") << ",\n";
+            oss << "          \"minDistance\": " << FormatFloat(audio->minDistance) << ",\n";
+            oss << "          \"maxDistance\": " << FormatFloat(audio->maxDistance) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1068,6 +1153,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
 
         if (characterController) {
             componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
+        }
+
+        if (particles) {
+            componentBlocks.push_back(WriteParticleEmitterJson(*particles));
         }
 
         if (probeVolume) {
@@ -1105,7 +1194,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"reflectionIntensity\": " << FormatFloat(environment->reflectionIntensity) << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
-            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
+            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << ",\n";
+            oss << WritePostProcessJson(environment->post);
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1304,6 +1394,15 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* hideInGameValue = meshObj->Find("hideInGame")) {
                 mesh.hideInGame = ParseBoolLike(*hideInGameValue, mesh.hideInGame);
+            }
+            if (const JsonValue* viewModelValue = meshObj->Find("viewModel")) {
+                mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
+            }
+            if (const JsonValue* drawOverWorldValue = meshObj->Find("drawOverWorld")) {
+                mesh.drawOverWorld = ParseBoolLike(*drawOverWorldValue, mesh.drawOverWorld);
+            }
+            if (const JsonValue* castShadowsValue = meshObj->Find("castShadows")) {
+                mesh.castShadows = ParseBoolLike(*castShadowsValue, mesh.castShadows);
             }
             if (const JsonValue* showHiddenOutlineValue = meshObj->Find("showHiddenOutline")) {
                 mesh.showHiddenOutline = ParseBoolLike(*showHiddenOutlineValue, mesh.showHiddenOutline);
@@ -1591,6 +1690,13 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     material.aoTexturePath = aoPathValue->AsString();
                 }
             }
+            for (auto [key, channel] : {std::pair{"roughnessChannel", &material.roughnessChannel},
+                                        std::pair{"metallicChannel", &material.metallicChannel},
+                                        std::pair{"aoChannel", &material.aoChannel}}) {
+                if (const JsonValue* value = materialObj->Find(key); value && value->IsNumber()) {
+                    *channel = static_cast<uint32_t>(value->AsNumber()) & 3u;
+                }
+            }
             if (const JsonValue* useWorldAlignedValue = materialObj->Find("useWorldAlignedTexture")) {
                 material.useWorldAlignedTexture = ParseBoolLike(*useWorldAlignedValue, material.useWorldAlignedTexture);
             }
@@ -1753,6 +1859,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     camera.farPlane = static_cast<float>(farValue->AsNumber());
                 }
             }
+            if (const JsonValue* viewModelFovValue = cameraObj->Find("viewModelFov")) {
+                if (viewModelFovValue->IsNumber()) {
+                    camera.viewModelFov = static_cast<float>(viewModelFovValue->AsNumber());
+                }
+            }
             if (const JsonValue* projectionValue = cameraObj->Find("projection")) {
                 if (projectionValue->IsString()) {
                     std::string projStr = projectionValue->AsString();
@@ -1886,9 +1997,35 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     audio.volume = static_cast<float>(volumeValue->AsNumber());
                 }
             }
+            if (const JsonValue* busValue = audioObj->Find("bus")) {
+                if (busValue->IsString()) {
+                    audio.bus = busValue->AsString();
+                }
+            }
+            if (const JsonValue* spatialValue = audioObj->Find("spatial")) {
+                audio.spatial = ParseBoolLike(*spatialValue, audio.spatial);
+            }
+            if (const JsonValue* minValue = audioObj->Find("minDistance")) {
+                if (minValue->IsNumber()) {
+                    audio.minDistance = static_cast<float>(minValue->AsNumber());
+                }
+            }
+            if (const JsonValue* maxValue = audioObj->Find("maxDistance")) {
+                if (maxValue->IsNumber()) {
+                    audio.maxDistance = static_cast<float>(maxValue->AsNumber());
+                }
+            }
             audio.runtimeHandle = 0;
             audio.runtimeStarted = false;
             audio.runtimeLastClip.clear();
+        }
+
+        if (const JsonValue* particlesObj = components->Find("ParticleEmitter")) {
+            if (!particlesObj->IsObject()) {
+                outError = "ParticleEmitter component is not an object.";
+                return false;
+            }
+            PrefabComponentIO::ApplyComponentJson(entity, "ParticleEmitter", *particlesObj, true);
         }
 
         if (const JsonValue* characterObj = components->Find("Character")) {
@@ -2013,6 +2150,25 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* v = envObj->Find("infiniteRenderDistance")) {
                 env.infiniteRenderDistance = ParseBoolLike(*v, true);
+            }
+            if (const JsonValue* post = envObj->Find("postProcess"); post && post->IsObject()) {
+                auto number = [post](const char* key, float& out) {
+                    if (const JsonValue* v = post->Find(key); v && v->IsNumber()) {
+                        out = static_cast<float>(v->AsNumber());
+                    }
+                };
+                number("exposure", env.post.exposure);
+                number("contrast", env.post.contrast);
+                number("saturation", env.post.saturation);
+                number("vignette", env.post.vignette);
+                number("grain", env.post.grain);
+                number("scanlines", env.post.scanlines);
+                number("bloomIntensity", env.post.bloomIntensity);
+                number("bloomThreshold", env.post.bloomThreshold);
+                number("bloomRadius", env.post.bloomRadius);
+                if (const JsonValue* v = post->Find("colorFilter")) {
+                    ParseVec3(*v, env.post.colorFilter);
+                }
             }
 
             // --- Parse new fields (backwards-compatible: defaults preserved if absent) ---
@@ -2369,6 +2525,7 @@ std::string SceneSerializer::SerializeToString() const
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
+        const ParticleEmitterComponent* particles = registry.try_get<ParticleEmitterComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
@@ -2407,6 +2564,15 @@ std::string SceneSerializer::SerializeToString() const
             oss << "        \"MeshRenderer\": {\n";
             oss << "          \"visible\": " << (mesh->visible ? "true" : "false") << ",\n";
             oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
+            if (mesh->viewModel) {
+                oss << "          \"viewModel\": true,\n";
+            }
+            if (mesh->drawOverWorld) {
+                oss << "          \"drawOverWorld\": true,\n";
+            }
+            if (!mesh->castShadows) {
+                oss << "          \"castShadows\": false,\n";
+            }
             oss << "          \"showHiddenOutline\": " << (mesh->showHiddenOutline ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";
             if (mesh->HasValidMesh()) {
@@ -2513,6 +2679,13 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"metallicTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->metallicTexturePath)) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
             oss << "          \"aoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->aoTexturePath)) << "\",\n";
+            for (const auto& [key, channel] : {std::pair{"roughnessChannel", material->roughnessChannel},
+                                               std::pair{"metallicChannel", material->metallicChannel},
+                                               std::pair{"aoChannel", material->aoChannel}}) {
+                if (channel != 0) {
+                    oss << "          \"" << key << "\": " << channel << ",\n";
+                }
+            }
             oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
             oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
@@ -2561,6 +2734,9 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"fov\": " << FormatFloat(camera->fov) << ",\n";
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
+            if (camera->viewModelFov > 0.0f) {
+                oss << "          \"viewModelFov\": " << FormatFloat(camera->viewModelFov) << ",\n";
+            }
             oss << "          \"projection\": \"" << (camera->projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective") << "\",\n";
             oss << "          \"isActive\": " << (camera->isActive ? "true" : "false") << ",\n";
             oss << "          \"isPrimary\": " << (camera->isPrimary || camera->isActive ? "true" : "false") << ",\n";
@@ -2604,7 +2780,11 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"enabled\": " << (audio->enabled ? "true" : "false") << ",\n";
             oss << "          \"playOnStart\": " << (audio->playOnStart ? "true" : "false") << ",\n";
             oss << "          \"loop\": " << (audio->loop ? "true" : "false") << ",\n";
-            oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
+            oss << "          \"volume\": " << FormatFloat(audio->volume) << ",\n";
+            oss << "          \"bus\": \"" << EscapeString(audio->bus) << "\",\n";
+            oss << "          \"spatial\": " << (audio->spatial ? "true" : "false") << ",\n";
+            oss << "          \"minDistance\": " << FormatFloat(audio->minDistance) << ",\n";
+            oss << "          \"maxDistance\": " << FormatFloat(audio->maxDistance) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -2615,6 +2795,10 @@ std::string SceneSerializer::SerializeToString() const
 
         if (characterController) {
             componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
+        }
+
+        if (particles) {
+            componentBlocks.push_back(WriteParticleEmitterJson(*particles));
         }
 
         if (probeVolume) {
@@ -2652,7 +2836,8 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"reflectionIntensity\": " << FormatFloat(environment->reflectionIntensity) << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
-            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
+            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << ",\n";
+            oss << WritePostProcessJson(environment->post);
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

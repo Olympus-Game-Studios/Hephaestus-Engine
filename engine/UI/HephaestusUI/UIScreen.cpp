@@ -26,7 +26,7 @@ void UIScreen::Update(const UIContext& context, const std::vector<UIMouseEvent>&
         return;
     }
 
-    m_RootCanvas->SetSize(context.GetViewportSize());
+    m_RootCanvas->SetSize(context.GetLayoutSize());
 
     for (const UIMouseEvent& event : mouseEvents) {
         switch (event.type) {

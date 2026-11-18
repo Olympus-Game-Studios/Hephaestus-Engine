@@ -12,15 +12,22 @@ Open a project and you're in the editor. It looks like a lot at first, but it's 
 
 Along the top, from left to right:
 
-- **The project menu and the main menus**: File, Edit, Scene, Build, View and Help.
+- **The project menu and the main menus**: File, Edit, Scene, Build, Play, View and Help.
 - **Command search** (`Ctrl+K`). Type part of any menu command and run it from there. If you can't remember where something lives, this is the fastest way to find it.
 - **Undo and redo** (`Ctrl+Z`, `Ctrl+Y`).
-- **Play, Pause, Stop and Step**. Play runs your game right inside the viewport. Pause freezes it and Step advances it one frame at a time, which is brilliant for checking physics or animation. `Esc` stops playing and gives you your mouse back.
+- **Play, Pause, Stop and Step**. Play (`Ctrl+P`) runs your game right inside the viewport, or in a window of its own if you choose that. Pause freezes it and Step advances it one frame at a time, which is brilliant for checking physics or animation. `Esc` stops playing and gives you your mouse back.
 - **The mode switch**: Default, Artist and Programmer (more on those [below](#modes)).
 
 Under the header there's a tool row with the transform tools, gizmo space (World or Local), snapping, **Create** (for adding things to the scene), **Bake lighting** and **Build & Run**. In Artist mode these tools move to a rail down the side so the viewport gets more room.
 
 Next to Play there's a small arrow with a **Real-time** option. Turn it off and the game only moves forward when you press Step, which is handy when you want to inspect a single frame in detail.
+
+The same menu (and the **Play** menu) picks where Play runs:
+
+- **Play in Viewport** runs the game inside the editor's viewport, as before.
+- **Play in New Window** opens the game in a separate window, so you can see it at a real game size, move it to another monitor or keep the scene in view beside it. The window remembers its size and place. The game gets the keyboard and mouse while the window is focused, `Esc` stops playing, and closing the window stops playing too. Pause, Stop and Step in the editor still work.
+
+**Build and Run** (`Ctrl+B`, also the **Build & Run** button) packages the scene you have open as a standalone game and starts it, so you can try it exactly as players will. Pick **Development Build** or **Release Build** in the same menu. The game goes in your project's `Saved/BuildAndRun` folder, and running it again only copies what changed, so it is quick. It packages the saved files, so if the scene has unsaved changes the editor asks whether to save first or build the last saved version. See [Packaging](packaging.md) for the full options.
 
 ## The panels
 
@@ -61,6 +68,8 @@ Each mode remembers its own panel layout, so rearranging Artist mode doesn't mes
 | `Alt+1` to `Alt+9` | Jump to a saved camera bookmark. `Ctrl+Alt+1` to `9` saves one. |
 
 The viewport toolbar has the shading mode (**Lit**, **Unlit** or **Wireframe**) and the view (**Perspective**, or orthographic **Front**, **Back**, **Left**, **Right**, **Top** and **Bottom**). **View > Overlays** toggles the grid, gizmo, selection outline, sky, light icons, shadows and a statistics overlay.
+
+Things you can't otherwise see get an icon in the viewport so you can find and click them: lights, particle emitters, audio sources, trigger volumes, the Environment, probe volumes, and objects that only run a script (such as a wave director). Each camera shows a small camera model pointing the way it looks, with a faint outline of its view, so you can aim it. Icons and camera models only appear in the editor, never in Play or in your game, and **View > Overlays > Light Billboards** hides them all. A camera's **Show Editor Mesh** setting hides just its model.
 
 ## Shortcuts worth learning first
 

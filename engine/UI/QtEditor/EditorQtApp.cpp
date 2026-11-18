@@ -243,6 +243,9 @@ int RunQtEditor(int argc, char** argv)
         QApplication::setHighDpiScaleFactorRoundingPolicy(
             Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
+        // Qt WebEngine, loaded later by the store browser plugin, needs this before the QApplication exists.
+        QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
         // Create Qt application. Missing platforms/qwindows.dll fails here.
         Hephaestus::EngineLog::Info("Creating QApplication (requires platforms/qwindows.dll on Windows)");
         QApplication app(argc, argv);

@@ -61,6 +61,30 @@ void EditorContext::NewScene(const std::string& name)
     }
 }
 
+bool EditorContext::RestoreSceneSnapshot(const std::string& sourcePath, const std::string& content,
+                                         bool& outOpenedSource, std::string& outError)
+{
+    outOpenedSource = false;
+    outError.clear();
+    std::error_code ec;
+    if (!sourcePath.empty() && std::filesystem::is_regular_file(sourcePath, ec)) {
+        if (!LoadScene(sourcePath)) {
+            outError = "Could not open " + sourcePath;
+            return false;
+        }
+        outOpenedSource = true;
+    } else {
+        NewScene("Recovered Scene");
+    }
+    Scene* scene = GetActiveScene();
+    if (!scene || !SceneSerializer::DeserializeFromString(*scene, content)) {
+        outError = "The recovery snapshot could not be read";
+        return false;
+    }
+    MarkDirty();
+    return true;
+}
+
 bool EditorContext::LoadScene(const std::string& filepath)
 {
     // Check file exists
@@ -346,6 +370,45 @@ void EditorContext::SetEditorHidden(entt::entity entity, bool hidden)
     const uint32_t id = static_cast<uint32_t>(entity);
     if (hidden) m_editorHidden.insert(id);
     else m_editorHidden.erase(id);
+}
+
+bool EditorContext::IsEditorEntityShown(entt::entity entity) const
+{
+    if (m_editorHidden.empty() && m_isolated.empty()) {
+        return true;
+    }
+    const Scene* scene = GetActiveScene();
+    const auto& registry = const_cast<Scene*>(scene)->GetRegistry();
+    bool isolatedLine = m_isolated.empty();
+    for (entt::entity current = entity; current != entt::null;) {
+        const uint32_t id = static_cast<uint32_t>(current);
+        if (m_editorHidden.contains(id)) {
+            return false;
+        }
+        if (!isolatedLine && m_isolated.contains(id)) {
+            isolatedLine = true;
+        }
+        const auto* transform = registry.valid(current) ? registry.try_get<TransformComponent>(current) : nullptr;
+        current = transform ? transform->parent : entt::null;
+    }
+    return isolatedLine;
+}
+
+std::vector<uint32_t> EditorContext::EditorHiddenIdsForRender() const
+{
+    std::vector<uint32_t> ids;
+    const Scene* scene = GetActiveScene();
+    if (!scene || (m_editorHidden.empty() && m_isolated.empty())) {
+        return ids;
+    }
+    const auto& registry = const_cast<Scene*>(scene)->GetRegistry();
+    for (auto entity : registry.view<entt::entity>()) {
+        if (!IsEditorEntityShown(entity)) {
+            ids.push_back(static_cast<uint32_t>(entity));
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
 }
 
 void EditorContext::SetEditorLocked(entt::entity entity, bool locked)

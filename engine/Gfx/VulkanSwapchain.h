@@ -23,6 +23,9 @@ struct VulkanSwapchain {
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;
     VkRenderPass renderPass{};
+    // Compatible with renderPass; used to split a frame around work on the HDR image (bloom).
+    VkRenderPass sceneOnlyRenderPass{};
+    VkRenderPass resumeRenderPass{};
     std::vector<VkFramebuffer> framebuffers;
 
     // Depth resources

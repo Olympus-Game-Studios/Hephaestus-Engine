@@ -22,6 +22,10 @@ private:
     BoolPropertyEditor* m_playOnStart = nullptr;
     BoolPropertyEditor* m_loop = nullptr;
     NumericPropertyEditor* m_volume = nullptr;
+    EnumPropertyEditor* m_bus = nullptr;
+    BoolPropertyEditor* m_spatial = nullptr;
+    NumericPropertyEditor* m_minDistance = nullptr;
+    NumericPropertyEditor* m_maxDistance = nullptr;
     AssetReferenceEditor* m_clip = nullptr;
 };
 

@@ -1,9 +1,20 @@
 ﻿#pragma once
 #include <vulkan/vulkan.h>
+#include <cstdint>
 #include <vector>
 #include <string>
 
 #include "Vertex.h"
+
+/// The surface pipelines for one fragment shader: the engine's own, or a compiled material graph's.
+struct SurfacePipelines {
+    VkPipeline opaque = VK_NULL_HANDLE;
+    VkPipeline opaqueBackface = VK_NULL_HANDLE;
+    VkPipeline wireframe = VK_NULL_HANDLE;
+    VkPipeline wireframeBackface = VK_NULL_HANDLE;
+    VkPipeline alphaBlend = VK_NULL_HANDLE;
+    VkPipeline additive = VK_NULL_HANDLE;
+};
 
 struct VulkanPipeline {
     VkDevice device{};
@@ -15,6 +26,8 @@ struct VulkanPipeline {
     VkPipeline pipelineBackface{};
     VkPipeline pipelineWireframe{};
     VkPipeline pipelineWireframeBackface{};
+    VkPipeline pipelineAlphaBlend{};
+    VkPipeline pipelineAdditive{};
     VkPipeline outlinePipeline{};
     bool ownsDescriptorSetLayout = true;
 
@@ -26,12 +39,20 @@ struct VulkanPipeline {
     void CreateOutlinePipeline();
     void Cleanup();
 
+    /// Pipelines sharing this layout and vertex shader, with a material's own fragment shader (no wireframe).
+    bool CreateSurfacePipelines(const std::vector<std::uint32_t>& fragmentSpirv, SurfacePipelines& out);
+    void DestroySurfacePipelines(SurfacePipelines& pipelines) const;
+
     VkPipeline GetPipeline(bool backfaceCullingEnabled, bool wireframe = false) const;
+    /// Depth-tested, non-depth-writing pipeline for a translucent blend mode (1 alpha, 2 additive).
+    VkPipeline GetTranslucentPipeline(uint32_t blendMode) const;
     bool HasWireframePipeline() const {
         return pipelineWireframe != VK_NULL_HANDLE;
     }
 
 private:
+    bool buildSurfacePipelines(VkShaderModule fragShader, bool wireframe, SurfacePipelines& out);
     VkShaderModule createShaderModule(const std::vector<char>& code);
+    std::vector<char> m_vertexCode;
     static std::vector<char> readFile(const std::string& filename);
 };
