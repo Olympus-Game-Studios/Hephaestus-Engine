@@ -1,9 +1,11 @@
 #include "Build/PackageStager.h"
+#include "../PluginAPI/ScriptLanguageAPI.h"
 #include "../Plugins/PluginContent.h"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <ctime>
 #include <cstdlib>
 #include <fstream>
@@ -16,6 +18,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace Hephaestus::Build {
@@ -131,6 +135,106 @@ bool CopyTree(const std::filesystem::path& source,
         }
     }
     return true;
+}
+
+std::string LowerText(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+bool ClaimsExtension(const HPScriptLanguage& language, const std::string& extension) {
+    std::stringstream list(language.extensions ? language.extensions : "");
+    for (std::string item; std::getline(list, item, ';');) {
+        if (!item.empty() && LowerText(item) == extension) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Loads the source module, not the staged copy, so the staging folder never stays locked.
+bool PackageLanguageScripts(const std::filesystem::path& module, const std::string& pluginId,
+                            const BuildRequest& request, const std::filesystem::path& content,
+                            const std::vector<std::filesystem::path>& scriptRoots,
+                            PackageStageResult& result) {
+#ifdef _WIN32
+    HMODULE library = LoadLibraryExW(module.wstring().c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    const std::string loadError = library ? std::string() : "error " + std::to_string(GetLastError());
+    const auto getLanguages = library ? reinterpret_cast<HPGetScriptLanguagesFn>(
+        GetProcAddress(library, HP_SCRIPT_LANGUAGES_EXPORT_NAME)) : nullptr;
+#else
+    void* library = dlopen(module.c_str(), RTLD_NOW | RTLD_LOCAL);
+    const char* dlError = library ? nullptr : dlerror();
+    const std::string loadError = library ? std::string() : (dlError ? dlError : "unknown error");
+    const auto getLanguages = library ? reinterpret_cast<HPGetScriptLanguagesFn>(
+        dlsym(library, HP_SCRIPT_LANGUAGES_EXPORT_NAME)) : nullptr;
+#endif
+    if (!library) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_RUNTIME_LOAD_FAILED",
+                "Plugin " + pluginId + " runtime module could not be loaded to prepare its scripts",
+                module.generic_string() + " (" + loadError + ")");
+        return false;
+    }
+    if (!getLanguages) {
+#ifdef _WIN32
+        FreeLibrary(library);
+#else
+        dlclose(library);
+#endif
+        return true;
+    }
+    uint32_t count = 0;
+    const HPScriptLanguage* const* languages = getLanguages(HP_SCRIPT_LANGUAGE_API_VERSION, &count);
+    bool ok = true;
+    for (uint32_t i = 0; ok && languages && i < count; ++i) {
+        const HPScriptLanguage* language = languages[i];
+        if (!language || language->structSize < offsetof(HPScriptLanguage, packageScript) +
+                                                    sizeof(language->packageScript) ||
+            !language->packageScript) {
+            continue;
+        }
+        for (const auto& root : scriptRoots) {
+            std::error_code ec;
+            if (!std::filesystem::exists(root, ec)) {
+                continue;
+            }
+            for (std::filesystem::recursive_directory_iterator it(root, ec), end; ok && !ec && it != end;
+                 it.increment(ec)) {
+                if (!it->is_regular_file(ec) ||
+                    !ClaimsExtension(*language, LowerText(it->path().extension().string()))) {
+                    continue;
+                }
+                // The staged copy, so the prepared output matches the source that ships.
+                const auto source = it->path();
+                if (request.onProgress) {
+                    request.onProgress(0.0F, std::string("Preparing ") + language->displayName + " script " +
+                                                 source.filename().string());
+                }
+                char error[4096] = {};
+                if (!language->packageScript(request.projectRoot.string().c_str(), source.string().c_str(),
+                                             content.string().c_str(), error, sizeof(error))) {
+                    Problem(result, ProblemSeverity::Error, "PACKAGE_SCRIPT_PREPARE_FAILED",
+                            std::string(language->displayName) + " script " +
+                                source.lexically_relative(content).generic_string() +
+                                " could not be packaged (plugin " + pluginId + ")",
+                            error);
+                    ok = false;
+                }
+            }
+            if (ec) {
+                Problem(result, ProblemSeverity::Error, "PACKAGE_TRAVERSAL_FAILED",
+                        "Could not traverse package scripts", root.generic_string() + ": " + ec.message());
+                ok = false;
+            }
+        }
+    }
+#ifdef _WIN32
+    FreeLibrary(library);
+#else
+    dlclose(library);
+#endif
+    return ok;
 }
 
 bool WriteText(const std::filesystem::path& path, const std::string& text,
@@ -473,6 +577,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     }
 
     std::vector<Hephaestus::Plugins::StagedPluginMount> stagedMounts;
+    std::vector<std::pair<std::filesystem::path, std::string>> languageModules;
     const auto pluginContent = Hephaestus::Plugins::CollectEnabledPluginContent(
         request.engineRoot, request.projectRoot);
     for (const auto& plugin : pluginContent) {
@@ -487,7 +592,12 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
             mount.relativeRoot = relative;
         }
         if (!plugin.runtimeEntry.empty()) {
-            const auto module = plugin.pluginRoot / plugin.runtimeEntry;
+            // A source checkout builds plugin modules beside the player, not into the plugin's own folder.
+            auto runtimeRoot = runtime.executable.parent_path() / "Plugins" / plugin.pluginRoot.filename();
+            if (!std::filesystem::is_regular_file(runtimeRoot / plugin.runtimeEntry, ec)) {
+                runtimeRoot = plugin.pluginRoot;
+            }
+            const auto module = runtimeRoot / plugin.runtimeEntry;
             if (!std::filesystem::is_regular_file(module, ec)) {
                 Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_RUNTIME_MISSING",
                         "Plugin " + plugin.id + " runtime module was not found",
@@ -504,14 +614,27 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                             "Could not copy plugin runtime module", copyError);
                     return fail();
                 }
-            } else if (!CopyTree(plugin.pluginRoot / folder, content / pluginRelative / folder,
+            } else if (!CopyTree(runtimeRoot / folder, content / pluginRelative / folder,
                                  previousContent / pluginRelative / folder,
                                  "Copying plugin runtime " + plugin.id, request, result)) {
                 return fail();
             }
             mount.runtimeEntry = staged;
+            languageModules.emplace_back(module, plugin.id);
         }
         stagedMounts.push_back(std::move(mount));
+    }
+    // Scripts are prepared once every plugin's content is staged, so plugin scripts are included.
+    std::vector<std::filesystem::path> scriptRoots{content / "assets", content / "scripts"};
+    for (const auto& mount : stagedMounts) {
+        if (!mount.relativeRoot.empty()) {
+            scriptRoots.push_back(content / mount.relativeRoot);
+        }
+    }
+    for (const auto& [module, pluginId] : languageModules) {
+        if (!PackageLanguageScripts(module, pluginId, request, content, scriptRoots, result)) {
+            return fail();
+        }
     }
     {
         std::string mountsError;

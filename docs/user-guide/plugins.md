@@ -1,7 +1,7 @@
 ---
 title: Plugins
 description: What plugins can do, the ones that come with Hephaestus, turning them on and off and making your own.
-order: 16
+order: 18
 ---
 
 # Plugins
@@ -34,6 +34,7 @@ Imported models remember their materials (in a small `.hpmesh` file beside the m
 **Got a newer version of a pack?** Right click the pack's folder (or anything in it) in the Content Browser and choose **Reimport Pack**. It imports the pack again from where it originally came from, or asks you for the new file if that's gone, and updates the models, materials and prefabs in place. Every copy you've placed, your changes to those copies, and any bigger prefabs built from them pick up the new version. Importing a pack again with an ordinary import still makes a separate copy beside the old one.
 - **Asset Store Browser**: Fab and Sketchfab inside the editor, under **Window > Asset Stores > Fab Store** and **Sketchfab Store**. Downloading a model on Sketchfab (FBX, glTF and the rest come as .zip files) imports it the same way, and its author and licence are read from Sketchfab for the credit. It opens in its own window (it remembers its size and place); sign in with your Epic account there (you stay signed in), pick a format like FBX, glTF or OBJ on a listing and download it: the pack lands in the open project as prefabs with materials and a credit, just like the Fab plugin's imports. It brings its own web browser (Qt WebEngine, about 270 MB), which is why it's a separate plugin you can leave out.
 - **Cargo**: brings in models you've downloaded with KitBash3D's Cargo app. Download a kit or model in Cargo (you don't need to send it to Unreal or Blender afterwards), then open **Window > Asset Stores > Cargo**, tick the models you want and click **Import Checked**. Each one lands under `assets/Imported/Cargo/<kit>` as a prefab with its materials and textures, using whichever texture resolution you downloaded. It finds your downloads wherever Cargo keeps them, including a download location you changed in Cargo's settings (it checks again each time you open the window or click **Refresh**). To look somewhere else, pick a folder with **Folder...**.
+- **C++ Scripting**: write gameplay scripts in C++. Off by default; see [Scripting with C++](scripting-cpp.md).
 - **Hephaestus MCP**: lets AI assistants that speak the Model Context Protocol drive the editor (inspect the scene, play, step frames, take screenshots, package builds). It only listens on your own machine (`127.0.0.1`) and you can change its port in its settings. It's enabled by default, so switch it off in the Plugin Manager if you don't use AI tools. AI assistants can bring in assets too: `asset.import_pack` imports a .zip, folder or model you've downloaded (from Fab or anywhere) the same way the Fab plugin does, and with the Sketchfab plugin on, `sketchfab.search`, `sketchfab.import` and `sketchfab.import_status` let them find and import Sketchfab models using the token you saved. They won't import NonCommercial or NoDerivs models unless you tell them to.
 
 ## Plugins in your game

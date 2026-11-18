@@ -15,6 +15,7 @@
 #include "../../Scripting/LuaExposeScanner.h"
 #include "../../Scripting/LuaScriptComponent.h"
 #include "../../Scripting/LuaScriptVariableReconciler.h"
+#include "../../Scripting/ScriptLanguageRegistry.h"
 
 #include <QFormLayout>
 #include <QFont>
@@ -50,6 +51,13 @@ LuaExposeScanResult ScanController(const std::string& portable)
 {
     if (portable.empty()) {
         return LuaExposeScanner::Scan({});
+    }
+    if (const HPScriptLanguage* language = ScriptLanguageRegistry::Instance().FindForPath(portable)) {
+        LuaExposeScanResult result;
+        if (!ScriptLanguageRegistry::DescribeFields(*language, ResolveScriptPath(portable), result)) {
+            result = LuaExposeScanner::Scan({});
+        }
+        return result;
     }
     std::ifstream file(ResolveScriptPath(portable), std::ios::binary);
     if (!file) {

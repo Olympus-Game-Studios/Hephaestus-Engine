@@ -45,6 +45,7 @@ Right click empty space in a folder:
 - **New Folder**
 - **New Material** opens in the [Material Editor](materials.md)
 - **New Lua Script** gives you a script with `onAwake`, `onUpdate` and `onDestroy` ready to fill in ([Scripting with Lua](scripting-lua.md))
+- **New C++ Script** (and the same for any other language plugin you've enabled) gives you a script class ready to fill in ([Scripting with C++](scripting-cpp.md))
 - **New Prefab** ([prefabs](scenes-and-entities.md#prefabs))
 - **New UI File** opens in the [UI Editor](game-ui.md)
 - **New Character** ([Characters and animation](characters-and-animation.md))

@@ -83,6 +83,9 @@ bool RunSimulationStep(const SimulationStepContext& context, float realDt)
     if (ReloadAtSafePoint(context)) return false;
 
     CharacterAnimationSystem::Tick(scene, dt);
+    if (context.pluginScripts) {
+        context.pluginScripts->DispatchAnimationFinished(scene);
+    }
     if (context.lua) {
         context.lua->DispatchAnimationFinished(scene);
         context.lua->LateUpdate(scene, dt);

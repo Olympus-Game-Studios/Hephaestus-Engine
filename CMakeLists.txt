@@ -552,6 +552,10 @@ add_library(HephaestusBuildCore STATIC
 )
 target_include_directories(HephaestusBuildCore PUBLIC engine extern)
 target_link_libraries(HephaestusBuildCore PUBLIC HephaestusPluginCore)
+if(UNIX)
+    # PackageStager loads script language modules with dlopen.
+    target_link_libraries(HephaestusBuildCore PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 add_executable(HephaestusBuildCli engine/BuildCli.cpp)
 target_link_libraries(HephaestusBuildCli PRIVATE HephaestusBuildCore)
@@ -1057,6 +1061,38 @@ set_target_properties(HephaestusEngine PROPERTIES
 
 
 endif() # End HEPHAESTUS_BUILD_EDITOR
+
+# C++ scripting language plugin. Qt-free, so the editor and packaged games both
+# load it; scripts compile with the user's Visual Studio, hence MSVC only.
+if(MSVC)
+    add_library(HephaestusCppScripting SHARED
+        Plugins/CppScripting/Source/CppScriptLanguage.cpp
+    )
+    target_include_directories(HephaestusCppScripting PRIVATE
+        engine/PluginAPI
+        Plugins/CppScripting/Include
+    )
+    target_compile_features(HephaestusCppScripting PRIVATE cxx_std_20)
+    set_target_properties(HephaestusCppScripting PROPERTIES
+        OUTPUT_NAME "HephaestusCppScripting"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/CppScripting/bin"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/CppScripting/bin"
+    )
+    add_custom_command(TARGET HephaestusCppScripting POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/CppScripting/CppScripting.hpplugin"
+            "$<TARGET_FILE_DIR:HephaestusCppScripting>/../CppScripting.hpplugin"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HephaestusCppScripting>/../Include"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/CppScripting/Include/HephaestusScript.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/engine/PluginAPI/ScriptLanguageAPI.h"
+            "$<TARGET_FILE_DIR:HephaestusCppScripting>/../Include"
+        VERBATIM
+    )
+    if(TARGET HephaestusEngine)
+        add_dependencies(HephaestusEngine HephaestusCppScripting)
+    endif()
+endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HephaestusLauncher (Qt-based launcher)
@@ -2298,6 +2334,21 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             )
         endif()
 
+        if(TARGET HephaestusCppScripting)
+            add_executable(CppScriptingTests engine/Tests/CppScriptingTests.cpp)
+            target_link_libraries(CppScriptingTests PRIVATE HephaestusRuntime)
+            add_dependencies(CppScriptingTests HephaestusCppScripting)
+            add_test(NAME CppScripting
+                COMMAND CppScriptingTests $<TARGET_FILE:HephaestusCppScripting>)
+            if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+                add_custom_command(TARGET CppScriptingTests POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${LUA_DLL_PATH}"
+                        "$<TARGET_FILE_DIR:CppScriptingTests>/${PHYSICS_LUA_DLL_NAME}"
+                )
+            endif()
+        endif()
+
         add_executable(SimulationStepTests engine/Tests/SimulationStepTests.cpp)
         target_link_libraries(SimulationStepTests PRIVATE HephaestusRuntime)
         add_test(NAME SimulationStep COMMAND SimulationStepTests)
@@ -2569,7 +2620,11 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME PackageLayout
         COMMAND PackageLayoutTests ${CMAKE_CURRENT_SOURCE_DIR}
+            $<$<TARGET_EXISTS:ScriptLanguageTestPlugin>:$<TARGET_FILE:ScriptLanguageTestPlugin>>
     )
+    if(TARGET ScriptLanguageTestPlugin)
+        add_dependencies(PackageLayoutTests ScriptLanguageTestPlugin)
+    endif()
 
     add_executable(PluginSystemTests engine/Tests/PluginSystemTests.cpp)
     target_link_libraries(PluginSystemTests PRIVATE HephaestusPluginCore)

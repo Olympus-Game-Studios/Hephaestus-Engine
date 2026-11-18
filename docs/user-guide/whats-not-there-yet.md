@@ -1,7 +1,7 @@
 ---
 title: What's not there yet
 description: The honest list of features that are missing, unfinished or only partly hooked up.
-order: 18
+order: 20
 ---
 
 # What's not there yet
@@ -47,7 +47,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 ## Scripting
 
-- No other scripting languages ship yet. The plugin support is done, but you'd need to write or install a language plugin.
+- C++ is the only other scripting language that ships, and it's Windows only. It can do everything Lua can, but the Code panel's debugger is Lua only (C++ scripts debug in Visual Studio). See [Scripting with C++](scripting-cpp.md).
 - Lua scripts aren't sandboxed. Only run scripts you trust.
 
 ## World and gameplay systems

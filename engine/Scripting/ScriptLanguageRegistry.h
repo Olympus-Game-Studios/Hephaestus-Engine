@@ -39,6 +39,9 @@ public:
     /// Hover text for the symbol at the position, or empty.
     std::string Hover(std::string_view path, const std::string& source, uint32_t line, uint32_t column) const;
 
+    /// The language's new-script template, or nullptr when it has none.
+    static const char* NewScriptTemplate(const HPScriptLanguage& language);
+
     /// True for .lua files and for files a plugin language claims.
     bool IsScriptPath(std::string_view scriptPath) const;
 

@@ -4,7 +4,7 @@ Lua is built into the engine and stays the default. Any other language (C, C++, 
 
 ## How a script picks its language
 
-Scripts are attached with the same Script component Lua uses (`LuaScriptComponent`, saved as `"LuaScript"` in scenes and prefabs). The file extension decides who runs it:
+Scripts are attached with the same Script component Lua uses (`LuaScriptComponent`, saved as `"LuaScript"` in scenes and prefabs), or as a Character component's controller script. The file extension decides who runs it:
 
 - a file whose extension a plugin language registered (for example `.py`) runs in that language;
 - every other file, and embedded source, stays with Lua.
@@ -92,6 +92,21 @@ The debugger (breakpoints, stepping, call stack, locals and watches) works with 
 
 `syntax`, `complete` and `hover` were added after the first release. Modules built before them still load, with their files shown as plain text and no language services.
 
+### New script template
+
+Set `newScriptTemplate` to the contents of a new file and the Content Browser's create menu gets **New `<displayName>` Script**, which writes a file with your first extension. Every `$NAME` in the template becomes the name the user typed; the editor only accepts names that are identifiers (letters, digits and `_`, not starting with a digit), so the name can be used as a class name.
+
+## Packaging
+
+When a game is packaged, the packager loads each enabled plugin's `runtimeEntry` module (the copy built beside the player, or the plugin's own, never the staged one). Once everything is staged, it calls `packageScript` once for every file whose extension the language claims under the package's `assets` and `scripts` folders and every enabled plugin's staged content folder:
+
+```c
+static int32_t PackageScript(const char* projectRoot, const char* scriptPath, const char* packageRoot,
+                             char* error, size_t errorSize);
+```
+
+`scriptPath` is the staged copy of the script inside `packageRoot`, so what you prepare always matches the source that ships, and `projectRoot` is the project being packaged, for caches. `packageRoot` is the staged game's root, which the packaged game sees as its project root (`getProjectRoot`). Write anything the script needs at runtime under `packageRoot`, such as compiled code. Return 0 with a message in `error` to fail the package; the message appears in the build's problems. A module that exists but cannot be loaded fails the package with `PACKAGE_PLUGIN_RUNTIME_LOAD_FAILED`. Leave `packageScript` `NULL` when the source file is all a script needs. The packager runs in the editor and in `HephaestusBuild`, so the callback must not rely on a play session.
+
 ## Lifecycle
 
 All calls happen on the gameplay thread, after Lua each frame:
@@ -103,6 +118,7 @@ All calls happen on the gameplay thread, after Lua each frame:
 | `awake` | Once, before the instance's first update |
 | `update`, `lateUpdate` | Every frame, around physics, in the same order as Lua |
 | `contact` | Trigger and collision events for the entity |
+| `animationFinished` | A non-looping clip of the entity's character finished (Lua's `onAnimationFinished`) |
 | `call` | Another script called a function on this entity |
 | `describeFields` | The editor inspects the script file; no runtime exists |
 
@@ -110,14 +126,15 @@ A script that fails to load is reported once in the Output log and retried when 
 
 ## Engine services
 
-`createRuntime` receives an `HPScriptHostAPI` table: logging, finding entities, entity names, transform get/set (radians for rotation), named input actions and axes, and `callEntityFunction`. `callEntityFunction` reaches the script on any entity, Lua included, and Lua's `entity:Call(name, ...)` reaches plugin scripts, so languages can be mixed in one game. Values crossing languages are nil, bool, number, string, and 2–4 component vectors.
+`createRuntime` receives an `HPScriptHostAPI` table. The first release had logging, finding entities, entity names, transform get/set (radians for rotation), named input actions and axes and `callEntityFunction`. The table now also has `getProjectRoot` (the project folder in the editor, the game's root when packaged) and a member for every Lua engine function: time and quit, entity names and components, prefab spawning (`instantiatePrefab`, with Inspector overrides), deferred `destroyEntity`, `reloadScene`, mesh visibility, raw keys, mouse, gamepad and cursor mode, the script view camera, camera components and lenses, physics bodies and `raycast`, character controllers, animation and sockets, audio, and game UI. UI screens and widgets are the same handles Lua's `UI` table uses; `uiSet` takes an `HPUIProperty` and an `HPValue` for every `UI.set*` function, and `uiSetOnClick` / `uiSetOnHover` name a script function on an entity, which the host calls through `callEntityFunction`, so a button reaches a script in any language. Each is commented in `ScriptLanguageAPI.h` with how it differs from Lua, if at all. The Lua and plugin paths share one implementation for anything with logic in it (spawning, deferred destroy, active cameras, sockets, cursor mode), so they behave the same.
+
+Members take the entity they act on, where Lua's global tables act on the calling script's entity. Functions that return a list (`findEntitiesWithPrefix`, `findCameras`) write up to `capacity` ids and return how many exist; functions that return a string use the `getEntityName` buffer convention. Destroys requested during `update` happen after every plugin script's update, as Lua's do after `onUpdate`. `callEntityFunction` reaches the script on any entity, Lua included, and Lua's `entity:Call(name, ...)` reaches plugin scripts, so languages can be mixed in one game. Values crossing languages are nil, bool, number, string, and 2–4 component vectors.
 
 New services are only appended to the table. Check `structSize` before using a member newer than the version you built against.
 
 ## Not covered yet
 
-- Character controller scripts (`CharacterComponent`) are still Lua only.
-- `onAnimationFinished` and the wider Lua API (physics queries, audio, UI, scene spawning, camera) are not in the host table yet.
+- There are no separate enable and disable callbacks. As in Lua, switching a script off destroys it, so run `onEnable` after `awake` and `onDisable` in `destroyInstance`, the way the C++ plugin does.
 - Languages stay registered until the editor restarts, even if their plugin is disabled.
 
-`engine/Tests/ScriptLanguageTestPlugin.c` is a complete minimal language written in C, used by `ScriptLanguagePluginTests`.
+`engine/Tests/ScriptLanguageTestPlugin.c` is a complete minimal language written in C, used by `ScriptLanguagePluginTests` and `PackageLayoutTests`. `Plugins/CppScripting` is a full first-party language: it compiles each `.cpp` script into a DLL with the user's Visual Studio and implements every optional callback.

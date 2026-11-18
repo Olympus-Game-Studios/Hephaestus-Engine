@@ -32,6 +32,8 @@ I've tried to keep it honest. Hephaestus is young and moving quickly, so whereve
 - [Lua API reference](lua-api.md): every table and function the engine gives your scripts.
 - [Input](input.md): actions, axes, keyboard, mouse and gamepads.
 - [Game UI](game-ui.md): menus and HUDs with the UI Editor and `.hui` files.
+- [Scripting with C++](scripting-cpp.md): gameplay in C++, compiled with Visual Studio and reloaded while you play.
+- [C++ API reference](cpp-api.md): everything `HephaestusScript.h` gives your scripts, matched to the Lua API.
 - [Other languages through plugins](other-languages.md): C#, Python and friends.
 
 ## Extending and shipping

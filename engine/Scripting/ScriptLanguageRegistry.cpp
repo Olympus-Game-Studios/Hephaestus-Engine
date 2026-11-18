@@ -237,6 +237,11 @@ bool IsLua(std::string_view path) {
 
 } // namespace
 
+const char* ScriptLanguageRegistry::NewScriptTemplate(const HPScriptLanguage& language) {
+    return Provides(language, &HPScriptLanguage::newScriptTemplate, offsetof(HPScriptLanguage, newScriptTemplate))
+        ? language.newScriptTemplate : nullptr;
+}
+
 std::vector<LuaLanguageService::Completion> ScriptLanguageRegistry::Complete(std::string_view path,
                                                                              const std::string& source,
                                                                              uint32_t line, uint32_t column) const {

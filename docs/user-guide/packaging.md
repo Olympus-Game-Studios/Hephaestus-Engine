@@ -1,7 +1,7 @@
 ---
 title: Packaging and shipping
 description: Turning your project into a game other people can play, what goes in the package and the licence basics.
-order: 17
+order: 19
 ---
 
 # Packaging and shipping

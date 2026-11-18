@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "apiVersion": 1,
+  "id": "com.hephaestus.cpp-scripting",
+  "name": "C++ Scripting",
+  "description": "Write gameplay scripts in C++. Scripts compile with Visual Studio and reload while the game runs.",
+  "author": "Hephaestus Engine",
+  "pluginVersion": "1.0.0",
+  "engineVersion": ">=2026.9.0",
+  "type": "runtime",
+  "runtimeEntry": "bin/HephaestusCppScripting.dll",
+  "defaultEnabled": false
+}

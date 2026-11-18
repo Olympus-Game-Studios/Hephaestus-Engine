@@ -163,11 +163,13 @@ public:
     bool CallEntityFunction(const std::string& functionName, Entity entity);
 
     /**
-     * Call a function on the entity's gameplay Lua script with arguments.
-     * Returns false when the entity has no Lua script defining it.
+     * Call a function on the entity's Lua script with arguments: its gameplay
+     * script, or its character controller script. Returns false when that
+     * script is not Lua or does not define the function.
      */
     bool CallEntityFunction(const std::string& functionName, Entity entity,
-                            const std::vector<PropertyValue>& args);
+                            const std::vector<PropertyValue>& args,
+                            LuaScriptSlot slot = LuaScriptSlot::Gameplay);
 
     /// Resolve an authored script path against the project and plugin search paths.
     std::filesystem::path ResolveScriptPath(const std::string& scriptPath) const;
@@ -257,6 +259,7 @@ public:
      * Configure where Lua should search for script files
      */
     void SetProjectRoot(const std::filesystem::path& rootPath);
+    const std::filesystem::path& GetProjectRoot() const { return m_ProjectRoot; }
 
     /**
      * Renderer used to upload Character visuals when Scene.instantiate spawns a prefab.
@@ -324,6 +327,86 @@ public:
                        Hephaestus::HephaestusUI::UIContext* uiContext,
                        Hephaestus::HephaestusUI::UIRenderer* uiRenderer);
 
+    /// A prefab spawn request; Scene.instantiate's options.
+    struct PrefabSpawn {
+        std::string prefabPath;
+        bool hasPosition = false;
+        Vec3 position{0.0f, 0.0f, 0.0f};
+        bool hasRotation = false;
+        Vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
+        uint32_t parentId = 0;
+        bool hasParent = false;
+        std::unordered_map<std::string, PropertyValue> vars;
+    };
+
+    // Engine services the Lua bindings share with plugin languages (PluginScriptHost).
+    const PhysicsBinding& GetPhysicsBinding() const { return m_PhysicsBinding; }
+    const CharacterBinding& GetCharacterBinding() const { return m_CharacterBinding; }
+    const CameraBinding& GetCameraBinding() const { return m_CameraBinding; }
+    AudioEngine* GetAudioEngine() const { return m_AudioEngine; }
+    int GetCursorMode() const { return m_CurrentCursorMode; }
+    void ApplyCursorMode(int mode);
+    void RequestQuit();
+    bool RequestSceneReload();
+    bool SetEntityName(uint32_t entityId, const std::string& name);
+    bool SetMeshVisible(uint32_t entityId, bool visible);
+    bool IsMeshVisible(uint32_t entityId) const;
+    Entity SpawnPrefab(const PrefabSpawn& spawn);
+    /// Destroys at the end of the current script pass, or now outside one.
+    void DestroyEntity(uint32_t entityId);
+    /// Scripts that run outside Lua's Update bracket their pass with these so
+    /// destroys are deferred and spawned characters are bound, as in Lua.
+    void BeginScriptPass();
+    void EndScriptPass(Scene& scene);
+    bool IsSceneReloadRequested() const { return m_SceneReloadRequested; }
+    Entity FindActiveCamera() const;
+    bool SetCameraActive(uint32_t entityId, bool active);
+    bool EvaluateSocket(uint32_t entityId, const std::string& socketName, bool sceneWorld,
+                        Vec3& outPosition, Vec3& outRotation);
+
+    // Game UI, shared by Lua's UI, display and destroy tables and plugin languages.
+    // Screens and widgets are handles; 0 means none.
+    enum class UIWidgetKind : uint32_t { Panel, Text, Button, Image, VerticalBox, HorizontalBox, Grid };
+    /// One per Lua UI.set* function. Enums are the Lua strings ("topCenter", "fit", ...).
+    enum class UIWidgetProperty : uint32_t {
+        Position, Size, Visible, Opacity, ZOrder, Text, Image, Spacing, GridColumns, GridSpacing,
+        Enabled, Padding, Margin, MinSize, MaxSize, Anchor, HAlignment, VAlignment, BackgroundColor,
+        BorderColor, BorderWidth, CornerRadius, TextColor, FontSize, FontBold, FontItalic,
+        TextAlignment, TextShadow, TextShadowColor, TextShadowOffset, WordWrap, Focused,
+        ChildAlignment, ImageScaleMode, ImageTint
+    };
+    bool UIIsAvailable() const;
+    uint32_t UICreateSimpleMenu();
+    uint32_t UICreateScreen(const std::string& name);
+    uint32_t UIGetRoot(uint32_t screenHandle);
+    /// text is a Text's text, a Button's label or an Image's image id.
+    uint32_t UICreateWidget(uint32_t parentHandle, UIWidgetKind kind, const std::string& text);
+    void UIClearScreens();
+    size_t UIGetScreenCount() const;
+    bool UISetScreenVisible(const std::string& name, bool visible);
+    bool UISetScreenActive(const std::string& name, bool active);
+    bool UISetViewportSize(float width, float height);
+    size_t UIGetDrawCommandCount() const;
+    /// Positions and sizes are Vec2, colours Vec4 (r, g, b, a), padding and
+    /// margin a number or Vec4 (top, right, bottom, left), enums strings.
+    bool UISet(uint32_t handle, UIWidgetProperty property, const PropertyValue& value);
+    /// Style fields use the names of Lua's style tables (backgroundColor, fontSize, padding, ...).
+    bool UISetStyle(uint32_t handle, const PropertyValue::Object& fields);
+    bool UISetButtonStyle(uint32_t handle, const std::string& state, const PropertyValue::Object& fields);
+    bool UIRegisterThemeStyle(const std::string& name, const PropertyValue::Object& fields);
+    bool UIApplyThemeStyle(uint32_t handle, const std::string& name);
+    bool UISetCursorMode(bool uiMode);
+    bool UIIsCursorModeUI() const;
+    bool UIIsButton(uint32_t handle) const;
+    bool UISetOnClick(uint32_t handle, std::function<void()> callback);
+    bool UISetOnHover(uint32_t handle, std::function<void(bool)> callback);
+    uint32_t UILoadHUI(const std::string& filePath, std::string& outError);
+    uint32_t UIGetWidget(uint32_t screenHandle, const std::string& widgetId) const;
+    uint32_t UIDisplay(const std::string& filePath, std::string& outError);
+    bool UIDestroy(uint32_t screenHandle);
+    bool UIDestroyCurrent();
+    void UIDestroyAll();
+
 private:
     friend struct LuaEntityReference;
 
@@ -386,16 +469,7 @@ private:
     std::vector<LuaScriptInstanceKey> m_ActiveUpdateOrder;
     std::vector<std::filesystem::path> m_SearchPaths;
 
-    struct PendingSpawn {
-        std::string prefabPath;
-        bool hasPosition = false;
-        Vec3 position{0.0f, 0.0f, 0.0f};
-        bool hasRotation = false;
-        Vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
-        uint32_t parentId = 0;
-        bool hasParent = false;
-        std::unordered_map<std::string, PropertyValue> vars;
-    };
+    using PendingSpawn = PrefabSpawn;
 
     struct PendingDestroy {
         uint32_t entityId = 0;
@@ -693,7 +767,10 @@ private:
     static int Lua_Destroy_ui(lua_State* L);
     void RegisterDisplayDestroyBindings();
 
-    static Hephaestus::HephaestusUI::UIStyle ParseStyleTable(lua_State* L, int tableIndex);
+    PropertyValue::Object StyleFieldsFromLua(lua_State* L, int tableIndex);
+    void ReleaseLuaUICallback(std::unordered_map<uint32_t, int>& callbacks, uint32_t handle);
+    std::filesystem::path ResolveHUIPath(const std::string& filePath, std::string& outError) const;
+    void LoadHUIController(const std::string& controller, const std::filesystem::path& huiFile, const char* context);
     static void ApplyStyleToPanel(Hephaestus::HephaestusUI::UIElement* element,
                                   const Hephaestus::HephaestusUI::UIStyle& style);
 
