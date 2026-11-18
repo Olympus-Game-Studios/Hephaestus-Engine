@@ -273,6 +273,29 @@ int main()
                   std::to_string(furthest) + ")");
     }
     {
+        // An editable mesh with a recess pushed into half its top collides as its own triangles, recess included.
+        Session session("ConstructionRecess");
+        Entity platform = session.scene.CreateEntity("Platform");
+        auto& shape = platform.AddComponent<ConstructionShapeComponent>();
+        shape.box.width = 4.0f;
+        shape.box.depth = 4.0f;
+        shape.box.height = 1.0f;
+        Hephaestus::Construction::MakeEditable(shape);
+        Hephaestus::Construction::SplitFace(shape.mesh, 0);
+        Hephaestus::Construction::ExtrudeFace(shape.mesh, 0);
+        for (int index : shape.mesh.faces[0]) shape.mesh.vertices[static_cast<size_t>(index)].y -= 0.5f;
+        Hephaestus::Construction::ConstructionSystem construction;
+        construction.Update(session.scene);
+        session.Step(2);
+        Physics::RaycastHit low;
+        Physics::RaycastHit high;
+        const bool inRecess = session.system.Raycast(entt::null, Vec3(0.0f, 5.0f, 1.0f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, low);
+        const bool onTop = session.system.Raycast(entt::null, Vec3(0.0f, 5.0f, -1.0f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, high);
+        Check(inRecess && std::fabs(low.point.y - 0.5f) < 0.02f && onTop && std::fabs(high.point.y - 1.0f) < 0.02f,
+              "A recess pushed into an editable mesh is hollow to collision (recess y " + std::to_string(low.point.y) +
+                  ", top y " + std::to_string(high.point.y) + ")");
+    }
+    {
         // A triangular construction room: its sloped wall and floor are convex hull colliders.
         Session session("ConstructionHulls");
         Entity room = session.scene.CreateEntity("Triangle Room");

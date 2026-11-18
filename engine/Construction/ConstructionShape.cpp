@@ -308,17 +308,7 @@ std::string WriteShapeJson(const ConstructionShapeComponent& shape, const std::s
             for (size_t k = 0; k < shape.mesh.faces[n].size(); ++k) oss << (k ? ", " : "") << shape.mesh.faces[n][k];
             oss << "]";
         }
-        oss << "]";
-        if (!shape.mesh.cells.empty()) {
-            oss << ", \"cells\": [";
-            for (size_t n = 0; n < shape.mesh.cells.size(); ++n) {
-                oss << (n ? ", " : "") << "[";
-                for (size_t k = 0; k < shape.mesh.cells[n].size(); ++k) oss << (k ? ", " : "") << shape.mesh.cells[n][k];
-                oss << "]";
-            }
-            oss << "]";
-        }
-        oss << "}";
+        oss << "]}";
     }
     if (!shape.kitSwaps.empty()) {
         oss << ",\n" << in << "\"kitSwaps\": [";
@@ -456,17 +446,6 @@ JsonValue ShapeToJson(const ConstructionShapeComponent& shape)
         }
         mesh.objectValue["vertices"] = std::move(vertices);
         mesh.objectValue["faces"] = std::move(faces);
-        if (!shape.mesh.cells.empty()) {
-            JsonValue cells;
-            cells.type = JsonValue::Type::Array;
-            for (const std::vector<int>& cell : shape.mesh.cells) {
-                JsonValue loop;
-                loop.type = JsonValue::Type::Array;
-                for (int index : cell) loop.arrayValue.push_back(number(index));
-                cells.arrayValue.push_back(std::move(loop));
-            }
-            mesh.objectValue["cells"] = std::move(cells);
-        }
         out.objectValue["mesh"] = std::move(mesh);
     }
     if (!shape.kitSwaps.empty()) {
@@ -551,24 +530,6 @@ bool ApplyShapeJson(ConstructionShapeComponent& shape, const JsonValue& data, st
                 return false;
             }
             read.faces.push_back(std::move(face));
-        }
-        if (const JsonValue* cells = mesh->Find("cells"); cells && cells->IsArray()) {
-            for (const JsonValue& loop : cells->AsArray()) {
-                std::vector<int> cell;
-                for (const JsonValue& index : loop.IsArray() ? loop.AsArray() : std::vector<JsonValue>{}) {
-                    const int i = index.IsNumber() ? static_cast<int>(index.AsNumber()) : -1;
-                    if (i < 0 || i >= static_cast<int>(read.vertices.size())) {
-                        outError = "ConstructionShape mesh cells index vertices that do not exist.";
-                        return false;
-                    }
-                    cell.push_back(i);
-                }
-                if (cell.size() < 4) {
-                    outError = "ConstructionShape mesh cells need at least four vertices.";
-                    return false;
-                }
-                read.cells.push_back(std::move(cell));
-            }
         }
         shape.mesh = std::move(read);
     }
@@ -862,11 +823,6 @@ bool ExtrudeFace(EditableMesh& mesh, int face)
     if (face < 0 || face >= static_cast<int>(mesh.faces.size())) {
         return false;
     }
-    if (mesh.cells.empty()) {
-        std::vector<int> all(mesh.vertices.size());
-        for (size_t n = 0; n < all.size(); ++n) all[n] = static_cast<int>(n);
-        mesh.cells.push_back(std::move(all));
-    }
     const std::vector<int> base = mesh.faces[static_cast<size_t>(face)];
     std::vector<int> top;
     for (int index : base) {
@@ -879,9 +835,6 @@ bool ExtrudeFace(EditableMesh& mesh, int face)
         // Anticlockwise from outside: the base edge runs the other way round the side face.
         mesh.faces.push_back({base[(k + 1) % n], top[(k + 1) % n], top[k], base[k]});
     }
-    std::vector<int> cell = base;
-    cell.insert(cell.end(), top.begin(), top.end());
-    mesh.cells.push_back(std::move(cell));
     return true;
 }
 
@@ -913,12 +866,6 @@ bool SplitFace(EditableMesh& mesh, int face)
                     other.insert(other.begin() + static_cast<std::ptrdiff_t>(k + 1), middle);
                     break;
                 }
-            }
-        }
-        for (std::vector<int>& cell : mesh.cells) {
-            if (std::find(cell.begin(), cell.end(), a) != cell.end() &&
-                std::find(cell.begin(), cell.end(), b) != cell.end()) {
-                cell.push_back(middle);
             }
         }
         return middle;

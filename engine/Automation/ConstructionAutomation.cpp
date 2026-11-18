@@ -444,8 +444,9 @@ void RegisterConstructionAutomation(AutomationService& service)
 
     RegisterOrThrow(service, Definition(
         "construction.edit_mesh",
-        "Edit an editable mesh. op 'extrude' pulls face (an index into mesh.faces) out along its normal by distance "
-        "metres, adding side faces; the new part collides as its own convex piece. op 'split' cuts face in two between "
+        "Edit an editable mesh. op 'extrude' moves a copy of face (an index into mesh.faces) along its normal by "
+        "distance metres, joined by side faces: positive pulls out a new part, negative pushes in a recess. The mesh "
+        "collides as its own triangles. op 'split' cuts face in two between "
         "the middle of its longest edge and the edge opposite. op 'revert' turns the mesh back into the block or ramp "
         "it was made from, sized to its bounds, keeping it where it is.",
         ObjectSchema({{"entity", {{"type", "string"}}},
@@ -468,8 +469,8 @@ void RegisterConstructionAutomation(AutomationService& service)
                 return Failure(ErrorCode::InvalidArguments, "face must index mesh.faces");
             }
             const float distance = arguments.value("distance", 0.0f);
-            if (op == "extrude" && !(distance > 0.0f)) {
-                return Failure(ErrorCode::InvalidArguments, "extrude needs a distance above 0");
+            if (op == "extrude" && !(std::fabs(distance) > 1e-4f)) {
+                return Failure(ErrorCode::InvalidArguments, "extrude needs a distance other than 0");
             }
             ToolResult mutationFailure;
             if (!BeginMutation(context, op == "extrude" ? "Extrude face" : op == "split" ? "Split face"

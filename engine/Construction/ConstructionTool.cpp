@@ -778,8 +778,7 @@ void ConstructionTool::UpdateHandleDrag(Scene& scene, const ToolInput& input)
         const Vec3 start = corner ? m_dragMesh.vertices[static_cast<size_t>(moving[0])] : m_handle.local;
         Vec3 shift;
         if (m_handle.face >= 0) {
-            const float distance = Snap(t - m_handleStartT, input);
-            shift = vscale(m_handle.normal, m_extruding ? std::max(0.0f, distance) : distance);
+            shift = vscale(m_handle.normal, Snap(t - m_handleStartT, input));
         } else if (input.shift) {
             const float rise = t - m_handleStartT;
             shift = Vec3(0.0f, corner ? Snap(start.y + rise, input) - start.y : Snap(rise, input), 0.0f);
@@ -1164,8 +1163,8 @@ std::string ConstructionTool::StatusText() const
     case Phase::Height: text = PhaseHint(2); break;
     case Phase::Handle:
         text = m_handle.face >= 0
-            ? (m_extruding ? "Pull the new part out along the face. Ctrl turns snapping off. Esc cancels."
-                           : "Drag the face in or out. Shift-drag pulls out a new part; Alt-click splits the face. Ctrl turns snapping off. Esc cancels.")
+            ? (m_extruding ? "Pull out a new part, or push in a recess. Ctrl turns snapping off. Esc cancels."
+                           : "Drag the face in or out. Shift-drag pulls out a new part or pushes in a recess; Alt-click splits the face. Ctrl turns snapping off. Esc cancels.")
             : m_handle.edgeTo >= 0 ? "Drag the edge across. Hold Shift to move it up and down. Ctrl turns snapping off. Esc cancels."
             : m_handle.vertex >= 0 ? "Drag the corner across. Hold Shift to move it up and down. Ctrl turns snapping off. Esc cancels."
                                    : PhaseHint(3);

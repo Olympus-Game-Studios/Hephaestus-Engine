@@ -631,7 +631,9 @@ bool ConstructionSystem::CollidersIntact(Scene& scene, entt::entity owner, const
     const entt::registry& registry = scene.GetRegistry();
     const auto& shape = registry.get<ConstructionShapeComponent>(owner);
     const size_t wanted = shape.collision == CollisionMode::Solid && !IsCutter(shape)
-        ? state.geometry.solids.size() + state.geometry.rounds.size() + state.geometry.hulls.size() : 0;
+        ? state.geometry.solids.size() + state.geometry.rounds.size() + state.geometry.hulls.size() +
+              (state.geometry.collideAsMesh ? 1 : 0)
+        : 0;
     if (state.colliders.size() != wanted) {
         return false;
     }
@@ -688,6 +690,24 @@ void ConstructionSystem::RebuildColliders(Scene& scene, entt::entity owner, Shap
         for (const Vec3& p : hull) {
             physicsShape.points.push_back(vsub(p, center));
         }
+        collider.AddComponent<PhysicsShapeComponent>(physicsShape);
+        auto& body = collider.AddComponent<RigidBodyComponent>();
+        body.isStatic = true;
+        body.motion = RigidBodyMotion::Static;
+        body.mass = 0.0f;
+        body.useGravity = false;
+        body.layer = 1;
+        collider.AddComponent<EditorOnlyComponent>();
+        collider.AddComponent<ConstructionGeneratedComponent>().ownerEntity = static_cast<std::uint32_t>(owner);
+        scene.SetParent(collider, ownerEntity, false);
+        state.colliders.push_back(static_cast<entt::entity>(collider));
+        ++m_stats.collidersBuilt;
+    }
+    if (state.geometry.collideAsMesh) {
+        Entity collider = scene.CreateEntity("Construction Collision");
+        PhysicsShapeComponent physicsShape;
+        physicsShape.type = PhysicsShapeType::Mesh;
+        physicsShape.triangles = std::make_shared<const MeshData>(state.geometry.mesh);
         collider.AddComponent<PhysicsShapeComponent>(physicsShape);
         auto& body = collider.AddComponent<RigidBodyComponent>();
         body.isStatic = true;

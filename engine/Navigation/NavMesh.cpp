@@ -260,7 +260,11 @@ NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes, const std::fi
             geometry.AddConvexHull(world, shape->points, offset);
             break;
         case PhysicsShapeType::Mesh:
-            ++skipped;  // a Mesh shape without a mesh renderer has no triangles
+            if (shape->triangles) {
+                geometry.AddMesh(Mat4::Multiply(world, Mat4::Translation(offset)), *shape->triangles);
+            } else {
+                ++skipped;  // a Mesh shape without a mesh renderer or triangles of its own has nothing to collide with
+            }
             break;
         }
     }

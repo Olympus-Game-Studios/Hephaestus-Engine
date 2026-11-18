@@ -1905,22 +1905,14 @@ void TestMeshTools()
 
     const Vec3 normal = FaceNormal(mesh, 0);
     Check(std::fabs(normal.y - 1.0f) < 1e-5f, "the top half still faces up");
-    Check(ExtrudeFace(mesh, 0) && MeshClosed(mesh) && mesh.cells.size() == 2, "extruding a face keeps the mesh closed");
+    Check(ExtrudeFace(mesh, 0) && MeshClosed(mesh), "extruding a face keeps the mesh closed");
     for (int index : mesh.faces[0]) mesh.vertices[static_cast<size_t>(index)].y += 1.0f;
     EvaluatedGeometry extruded;
     Check(EvaluateShape(block, {}, extruded) && std::fabs(EnclosedVolume(extruded) - 10.0f) < 1e-3f,
           "pulling the half face up 1 m adds half a cubic metre per metre of face (volume " +
               std::to_string(EnclosedVolume(extruded)) + ")");
-    Check(extruded.hulls.size() == 2 && extruded.hulls[0].size() == 10 && extruded.hulls[1].size() == 8,
-          "the L shape collides as the block and the pulled-out part, not one hull around both");
-    float partMaxY = 0.0f;
-    float partMinY = 10.0f;
-    for (const Vec3& p : extruded.hulls[1]) {
-        partMaxY = std::max(partMaxY, p.y);
-        partMinY = std::min(partMinY, p.y);
-    }
-    Check(std::fabs(partMaxY - 3.0f) < 1e-4f && std::fabs(partMinY - 2.0f) < 1e-4f,
-          "the pulled-out part's collision spans only what was pulled out");
+    Check(extruded.collideAsMesh && extruded.hulls.empty() && extruded.solids.empty(),
+          "the L shape collides as its own triangles, not one hull around both parts");
 
     {
         Scene saved("Saved Mesh");
@@ -1930,8 +1922,22 @@ void TestMeshTools()
         SceneSerializer::DeserializeFromString(reopened, SceneSerializer(saved).SerializeToString());
         Entity reloaded = reopened.FindEntityByName("Mesh");
         const auto* reloadedShape = reloaded ? reopened.GetRegistry().try_get<ConstructionShapeComponent>(reloaded) : nullptr;
-        Check(reloadedShape && reloadedShape->mesh.cells == mesh.cells && reloadedShape->mesh.faces == mesh.faces,
-              "collision pieces are saved with the scene and read back");
+        Check(reloadedShape && reloadedShape->mesh.faces == mesh.faces && reloadedShape->mesh.vertices.size() == mesh.vertices.size(),
+              "an extruded mesh is saved with the scene and read back");
+    }
+
+    {
+        ConstructionShapeComponent pit;
+        pit.box = block.box;
+        pit.box.height = 2.0f;
+        MakeEditable(pit);
+        SplitFace(pit.mesh, 0);
+        ExtrudeFace(pit.mesh, 0);
+        for (int index : pit.mesh.faces[0]) pit.mesh.vertices[static_cast<size_t>(index)].y -= 0.5f;
+        EvaluatedGeometry recessed;
+        Check(EvaluateShape(pit, {}, recessed) && MeshClosed(pit.mesh) && std::fabs(EnclosedVolume(recessed) - 7.0f) < 1e-3f,
+              "pushing half the top 0.5 m in leaves a closed mesh with that much less volume (volume " +
+                  std::to_string(EnclosedVolume(recessed)) + ")");
     }
 
     Vec3 shift;
@@ -2009,6 +2015,39 @@ void TestMeshTools()
               std::fabs(shape.mesh.vertices[1].x - 1.0f) < 1e-4f,
           "dragging an edge moves both of its corners and nothing else");
     Check(system.Update(scene) == 1 && WindingMatchesNormals(*system.Geometry(entity)), "the edited mesh evaluates");
+
+    // A platform with a recess pushed into half of its top: bots walk on both levels, and its collider is the mesh.
+    Scene pitScene("Recess");
+    ConstructionSystem pitSystem;
+    pitSystem.SetMeshSink(fake.Make());
+    BoxParams platformSize;
+    platformSize.width = 8.0f;
+    platformSize.height = 1.0f;
+    platformSize.depth = 8.0f;
+    Entity platform = AddBox(pitScene, "Platform", platformSize);
+    auto& platformShape = platform.GetComponent<ConstructionShapeComponent>();
+    MakeEditable(platformShape);
+    SplitFace(platformShape.mesh, 0);
+    ExtrudeFace(platformShape.mesh, 0);
+    for (int index : platformShape.mesh.faces[0]) platformShape.mesh.vertices[static_cast<size_t>(index)].y -= 0.5f;
+    pitSystem.Update(pitScene);
+    int meshColliders = 0;
+    for (auto collider : pitScene.GetRegistry().view<ConstructionGeneratedComponent, PhysicsShapeComponent>()) {
+        const auto& physicsShape = pitScene.GetRegistry().get<PhysicsShapeComponent>(collider);
+        meshColliders += physicsShape.type == PhysicsShapeType::Mesh && physicsShape.triangles &&
+                                 physicsShape.triangles->indices.size() == pitSystem.Geometry(platform)->mesh.indices.size()
+                             ? 1 : 0;
+    }
+    Check(meshColliders == 1, "the editable mesh gets one collider made of its own triangles");
+    Hephaestus::Navigation::NavMesh nav;
+    std::string error;
+    const bool built = nav.Build(Hephaestus::Navigation::CollectSceneGeometry(pitScene),
+                                 Hephaestus::Navigation::SettingsForScene(pitScene), error);
+    Vec3 low;
+    Vec3 high;
+    Check(built && nav.ClosestPoint(Vec3(0.0f, 0.6f, 2.0f), low, Vec3(0.5f, 0.3f, 0.5f)) && std::fabs(low.y - 0.5f) < 0.15f &&
+              nav.ClosestPoint(Vec3(0.0f, 1.1f, -2.0f), high, Vec3(0.5f, 0.3f, 0.5f)) && std::fabs(high.y - 1.0f) < 0.15f,
+          "bots can stand in the recess and on the top beside it (" + error + ")");
 }
 
 void TestEditableMesh()
@@ -2050,8 +2089,8 @@ void TestEditableMesh()
     int top = 0;
     for (const FaceTag& tag : geometry->triangleTags) top += tag.group == FaceGroup::Top && tag.segment == 0 ? 1 : 0;
     Check(geometry && geometry->mesh.indices.size() == 36 && WindingMatchesNormals(*geometry) &&
-              geometry->hulls.size() == 1 && geometry->hulls[0].size() == 8 && top == 2,
-          "it draws twelve outward triangles, collides as one hull, and its top face is face 0");
+              geometry->collideAsMesh && geometry->hulls.empty() && top == 2,
+          "it draws twelve outward triangles, collides as those triangles, and its top face is face 0");
 
     ConstructionTool tool;
     entt::entity selected = block;

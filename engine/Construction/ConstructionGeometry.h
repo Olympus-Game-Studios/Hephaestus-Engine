@@ -30,6 +30,7 @@ struct EvaluatedGeometry {
     std::vector<LocalBox> solids;       // disjoint boxes covering the solid volume, for collision
     std::vector<RoundCollider> rounds;  // collision for cylinders and spheres
     std::vector<std::vector<Vec3>> hulls;  // convex collision pieces that are not axis-aligned boxes
+    bool collideAsMesh = false;  // collides as the drawn triangles themselves (static only), for concave shapes
 };
 
 // A wall path segment in the wall's local frame: d runs from its first point to its second, n is d turned a

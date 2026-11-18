@@ -1252,14 +1252,7 @@ bool EvaluateEditableMesh(const EditableMesh& mesh, EvaluatedGeometry& out)
             PushFacing(out, a, b, c, vnorm(own), tag);
         }
     }
-    if (mesh.cells.empty()) {
-        out.hulls.push_back(mesh.vertices);
-    }
-    for (const std::vector<int>& cell : mesh.cells) {
-        std::vector<Vec3> hull;
-        for (int index : cell) hull.push_back(mesh.vertices[static_cast<size_t>(index)]);
-        out.hulls.push_back(std::move(hull));
-    }
+    out.collideAsMesh = true;
     const LocalBox bounds = BoundsOfPoints(mesh.vertices);
     out.mesh.bounds = AABB(bounds.min, bounds.max);
     MeshData::Submesh all;
@@ -1345,11 +1338,6 @@ std::uint64_t HashInputs(const ConstructionShapeComponent& shape, std::vector<Op
     for (const std::vector<int>& face : shape.mesh.faces) {
         h.Int(static_cast<std::int64_t>(face.size()));
         for (int index : face) h.Int(index);
-    }
-    h.Int(static_cast<std::int64_t>(shape.mesh.cells.size()));
-    for (const std::vector<int>& cell : shape.mesh.cells) {
-        h.Int(static_cast<std::int64_t>(cell.size()));
-        for (int index : cell) h.Int(index);
     }
     h.Int(static_cast<std::int64_t>(shape.kitSwaps.size()));
     for (const KitSwap& swap : shape.kitSwaps) {

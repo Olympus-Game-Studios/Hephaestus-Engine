@@ -898,7 +898,10 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
                 break;
             }
             case PhysicsShapeType::Mesh:
-                // Handled outside (needs mesh renderer)
+                // A mesh renderer's model is handled outside; here only triangles carried by the shape itself.
+                if (shapeComp.triangles && rigidBody.IsStatic()) {
+                    return applyOffset(BuildMeshShapeFromMeshData(*shapeComp.triangles, scale));
+                }
                 break;
             default:
                 break;

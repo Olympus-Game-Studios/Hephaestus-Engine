@@ -1,6 +1,7 @@
 #pragma once
 #include "../Core/Math.h"
 #include <entt/entt.hpp>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -261,6 +262,8 @@ enum class PhysicsShapeType {
     ConvexHull
 };
 
+struct MeshData;
+
 /**
  * Physics shape component - defines the collision shape for an entity
  */
@@ -278,6 +281,9 @@ struct PhysicsShapeComponent {
 
     // ConvexHull: points relative to the entity, before offset
     std::vector<Vec3> points;
+
+    // Mesh: these triangles instead of the mesh renderer's model (static bodies only, never saved)
+    std::shared_ptr<const MeshData> triangles;
     
     // Offset from entity center
     Vec3 offset;
