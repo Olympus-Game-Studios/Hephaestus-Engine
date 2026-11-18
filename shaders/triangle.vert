@@ -3,6 +3,7 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inColor;
 layout(location = 3) in vec2 inTexCoord;
+layout(location = 4) in vec2 inLightmapUV;
 
 layout(std140, set = 0, binding = 0) uniform UBO {
     mat4 view;
@@ -43,6 +44,7 @@ layout(location = 2) out vec3 fragColor;
 layout(location = 3) out vec2 fragTexCoord;
 layout(location = 4) out vec4 fragLightSpacePos;
 layout(location = 5) flat out vec3 fragObjectPos;
+layout(location = 6) out vec2 fragLightmapUV;
 
 void main() {
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
@@ -58,4 +60,5 @@ void main() {
     
     fragColor = inColor;
     fragTexCoord = inTexCoord;
+    fragLightmapUV = inLightmapUV;
 }

@@ -49,6 +49,7 @@ layout(location = 2) out vec3 fragColor;
 layout(location = 3) out vec2 fragTexCoord;
 layout(location = 4) out vec4 fragLightSpacePos;
 layout(location = 5) flat out vec3 fragObjectPos;
+layout(location = 6) out vec2 fragLightmapUV;
 
 mat4 skinMatrix() {
     return inWeights.x * bones.boneMats[inJoints.x] +
@@ -72,4 +73,5 @@ void main() {
 
     fragColor = inColor;
     fragTexCoord = inTexCoord;
+    fragLightmapUV = vec2(0.0);
 }

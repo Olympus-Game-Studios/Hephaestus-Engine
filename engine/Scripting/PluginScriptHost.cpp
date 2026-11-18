@@ -1030,6 +1030,9 @@ struct PluginScriptHost::HostApi {
                 std::memcpy(out.normal, in.normal, sizeof out.normal);
                 std::memcpy(out.color, in.color, sizeof out.color);
                 std::memcpy(out.texCoord, in.uv, sizeof out.texCoord);
+                if (section.lightmapUvs) {
+                    std::memcpy(out.lightmapUV, section.lightmapUvs + 2 * static_cast<size_t>(v), sizeof out.lightmapUV);
+                }
                 mesh.vertices.push_back(out);
                 const Vec3 p(in.position[0], in.position[1], in.position[2]);
                 Grow(submesh.bounds, sectionEmpty, p);

@@ -11,6 +11,7 @@ layout(location = 2) in vec3 fragColor;
 layout(location = 3) in vec2 fragTexCoord;
 layout(location = 4) in vec4 fragLightSpacePos;
 layout(location = 5) flat in vec3 fragObjectPos;
+layout(location = 6) in vec2 fragLightmapUV;
 
 layout(location = 0) out vec4 outColor;
 
@@ -54,8 +55,8 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float refraction;         // offset 124 (reserved)
     uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive, 3 masked
     uint textureChannels;     // offset 132: roughness, metallic, AO map channel, 2 bits each (0 R .. 3 A)
-    uint graphPadding0;       // offset 136
-    uint graphPadding1;       // offset 140
+    uint useLightmap;         // offset 136: baked lighting from lightmapTextureIndex at the second UV set
+    uint lightmapTextureIndex; // offset 140
     uvec4 graphTextureSlots[4]; // offset 144: texture slots a compiled material graph samples
 } material;
 
@@ -399,6 +400,13 @@ void main() {
     // Unlit viewport mode: albedo (+ emissive), skip lighting
     if (ubo.shadingMode > 0.5) {
         outColor = vec4(albedo + surface.emissive, opacity);
+        return;
+    }
+
+    // Baked lighting replaces every light, ambient and probe term.
+    if (material.useLightmap != 0u) {
+        vec3 baked = texture(materialTextures[material.lightmapTextureIndex % MAX_TEXTURE_SLOTS], fragLightmapUV).rgb;
+        outColor = vec4(albedo * baked + surface.emissive, opacity);
         return;
     }
 

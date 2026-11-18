@@ -124,6 +124,8 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("metallicTexturePath") && root["metallicTexturePath"].is_string()) outMaterial.metallicTexturePath = root["metallicTexturePath"].get<std::string>();
     if (root.contains("useAoTexture") && root["useAoTexture"].is_boolean()) outMaterial.useAoTexture = root["useAoTexture"].get<bool>();
     if (root.contains("aoTexturePath") && root["aoTexturePath"].is_string()) outMaterial.aoTexturePath = root["aoTexturePath"].get<std::string>();
+    if (root.contains("useLightmap") && root["useLightmap"].is_boolean()) outMaterial.useLightmap = root["useLightmap"].get<bool>();
+    if (root.contains("lightmapTexturePath") && root["lightmapTexturePath"].is_string()) outMaterial.lightmapTexturePath = root["lightmapTexturePath"].get<std::string>();
     if (root.contains("useWorldAlignedTexture") && root["useWorldAlignedTexture"].is_boolean()) outMaterial.useWorldAlignedTexture = root["useWorldAlignedTexture"].get<bool>();
     for (auto [key, channel] : {std::pair{"roughnessChannel", &outMaterial.roughnessChannel},
                                 std::pair{"metallicChannel", &outMaterial.metallicChannel},
@@ -352,6 +354,13 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["metallicTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.metallicTexturePath);
     root["useAoTexture"] = material.useAoTexture;
     root["aoTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.aoTexturePath);
+    if (material.useLightmap || !material.lightmapTexturePath.empty()) {
+        root["useLightmap"] = material.useLightmap;
+        root["lightmapTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.lightmapTexturePath);
+    } else {
+        root.erase("useLightmap");
+        root.erase("lightmapTexturePath");
+    }
     for (const auto& [key, channel] : {std::pair{"roughnessChannel", material.roughnessChannel},
                                        std::pair{"metallicChannel", material.metallicChannel},
                                        std::pair{"aoChannel", material.aoChannel}}) {

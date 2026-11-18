@@ -9,6 +9,7 @@ struct Vertex {
     float normal[3];
     float color[3];
     float texCoord[2];
+    float lightmapUV[2];
 
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription binding{};
@@ -19,7 +20,7 @@ struct Vertex {
     }
 
     static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<VkVertexInputAttributeDescription> attribs(4);
+        std::vector<VkVertexInputAttributeDescription> attribs(5);
         attribs[0].binding = 0;
         attribs[0].location = 0;
         attribs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -39,6 +40,11 @@ struct Vertex {
         attribs[3].location = 3;
         attribs[3].format = VK_FORMAT_R32G32_SFLOAT;
         attribs[3].offset = offsetof(Vertex, texCoord);
+
+        attribs[4].binding = 0;
+        attribs[4].location = 4;
+        attribs[4].format = VK_FORMAT_R32G32_SFLOAT;
+        attribs[4].offset = offsetof(Vertex, lightmapUV);
         return attribs;
     }
 };

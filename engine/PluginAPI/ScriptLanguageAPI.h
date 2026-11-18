@@ -160,7 +160,8 @@ typedef struct HPMeshVertex {
 /* One material slot of a runtime mesh: triangles (three indices each,
    counter-clockwise front faces) into `vertices`, drawn with the material
    asset at `material` (a .hematerial path, absolute or project relative; NULL
-   or empty for the default material). */
+   or empty for the default material). `lightmapUvs` is NULL or two floats
+   per vertex, the UV set a material's lightmap is sampled at. */
 typedef struct HPMeshSection {
     uint32_t structSize;
     const HPMeshVertex* vertices;
@@ -168,6 +169,7 @@ typedef struct HPMeshSection {
     const uint32_t* indices;
     uint32_t indexCount;
     const char* material;
+    const float* lightmapUvs;
 } HPMeshSection;
 
 typedef enum HPLogLevel {

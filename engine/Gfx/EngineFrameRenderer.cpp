@@ -75,7 +75,8 @@ struct alignas(16) MaterialUBO {
     float refraction;
     uint32_t blendMode;
     uint32_t textureChannels; // roughness, metallic, AO map channel, 2 bits each
-    uint32_t graphPadding[2];
+    uint32_t useLightmap;
+    uint32_t lightmapTextureIndex;
     uint32_t graphTextureSlots[16]; // shaders/triangle.frag graphTextureSlots, read by compiled material graphs
 };
 static_assert(offsetof(MaterialUBO, graphTextureSlots) == 144);
@@ -3872,6 +3873,8 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         if (j.contains("metallicTexturePath")) loadedMaterial.metallicTexturePath = j["metallicTexturePath"].get<std::string>();
         if (j.contains("useAoTexture")) loadedMaterial.useAoTexture = j["useAoTexture"].get<bool>();
         if (j.contains("aoTexturePath")) loadedMaterial.aoTexturePath = j["aoTexturePath"].get<std::string>();
+        loadedMaterial.useLightmap = j.value("useLightmap", false);
+        loadedMaterial.lightmapTexturePath = j.value("lightmapTexturePath", std::string());
         loadedMaterial.roughnessChannel = j.value("roughnessChannel", 0u) & 3u;
         loadedMaterial.metallicChannel = j.value("metallicChannel", 0u) & 3u;
         loadedMaterial.aoChannel = j.value("aoChannel", 0u) & 3u;
@@ -4738,6 +4741,11 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 }
                 matUBO.textureChannels = (mat.roughnessChannel & 3u) | ((mat.metallicChannel & 3u) << 2) |
                                          ((mat.aoChannel & 3u) << 4);
+                matUBO.lightmapTextureIndex = m_defaultMaterialTextureSlot;
+                if (mat.useLightmap && !mat.lightmapTexturePath.empty()) {
+                    matUBO.lightmapTextureIndex = ensureMaterialTextureSlot(mat.lightmapTexturePath);
+                }
+                matUBO.useLightmap = matUBO.lightmapTextureIndex != m_defaultMaterialTextureSlot ? 1u : 0u;
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);

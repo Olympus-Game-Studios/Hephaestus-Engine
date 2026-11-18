@@ -684,6 +684,10 @@ struct MaterialComponent {
     std::string aoTexturePath;
     bool useAoTexture = false;
 
+    // Baked lighting sampled at the mesh's second UV set; replaces dynamic lighting when used
+    std::string lightmapTexturePath;
+    bool useLightmap = false;
+
     // Channel (0 R, 1 G, 2 B, 3 A) each scalar map is read from, so one packed ORM-style texture can feed all three
     uint32_t roughnessChannel = 0;
     uint32_t metallicChannel = 0;
