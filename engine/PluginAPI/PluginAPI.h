@@ -62,6 +62,15 @@ struct HeaderButtonDescriptor {
     const char* toolTip = nullptr;
 };
 
+/// A button for one of this plugin's commands in the editor's tool row (next to the transform and construction
+/// tools). The icon is tinted like the editor's own icons when it is an SVG drawn with currentColor.
+struct ToolbarButtonDescriptor {
+    std::uint32_t structSize = sizeof(ToolbarButtonDescriptor);
+    const char* commandId = nullptr; // a command this plugin registered
+    const char* iconPath = nullptr;  // .svg or .png, relative to the plugin folder or absolute
+    const char* toolTip = nullptr;   // shown under the command's name
+};
+
 struct ContextActionDescriptor {
     const char* location = nullptr; // assetBrowser, sceneHierarchy, viewport, inspector
     const char* commandId = nullptr;
@@ -167,7 +176,20 @@ struct SettingDescriptor {
     SettingScope scope = SettingScope::Project;
 };
 
-enum class PrimitiveKind : std::uint32_t { Empty, Cube, Sphere, Plane, PointLight };
+enum class PrimitiveKind : std::uint32_t { Empty, Cube, Sphere, Plane, PointLight, Cylinder };
+
+/// Subtract only applies to Cube: it makes a cutter that carves the construction blocks and rooms it overlaps.
+enum class PrimitiveOperation : std::uint32_t { Add, Subtract };
+
+struct PrimitiveRequest {
+    std::uint32_t structSize = sizeof(PrimitiveRequest);
+    PrimitiveKind kind = PrimitiveKind::Cube;
+    const char* name = nullptr;
+    float size[3] = {1.0f, 1.0f, 1.0f}; // metres; sphere uses size[0] as diameter, cylinder size[0] and size[1]
+    PrimitiveOperation operation = PrimitiveOperation::Add;
+    bool collision = true;               // a static collider players and the navmesh use
+    bool placeInView = true;             // on the surface in front of the editor camera, else at the origin
+};
 
 class ICommandService {
 public:
@@ -185,6 +207,9 @@ public:
     virtual bool RegisterContextAction(const ContextActionDescriptor& descriptor) = 0;
     virtual bool ShowPanel(const char* panelId) = 0;
     virtual bool RegisterHeaderButton(const HeaderButtonDescriptor&) { return false; }
+    /// Appended to API 1; an older editor's vtable has no such entry, so plugins that call it need a matching
+    /// "engineVersion" in their manifest.
+    virtual bool RegisterToolbarButton(const ToolbarButtonDescriptor&) { return false; }
 };
 
 class IAssetService {
@@ -205,6 +230,8 @@ public:
     virtual std::uint64_t CreatePrimitive(PrimitiveKind kind, const char* name) = 0;
     virtual bool DeleteEntity(std::uint64_t entityId) = 0;
     virtual bool SelectEntity(std::uint64_t entityId) = 0;
+    /// Creates, selects and returns a primitive, or 0. Appended to API 1 (see RegisterToolbarButton).
+    virtual std::uint64_t CreatePrimitiveEx(const PrimitiveRequest&) { return 0; }
 };
 
 class IUndoService {
@@ -249,6 +276,75 @@ public:
     virtual bool RegisterNode(const MaterialNodeDescriptor& descriptor) = 0;
 };
 
+/// What the level's characters can do, from their Character Controllers (defaults when there are none).
+struct LevelMetrics {
+    std::uint32_t structSize = sizeof(LevelMetrics);
+    float height = 1.8f;
+    float radius = 0.3f;
+    float stepHeight = 0.3f;
+    float maxSlopeDegrees = 45.0f;
+    float jumpHeight = 0.0f;
+    float walkSpeed = 5.0f;
+    bool fromCharacters = false;
+};
+
+enum class LevelProblemSeverity : std::uint32_t { Error, Warning, Info };
+
+struct LevelProblemDescriptor {
+    std::uint32_t structSize = sizeof(LevelProblemDescriptor);
+    const char* check = nullptr;     // a short id such as "spawn-exposed"; the check's own id when null
+    LevelProblemSeverity severity = LevelProblemSeverity::Warning;
+    const char* message = nullptr;   // one sentence for the Check Level list
+    float position[3] = {0.0f, 0.0f, 0.0f};  // where the viewport frames the problem
+    std::uint64_t entityId = 0;      // the entity at fault (as ISceneService ids), or 0
+};
+
+struct LevelEntityInfo {
+    std::uint32_t structSize = sizeof(LevelEntityInfo);
+    std::uint64_t id = 0;             // as ISceneService ids
+    const char* name = nullptr;       // valid until the check returns
+    float position[3] = {0.0f, 0.0f, 0.0f};  // world space
+    const char* script = nullptr;     // its Lua script's path, or null; valid until the check returns
+};
+
+/// One run of a plugin's level check, valid only during its callback.
+class ILevelCheckRun {
+public:
+    virtual ~ILevelCheckRun() = default;
+    virtual const LevelMetrics& Metrics() const = 0;
+    /// The nearest point where the segment meets the level's collision (what characters stand on and walk into).
+    virtual bool Raycast(const float from[3], const float to[3], float hit[3]) const = 0;
+    /// The walking distance between two points along the navmesh; false when `to` can't be walked to.
+    virtual bool WalkDistance(const float from[3], const float to[3], float* metres) const = 0;
+    /// The scene's named entities, such as spawn points, with their world positions.
+    virtual std::uint32_t EntityCount() const = 0;
+    virtual bool GetEntity(std::uint32_t index, LevelEntityInfo& out) const = 0;
+    virtual void Report(const LevelProblemDescriptor& problem) = 0;
+    /// The value an entity's Lua script gives an Expose.* setting, as text (numbers in plain decimal, booleans as
+    /// "true"/"false"). False when the entity has no script or the setting is not stored with the scene.
+    virtual bool GetScriptValue(std::uint64_t entityId, const char* name, char* out, std::size_t outSize) const = 0;
+    /// The nearest walkable point within 2 m sideways and 4 m up or down, as Lua's Nav.closestPoint finds it.
+    virtual bool ClosestWalkable(const float point[3], float out[3]) const = 0;
+};
+
+using LevelCheckCallback = void (*)(ILevelCheckRun& run, void* userData);
+
+/// A check that runs with Build > Check Level (and MCP level.check), after the engine's own checks.
+struct LevelCheckDescriptor {
+    std::uint32_t structSize = sizeof(LevelCheckDescriptor);
+    const char* id = nullptr;           // unique, e.g. "fps.spawn-exposure"
+    const char* displayName = nullptr;
+    LevelCheckCallback run = nullptr;
+    void* userData = nullptr;
+};
+
+/// Level checks a plugin adds. They are removed when the plugin unloads.
+class ILevelAnalysisService {
+public:
+    virtual ~ILevelAnalysisService() = default;
+    virtual bool RegisterCheck(const LevelCheckDescriptor& descriptor) = 0;
+};
+
 class IPluginContext {
 public:
     virtual ~IPluginContext() = default;
@@ -265,6 +361,8 @@ public:
     virtual IAutomationToolService* AutomationTools() { return nullptr; }
     /// Appended to API 1 after AutomationTools; null where the host has no Material Editor.
     virtual IMaterialNodeService* MaterialNodes() { return nullptr; }
+    /// Appended to API 1 after MaterialNodes; null where the host has no level checks.
+    virtual ILevelAnalysisService* LevelAnalysis() { return nullptr; }
 };
 
 class IHephaestusPlugin {

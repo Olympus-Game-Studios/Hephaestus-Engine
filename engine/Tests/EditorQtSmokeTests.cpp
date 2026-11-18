@@ -15,6 +15,8 @@
 #include "Core/EngineLog.h"
 #include "UI/QtEditor/EditorTheme.h"
 #include "UI/QtEditor/QtViewportWindow.h"
+#include "UI/QtEditor/KitEditorDialog.h"
+#include "Construction/ConstructionKit.h"
 
 #include <QtTest/QtTest>
 #include <QAbstractItemView>
@@ -22,6 +24,9 @@
 #include <QCheckBox>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDoubleSpinBox>
+#include <QLabel>
+#include <QTableWidget>
 #include <QSettings>
 #include <QAbstractItemModel>
 #include <QCompleter>
@@ -39,6 +44,48 @@
 class EditorQtSmokeTests : public QObject {
     Q_OBJECT
 private slots:
+    // The kit editor lists a kit's pieces, tries a wall length with them and saves edits back to the file.
+    void kitEditorEditsAndSaves() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const std::filesystem::path file = std::filesystem::path(dir.filePath("Stone.hpkit").toStdWString());
+        Hephaestus::Construction::KitDefinition kit;
+        kit.name = "Stone";
+        kit.pieces = {{"assets/Kits/Panel2m.hpprefab", "wall", 2.0f, 0.05f, 0.0f, 0.0f},
+                      {"assets/Kits/Panel1m.hpprefab", "wall", 1.0f, 0.05f, 0.0f, 0.0f}};
+        std::string error;
+        QVERIFY(Hephaestus::Construction::SaveKit(file, kit, error));
+
+        auto* dialog = new Hephaestus::QtEditor::KitEditorDialog(dir.filePath("Stone.hpkit"));
+        auto* table = dialog->findChild<QTableWidget*>();
+        QVERIFY(table);
+        QCOMPARE(table->rowCount(), 2);
+        bool trialShown = false;
+        for (QLabel* label : dialog->findChildren<QLabel*>()) {
+            trialShown = trialShown || label->text() == QStringLiteral("Panel2m x3, no stretch.");
+        }
+        QVERIFY2(trialShown, "a 6 m wall is tried with three 2 m panels");
+        QVERIFY(!dialog->windowTitle().endsWith('*'));
+
+        auto* width = qobject_cast<QDoubleSpinBox*>(table->cellWidget(1, 2));
+        QVERIFY(width);
+        width->setValue(1.5);
+        QVERIFY(dialog->windowTitle().endsWith('*'));
+        auto* save = dialog->findChild<QPushButton*>();
+        for (QPushButton* button : dialog->findChildren<QPushButton*>()) {
+            if (button->text().remove('&') == QStringLiteral("Save")) save = button;
+        }
+        QVERIFY(save && save->isEnabled());
+        save->click();
+        QVERIFY(!dialog->windowTitle().endsWith('*'));
+        delete dialog;
+
+        Hephaestus::Construction::KitDefinition saved;
+        QVERIFY(Hephaestus::Construction::LoadKit(file, saved, error));
+        QCOMPARE(saved.pieces.size(), size_t(2));
+        QCOMPARE(saved.pieces[1].width, 1.5f);
+    }
+
     // Crouch (Ctrl) plus D or S must reach the game in Play, not the editor's Duplicate and Save.
     void runningGameClaimsEditorShortcutsInTheViewport() {
         Hephaestus::QtEditor::QtViewportWindow viewport;

@@ -84,6 +84,8 @@ namespace QtEditor {
 class EditorSystemUsage;
 class QtViewportWindow;
 class QtEditorEngine;
+class LevelCheckDialog;
+class PlaytestDialog;
 class AssetBrowserWidget;
 class AddActorsPanel;
 class CodeEditorPanel;
@@ -162,6 +164,10 @@ public:
 
     EditorAssetPipeline* GetAssetPipeline() { return m_assetPipeline.get(); }
     void rebuildSceneVisuals();
+    /// Reimports the imported pack in portableFolder (asking for the source file when it is not recorded or gone).
+    void reimportAssetPack(const QString& portableFolder);
+    /// Rebuilds placed copies of these prefabs and reloads these models after a pack was reimported.
+    void applyReimportedPack(const std::vector<std::string>& prefabs, const std::vector<std::string>& models);
     bool requestCloseOpenCharacter(const QString& absolutePath);
     EditorPluginHost* PluginHost() const { return m_pluginHost.get(); }
 
@@ -234,11 +240,19 @@ private:
     void resetInspectorComponent(const std::string& type);
     void removeInspectorComponent(const std::string& type);
     void bakeAllProbeVolumes();
+    void checkLevel();
+    void runBotPlaytest();
     void bakeSelectedProbeVolumes();
     void bakeProbeVolumes(const std::vector<entt::entity>& volumes);
     ComponentInspector* focusedComponentInspector() const;
     void handleDragDrop(const QString& assetPath, const QString& targetField);
     void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);
+    // Paints a dropped material on the construction face under dropPos (the whole shape with wholeShape), or puts
+    // it in the first material slot of the mesh there.
+    void handleViewportMaterialDrop(const QString& portablePath, const QPoint& dropPos, bool wholeShape);
+    void handleViewportKitDrop(const QString& portablePath, const QPoint& dropPos);
+    LevelCheckDialog* m_levelCheck = nullptr;
+    PlaytestDialog* m_playtest = nullptr;
     void syncPrefabOverridesForSelection();
     void updatePrefabInspectorUi();
     void decoratePrefabComponentInspector(QWidget* widget, const std::string& componentName);
@@ -361,6 +375,15 @@ private:
     QButtonGroup* m_modeButtons = nullptr;
     EditorMode m_mode = EditorMode::Default;
     QAction* m_playAction = nullptr;
+    bool m_playFromHereNext = false;
+    QAction* m_drawBlockAction = nullptr;
+    QAction* m_drawRoomAction = nullptr;
+    QAction* m_drawOpeningAction = nullptr;
+    QAction* m_drawWallAction = nullptr;
+    QAction* m_drawRampAction = nullptr;
+    QAction* m_measureWalkAction = nullptr;
+    QLabel* m_measureReadout = nullptr;
+    QAction* m_drawStairsAction = nullptr;
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;
     QAction* m_stepAction = nullptr;

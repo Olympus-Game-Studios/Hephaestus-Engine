@@ -102,6 +102,26 @@ bool TestEditorViewState(const fs::path& scratch)
     return ok;
 }
 
+bool TestSnapBoundsToNeighbours()
+{
+    using Hephaestus::SceneAuthoring::SnapBoundsToNeighbours;
+    bool ok = true;
+    const AABB block(Vec3(0, 0, 0), Vec3(2, 3, 2));
+    // A wall 0.13 m short of the block's side, and 0.07 m out of line with its back face.
+    const AABB wall(Vec3(-4.13f, 0, 0.07f), Vec3(-0.13f, 3, 0.27f));
+    const Vec3 offset = SnapBoundsToNeighbours(wall, {block}, 0.2f);
+    ok &= Check(Near(offset.x, 0.13f), "a near face moves onto the neighbour's face");
+    ok &= Check(Near(offset.z, -0.07f), "a nearly flush face lines up with the neighbour's");
+    ok &= Check(Near(offset.y, 0.0f), "already level, nothing moves up or down");
+    const AABB far(Vec3(-4.5f, 0, 0), Vec3(-0.5f, 3, 0.2f));
+    const Vec3 none = SnapBoundsToNeighbours(far, {block}, 0.2f);
+    ok &= Check(Near(none.x, 0.0f), "out of reach, nothing snaps");
+    const AABB elsewhere(Vec3(-4.13f, 0, 10.0f), Vec3(-0.13f, 3, 10.2f));
+    ok &= Check(Near(SnapBoundsToNeighbours(elsewhere, {block}, 0.2f).x, 0.0f),
+                "a box not beside the neighbour does not snap to it");
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -115,6 +135,7 @@ int main(int argc, char** argv)
     bool ok = TestSnapAndRaycast();
     ok &= TestParentAndDuplicate();
     ok &= TestEditorViewState(scratch);
+    ok &= TestSnapBoundsToNeighbours();
     if (ok) std::cout << "SceneAuthoringTests passed.\n";
     return ok ? 0 : 1;
 }

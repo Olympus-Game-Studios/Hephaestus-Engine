@@ -4,6 +4,7 @@
 #include "EditorDockTitleBar.h"
 #include "EditorAssetServices.h"
 #include "EditorUndoCommand.h"
+#include "../../Analysis/LevelChecks.h"
 #include "../../Assets/AssetIntake.h"
 #include "../../Assets/AssetPathPolicy.h"
 #include "../../Automation/PluginToolBridge.h"
@@ -13,8 +14,13 @@
 #include "../../Core/ProjectContext.h"
 #include "../MaterialEditor/MaterialNodeDefinitions.h"
 #include "../../Plugins/PluginSystem.h"
+#include "../../Construction/ConstructionSystem.h"
+#include "../../Navigation/NavMesh.h"
 #include "../../Scene/Components.h"
+#include "../../Scene/Entity.h"
+#include "../../Scripting/LuaScriptComponent.h"
 #include "../../Scene/Scene.h"
+#include "../../Scene/SceneAuthoring.h"
 #include <QAction>
 #include <QDockWidget>
 #include <QFileInfo>
@@ -34,6 +40,8 @@
 #include <cstring>
 #include <fstream>
 #include <ranges>
+#include <sstream>
+#include <locale>
 
 namespace Hephaestus::QtEditor {
 
@@ -97,7 +105,8 @@ QString HeaderButtonHiddenKey(const std::string& owner, const std::string& comma
 class EditorPluginHost::Context final : public Plugins::IPluginContext,
  public Plugins::ICommandService, public Plugins::IUIService, public Plugins::IAssetService,
  public Plugins::ISceneService, public Plugins::IUndoService, public Plugins::IProjectService,
- public Plugins::ISettingsService, public Plugins::IAutomationToolService, public Plugins::IMaterialNodeService {
+ public Plugins::ISettingsService, public Plugins::IAutomationToolService, public Plugins::IMaterialNodeService,
+ public Plugins::ILevelAnalysisService {
 public:
  Context(EditorPluginHost& h, Plugins::PluginManifest m):host(h),manifest(std::move(m)){}
  ~Context() override { host.RemoveOwner(manifest.id); }
@@ -108,6 +117,8 @@ public:
  Plugins::ISettingsService& Settings()override{return *this;}
  Plugins::IAutomationToolService* AutomationTools()override{return host.toolBridge_?this:nullptr;}
  Plugins::IMaterialNodeService* MaterialNodes()override{return this;}
+ Plugins::ILevelAnalysisService* LevelAnalysis()override{return this;}
+ bool RegisterCheck(const Plugins::LevelCheckDescriptor&d)override{return host.RegisterLevelCheck(manifest.id,d);}
  bool RegisterNode(const Plugins::MaterialNodeDescriptor&d)override{return host.RegisterMaterialNode(manifest.id,d);}
  bool RegisterTool(const Plugins::AutomationToolDescriptor&d)override{std::string e;return host.toolBridge_&&host.toolBridge_->Register(manifest.id,d,e);}
  bool CompleteCall(std::uint64_t id,bool ok,const char*json)override{return host.toolBridge_&&host.toolBridge_->Complete(id,ok,json);}
@@ -119,11 +130,13 @@ public:
  bool RegisterContextAction(const Plugins::ContextActionDescriptor&d)override{return host.RegisterContext(manifest.id,d);}
  bool ShowPanel(const char*id)override{return host.ShowPanel(id?id:"");}
  bool RegisterHeaderButton(const Plugins::HeaderButtonDescriptor&d)override{return host.RegisterHeaderButton(manifest,d);}
+ bool RegisterToolbarButton(const Plugins::ToolbarButtonDescriptor&d)override{return host.RegisterToolbarButton(manifest,d);}
  bool RegisterAssetType(const Plugins::AssetTypeDescriptor&d)override{return host.RegisterAssetType(manifest.id,d);}
  bool RegisterImporter(const Plugins::ImporterDescriptor&d)override{return host.RegisterImporter(manifest.id,d);}
  bool ImportAssetPack(const Plugins::AssetPackImportRequest&r,Plugins::AssetPackImportResult&out)override{return host.ImportAssetPack(r,out);}
  bool HasScene()const override{auto*c=host.editorContext_();return c&&c->HasActiveScene();}
  std::uint64_t CreatePrimitive(Plugins::PrimitiveKind k,const char*n)override{return host.CreatePrimitive(k,n);}
+ std::uint64_t CreatePrimitiveEx(const Plugins::PrimitiveRequest&r)override{return host.CreatePrimitiveEx(r);}
  bool DeleteEntity(std::uint64_t id)override{auto*c=host.editorContext_();if(!c||!c->HasActiveScene()||id==0)return false;auto&e=c->GetActiveScene()->GetRegistry();auto h=static_cast<entt::entity>(id-1);if(!e.valid(h))return false;c->GetActiveScene()->DestroyEntity(Entity(h,c->GetActiveScene()));c->MarkDirty();host.sceneChanged_();return true;}
  bool SelectEntity(std::uint64_t id)override{auto*c=host.editorContext_();if(!c||id==0)return false;c->SelectEntity(static_cast<entt::entity>(id-1));return true;}
  std::uint64_t Begin(const char*l)override{auto*c=host.editorContext_();if(!c||!c->HasActiveScene())return 0;EditorUndoManager::PushSnapshot(c,l?l:"Plugin edit");auto t=host.nextTransaction_++;host.transactions_.push_back({t,c});return t;}
@@ -287,6 +300,105 @@ QString EditorPluginHost::CustomAssetDisplayName(const QString&p)const{auto id=C
 QIcon EditorPluginHost::CustomAssetIcon(const QString&p)const{auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&!a->icon.empty()){auto*m=system_->FindManifest(a->owner);if(m)return QIcon(QString::fromStdString((m->root/a->icon).string()));}return{};}
 bool EditorPluginHost::OpenCustomAsset(const QString&p){auto id=CustomAssetTypeId(p);for(auto&a:assetTypes_)if(QString::fromStdString(a->id)==id&&a->open){bool ok=a->open(p.toUtf8().constData(),a->userData);if(ok)EditorAssetServices::Instance().Documents().Register(DocumentKind::Plugin,p.toStdString(),a->dirty&&a->dirty(p.toUtf8().constData(),a->userData));return ok;}return false;}
 std::uint64_t EditorPluginHost::CreatePrimitive(Plugins::PrimitiveKind k,const char*n){auto*c=editorContext_();if(!c||!c->HasActiveScene())return 0;Entity e=c->GetActiveScene()->CreateEntity(n&&*n?n:"Plugin Entity");if(k==Plugins::PrimitiveKind::Cube||k==Plugins::PrimitiveKind::Sphere||k==Plugins::PrimitiveKind::Plane){auto&m=e.AddComponent<MeshRendererComponent>();m.meshAssetPath=k==Plugins::PrimitiveKind::Cube?"builtin://Cube":k==Plugins::PrimitiveKind::Sphere?"builtin://Sphere":"builtin://Plane";}else if(k==Plugins::PrimitiveKind::PointLight)e.AddComponent<LightComponent>();c->SelectEntity(static_cast<entt::entity>(e));c->MarkDirty();sceneChanged_();return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e))+1;}
+bool EditorPluginHost::RegisterToolbarButton(const Plugins::PluginManifest& manifest,
+                                             const Plugins::ToolbarButtonDescriptor& d)
+{
+    if (d.structSize < sizeof(Plugins::ToolbarButtonDescriptor) || !d.commandId) {
+        return false;
+    }
+    QAction* action = FindCommand(d.commandId);
+    if (!action) {
+        return false;
+    }
+    if (d.iconPath && *d.iconPath) {
+        std::filesystem::path icon = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(d.iconPath)));
+        if (icon.is_relative()) {
+            icon = manifest.root / icon;
+        }
+        action->setIcon(Theme::IconFromFile(QString::fromStdU16String(icon.u16string())));
+    }
+    const QString description = QString::fromUtf8(d.toolTip ? d.toolTip : "");
+    action->setToolTip(description.isEmpty()
+        ? action->text()
+        : QStringLiteral("<b>%1</b><br>%2").arg(action->text().toHtmlEscaped(), description.toHtmlEscaped()));
+    Plugins::ToolbarActionDescriptor row;
+    row.commandId = d.commandId;
+    return RegisterToolbar(manifest.id, row);
+}
+
+std::uint64_t EditorPluginHost::CreatePrimitiveEx(const Plugins::PrimitiveRequest& r)
+{
+    using Plugins::PrimitiveKind;
+    auto* c = editorContext_();
+    if (r.structSize < sizeof(Plugins::PrimitiveRequest) || !c || !c->HasActiveScene()) {
+        return 0;
+    }
+    Scene& scene = *c->GetActiveScene();
+    const Vec3 size(std::max(r.size[0], 0.01f), std::max(r.size[1], 0.01f), std::max(r.size[2], 0.01f));
+
+    // On whatever is under the middle of the view, or the ground, or a few metres ahead.
+    Vec3 base(0.0f, 0.0f, 0.0f);
+    if (r.placeInView) {
+        const EditorCamera& cam = c->GetCamera();
+        const float yaw = cam.yawDeg * 3.14159265f / 180.0f;
+        const float pitch = cam.pitchDeg * 3.14159265f / 180.0f;
+        const Vec3 eye(cam.positionX, cam.positionY, cam.positionZ);
+        const Vec3 forward = vnorm(Vec3(std::cos(pitch) * std::cos(yaw), std::sin(pitch), std::cos(pitch) * std::sin(yaw)));
+        SceneAuthoring::SceneRaycastHit hit;
+        if (SceneAuthoring::RaycastBounds(scene, Ray(eye, forward), hit) && hit.distance < 200.0f) {
+            base = hit.point;
+        } else if (forward.y < -0.01f && -eye.y / forward.y < 200.0f) {
+            base = vadd(eye, vscale(forward, -eye.y / forward.y));
+        } else {
+            base = vadd(eye, vscale(forward, 6.0f));
+            base.y = 0.0f;
+        }
+        const auto& snap = c->GetSnapSettings();
+        const float step = snap.enableSnap && snap.translateSnap > 0.0f ? snap.translateSnap : 0.25f;
+        base.x = std::round(base.x / step) * step;
+        base.z = std::round(base.z / step) * step;
+    }
+
+    if (r.kind == PrimitiveKind::PointLight || r.kind == PrimitiveKind::Empty) {
+        Entity e = scene.CreateEntity(r.name && *r.name ? r.name : r.kind == PrimitiveKind::PointLight ? "Point Light" : "Entity");
+        e.GetComponent<TransformComponent>().position = base;
+        if (r.kind == PrimitiveKind::PointLight) {
+            e.AddComponent<LightComponent>();
+        }
+        c->SelectEntity(static_cast<entt::entity>(e));
+        c->MarkDirty();
+        sceneChanged_();
+        return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e)) + 1;
+    }
+
+    // Every primitive is a construction shape, so its size, segments, collision and mode live on the entity.
+    ConstructionShapeComponent shape;
+    shape.recipe = r.kind == PrimitiveKind::Sphere ? Construction::Recipe::Sphere
+        : r.kind == PrimitiveKind::Plane ? Construction::Recipe::Plane
+        : r.kind == PrimitiveKind::Cylinder ? Construction::Recipe::Cylinder : Construction::Recipe::Box;
+    shape.box.width = size.x;
+    shape.box.height = size.y;
+    shape.box.depth = size.z;
+    shape.collision = r.collision ? Construction::CollisionMode::Solid : Construction::CollisionMode::None;
+    const bool subtract = shape.recipe == Construction::Recipe::Box && r.operation == Plugins::PrimitiveOperation::Subtract;
+    shape.role = subtract ? "cutter" : shape.recipe == Construction::Recipe::Box ? "block" : Construction::RecipeName(shape.recipe);
+    if (subtract) {
+        // Centred on the surface under the view, so it cuts into what it lands on.
+        base.y -= size.y * 0.5f;
+    }
+    shape.operation = Construction::Operation::Add;
+    const std::string fallbackName = subtract ? "Subtract" : Construction::DisplayName(shape);
+    Entity e = scene.CreateEntity(r.name && *r.name ? std::string(r.name) : fallbackName);
+    e.GetComponent<TransformComponent>().position = base;
+    e.AddComponent<ConstructionShapeComponent>(shape);
+    Construction::ConstructionSystem::SetOperation(scene, e,
+        subtract ? Construction::Operation::Subtract : Construction::Operation::Add);
+    c->SelectEntity(static_cast<entt::entity>(e));
+    c->MarkDirty();
+    sceneChanged_();
+    return static_cast<std::uint64_t>(static_cast<std::uint32_t>(e)) + 1;
+}
+
 bool EditorPluginHost::RegisterMaterialNode(const std::string& owner, const Plugins::MaterialNodeDescriptor& descriptor) {
     if (descriptor.structSize < sizeof(Plugins::MaterialNodeDescriptor) || !descriptor.typeName ||
         (descriptor.inputCount > 0 && !descriptor.inputs) || (descriptor.outputCount > 0 && !descriptor.outputs)) {
@@ -323,7 +435,150 @@ bool EditorPluginHost::RegisterMaterialNode(const std::string& owner, const Plug
     return true;
 }
 
-void EditorPluginHost::RemoveOwner(const std::string&o){MaterialEditor::UnregisterCustomNodes(o);if(toolBridge_)toolBridge_->RemoveOwner(o);auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=headerButtons_.begin();i!=headerButtons_.end();)if((*i)->owner==o){delete (*i)->button.data();i=headerButtons_.erase(i);}else++i;for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
+namespace {
+// The engine's view of the level, as a plugin's level check sees it during one run.
+class LevelCheckRun final : public Plugins::ILevelCheckRun {
+public:
+    LevelCheckRun(const Analysis::LevelCheckContext& context, std::vector<Analysis::LevelProblem>& problems)
+        : context_(context), problems_(problems)
+    {
+        const Analysis::TraversalMetrics& m = context.metrics;
+        metrics_.height = m.height;
+        metrics_.radius = m.radius;
+        metrics_.stepHeight = m.stepHeight;
+        metrics_.maxSlopeDegrees = m.maxSlopeDegrees;
+        metrics_.jumpHeight = m.jumpHeight;
+        metrics_.walkSpeed = m.walkSpeed;
+        metrics_.fromCharacters = m.fromControllers;
+        Scene& scene = context.scene;
+        for (auto entity : scene.GetRegistry().view<TagComponent>()) {
+            if (scene.GetRegistry().all_of<ConstructionGeneratedComponent>(entity)) continue;
+            const Vec3 p = Mat4::TransformPoint(scene.GetWorldTransform(Entity(entity, &scene)), Vec3(0.0f, 0.0f, 0.0f));
+            const auto* script = scene.GetRegistry().try_get<LuaScriptComponent>(entity);
+            entities_.push_back({static_cast<std::uint64_t>(static_cast<std::uint32_t>(entity)) + 1,
+                                 scene.GetRegistry().get<TagComponent>(entity).tag, p,
+                                 script ? script->scriptPath : std::string()});
+        }
+    }
+    const Plugins::LevelMetrics& Metrics() const override { return metrics_; }
+    bool Raycast(const float from[3], const float to[3], float hit[3]) const override
+    {
+        Vec3 point;
+        if (!from || !to || !hit ||
+            !Analysis::RaycastLevel(context_.geometry, Vec3(from[0], from[1], from[2]), Vec3(to[0], to[1], to[2]), point)) {
+            return false;
+        }
+        hit[0] = point.x;
+        hit[1] = point.y;
+        hit[2] = point.z;
+        return true;
+    }
+    bool WalkDistance(const float from[3], const float to[3], float* metres) const override
+    {
+        if (!from || !to) return false;
+        const Analysis::WalkRoute route = Analysis::MeasureWalk(context_.navMesh, context_.metrics,
+                                                                Vec3(from[0], from[1], from[2]), Vec3(to[0], to[1], to[2]));
+        if (!route.complete) return false;
+        if (metres) *metres = route.length;
+        return true;
+    }
+    std::uint32_t EntityCount() const override { return static_cast<std::uint32_t>(entities_.size()); }
+    bool GetEntity(std::uint32_t index, Plugins::LevelEntityInfo& out) const override
+    {
+        if (index >= entities_.size() || out.structSize < sizeof(Plugins::LevelEntityInfo)) return false;
+        const Named& named = entities_[index];
+        out.id = named.id;
+        out.name = named.name.c_str();
+        out.position[0] = named.position.x;
+        out.position[1] = named.position.y;
+        out.position[2] = named.position.z;
+        out.script = named.script.empty() ? nullptr : named.script.c_str();
+        return true;
+    }
+    bool ClosestWalkable(const float point[3], float out[3]) const override
+    {
+        Vec3 found;
+        if (!point || !out || !context_.navMesh.ClosestPoint(Vec3(point[0], point[1], point[2]), found)) return false;
+        out[0] = found.x;
+        out[1] = found.y;
+        out[2] = found.z;
+        return true;
+    }
+    bool GetScriptValue(std::uint64_t entityId, const char* name, char* out, std::size_t outSize) const override
+    {
+        const auto entity = static_cast<entt::entity>(static_cast<std::uint32_t>(entityId - 1));
+        const auto* script = entityId != 0 && name && out && outSize > 0 && context_.scene.GetRegistry().valid(entity)
+            ? context_.scene.GetRegistry().try_get<LuaScriptComponent>(entity) : nullptr;
+        const auto found = script ? script->variables.find(name) : decltype(script->variables)::const_iterator{};
+        if (!script || found == script->variables.end()) return false;
+        std::string text;
+        if (const std::string* value = found->second.AsString()) {
+            text = *value;
+        } else if (const bool* flag = std::get_if<bool>(&found->second.value)) {
+            text = *flag ? "true" : "false";
+        } else if (const double* number = std::get_if<double>(&found->second.value)) {
+            std::ostringstream stream;
+            stream.imbue(std::locale::classic());
+            stream << *number;
+            text = stream.str();
+        } else {
+            return false;
+        }
+        if (text.size() + 1 > outSize) return false;
+        std::memcpy(out, text.c_str(), text.size() + 1);
+        return true;
+    }
+    void Report(const Plugins::LevelProblemDescriptor& problem) override
+    {
+        if (problem.structSize < sizeof(Plugins::LevelProblemDescriptor) || !problem.message) return;
+        Analysis::LevelProblem out;
+        out.check = problem.check ? problem.check : "";
+        out.severity = problem.severity == Plugins::LevelProblemSeverity::Error ? Analysis::Severity::Error
+            : problem.severity == Plugins::LevelProblemSeverity::Info ? Analysis::Severity::Info
+                                                                      : Analysis::Severity::Warning;
+        out.message = problem.message;
+        out.position = Vec3(problem.position[0], problem.position[1], problem.position[2]);
+        const auto entity = static_cast<entt::entity>(static_cast<std::uint32_t>(problem.entityId - 1));
+        if (problem.entityId != 0 && context_.scene.GetRegistry().valid(entity)) out.entity = entity;
+        problems_.push_back(std::move(out));
+    }
+
+private:
+    struct Named {
+        std::uint64_t id;
+        std::string name;
+        Vec3 position;
+        std::string script;
+    };
+    const Analysis::LevelCheckContext& context_;
+    std::vector<Analysis::LevelProblem>& problems_;
+    Plugins::LevelMetrics metrics_;
+    std::vector<Named> entities_;
+};
+} // namespace
+
+bool EditorPluginHost::RegisterLevelCheck(const std::string& owner, const Plugins::LevelCheckDescriptor& descriptor) {
+    if (descriptor.structSize < sizeof(Plugins::LevelCheckDescriptor) || !descriptor.id || !descriptor.run) {
+        return false;
+    }
+    Analysis::LevelCheck check;
+    check.owner = owner;
+    check.id = descriptor.id;
+    check.name = descriptor.displayName ? descriptor.displayName : descriptor.id;
+    check.run = [run = descriptor.run, userData = descriptor.userData](const Analysis::LevelCheckContext& context,
+                                                                       std::vector<Analysis::LevelProblem>& problems) {
+        LevelCheckRun session(context, problems);
+        run(session, userData);
+    };
+    std::string error;
+    if (!Analysis::RegisterLevelCheck(std::move(check), error)) {
+        EngineLog::Warn("Plugin " + owner + ": " + error);
+        return false;
+    }
+    return true;
+}
+
+void EditorPluginHost::RemoveOwner(const std::string&o){MaterialEditor::UnregisterCustomNodes(o);Analysis::UnregisterLevelChecks(o);if(toolBridge_)toolBridge_->RemoveOwner(o);auto&docs=EditorAssetServices::Instance().Documents();for(const auto&doc:docs.ListAll())if(doc.kind==DocumentKind::Plugin)for(auto&a:assetTypes_)if(a->owner==o&&QString::fromStdString(a->extension).mid(1)==QFileInfo(QString::fromStdString(doc.portablePath)).suffix().toLower()){if(a->close)a->close(doc.portablePath.c_str(),a->userData);docs.Unregister(doc.portablePath);break;}for(auto i=headerButtons_.begin();i!=headerButtons_.end();)if((*i)->owner==o){delete (*i)->button.data();i=headerButtons_.erase(i);}else++i;for(auto i=panels_.begin();i!=panels_.end();)if(*i&&(*i)->property("hpPluginOwner").toString()==QString::fromStdString(o)){delete *i;i=panels_.erase(i);}else++i;for(auto i=commands_.begin();i!=commands_.end();)if((*i)->owner==o){delete(*i)->action;i=commands_.erase(i);}else++i;std::erase_if(assetTypes_,[&](auto&x){return x->owner==o;});std::erase_if(importers_,[&](auto&x){return x->owner==o;});std::erase_if(contextActions_,[&](auto&x){return x->owner==o;});std::erase_if(settings_,[&](auto&x){return x->owner==o;});}
 
 } // namespace Hephaestus::QtEditor
 #endif

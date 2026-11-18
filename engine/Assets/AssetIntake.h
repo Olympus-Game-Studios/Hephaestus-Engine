@@ -43,6 +43,16 @@ class AssetIntake {
 public:
     static bool Import(const AssetIntakeRequest& request, AssetIntakeResult& outResult, std::string& outError);
 
+    /// Imports a pack again into the folder it was imported to, from source or else the source it was imported from
+    /// (import.json), replacing its models, materials and prefabs in place. Prefabs keep their guid and the ids of
+    /// nodes whose names match, so placed copies, their overrides and nested links pick up the new version. Files the
+    /// new version no longer has are left alone.
+    static bool Reimport(const std::filesystem::path& projectRoot, const std::string& folder,
+                         const std::filesystem::path& source, AssetIntakeResult& outResult, std::string& outError);
+
+    /// The source a pack folder was imported from, or empty when the folder has no import.json.
+    static std::filesystem::path RecordedSource(const std::filesystem::path& projectRoot, const std::string& folder);
+
     /// Rewrites assets/scripts/ImportedCredits.lua from every assets/**/credits.json.
     static bool RegenerateCredits(const std::filesystem::path& projectRoot, std::string& outError);
 

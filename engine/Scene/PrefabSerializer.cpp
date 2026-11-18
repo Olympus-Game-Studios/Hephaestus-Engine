@@ -1,5 +1,7 @@
 #include "PrefabSerializer.h"
 
+#include "PrefabComponentIO.h"
+
 #include <fstream>
 #include <iomanip>
 #include <locale>
@@ -326,6 +328,19 @@ bool PrefabSerializer::DeserializeFromString(PrefabAsset& asset, const std::stri
             }
         }
 
+        if (const JsonValue* prefabValue = nodeValue.Find("prefabPath"); prefabValue && prefabValue->IsString()) {
+            node.prefabPath = prefabValue->AsString();
+            if (const JsonValue* overridesValue = nodeValue.Find("overrides")) {
+                PrefabComponentIO::NodeOverridesFromJson(*overridesValue, node.nestedOverrides);
+            }
+        }
+        if (const JsonValue* fromValue = nodeValue.Find("nestedFrom"); fromValue && fromValue->IsString()) {
+            node.nestedFrom = fromValue->AsString();
+        }
+        if (const JsonValue* nestedIdValue = nodeValue.Find("nestedNodeId"); nestedIdValue && nestedIdValue->IsString()) {
+            node.nestedNodeId = nestedIdValue->AsString();
+        }
+
         if (const JsonValue* transformValue = nodeValue.Find("transform")) {
             if (transformValue->IsObject()) {
                 if (const JsonValue* posValue = transformValue->Find("position")) {
@@ -452,6 +467,16 @@ std::string PrefabSerializer::SerializeToString(const PrefabAsset& asset) {
             out << "      \"parentId\": null,\n";
         } else {
             out << "      \"parentId\": \"" << EscapeString(node.parentId) << "\",\n";
+        }
+        if (!node.prefabPath.empty()) {
+            out << "      \"prefabPath\": \"" << EscapeString(node.prefabPath) << "\",\n";
+            out << "      \"overrides\": ";
+            WriteJsonValue(out, PrefabComponentIO::NodeOverridesToJson(node.nestedOverrides), 6);
+            out << ",\n";
+        }
+        if (!node.nestedFrom.empty()) {
+            out << "      \"nestedFrom\": \"" << EscapeString(node.nestedFrom) << "\",\n";
+            out << "      \"nestedNodeId\": \"" << EscapeString(node.nestedNodeId) << "\",\n";
         }
         out << "      \"transform\": {\n";
         out << "        \"position\": " << FormatVec3(node.localTransform.position) << ",\n";

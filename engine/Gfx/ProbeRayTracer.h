@@ -28,6 +28,8 @@ class ProbeRayTracer {
 public:
     bool Init(VulkanDevice* device);
     void Shutdown();
+    // Destroys the acceleration structure built for a mesh vertex buffer, once no frame in flight can use it.
+    void ForgetMesh(VkBuffer vertexBuffer);
     bool Ready() const { return m_pipeline != VK_NULL_HANDLE; }
 
     bool CreateSwapchainResources(uint32_t imageCount);

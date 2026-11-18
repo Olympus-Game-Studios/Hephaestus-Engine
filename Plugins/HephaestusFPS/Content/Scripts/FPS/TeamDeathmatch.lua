@@ -47,6 +47,19 @@ local shownCountdown = nil
 local setup = {} -- the menu's match setup, when it started this one
 
 local PLAYER = "player"
+-- A bot playtest (the editor's Build > Run Bot Playtest): bots fill both teams, the player sits out unseen and
+-- unhurt, the match never ends, and kills, deaths and positions go to the playtest heatmaps.
+local playtest = false
+local nextTrafficSample = 0
+local TRAFFIC_SECONDS = 1
+
+local function positionOf(entity)
+    if not entity or not entity:IsValid() then
+        return nil
+    end
+    local transform = entity:GetTransform()
+    return transform and transform:GetWorldPosition()
+end
 
 local function random()
     rng = (rng * 1103515245 + 12345) % 2147483648
@@ -150,14 +163,21 @@ local function startMatch()
     local names = { split(friendlyNames), split(enemyNames) }
     local prefabs = { friendlyPrefab, enemyPrefab }
     local player = Registry.player
-    soldiers[PLAYER] = { id = PLAYER, team = player.team or 1, name = "You", entity = player.entity, key = player.key }
-    byKey[player.key] = PLAYER
-    Match.join(state, PLAYER, "You", soldiers[PLAYER].team)
+    local playerTeam = player.team or 1
+    if playtest then
+        Registry.combatants[player.key] = nil
+        Health.setInvulnerable(player.entity, true)
+    else
+        soldiers[PLAYER] = { id = PLAYER, team = playerTeam, name = "You", entity = player.entity, key = player.key }
+        byKey[player.key] = PLAYER
+        Match.join(state, PLAYER, "You", playerTeam)
+    end
     for team = 1, 2 do
-        local playerTeam = team == soldiers[PLAYER].team
         local count, difficulty = setup.enemyBots or teamSize, setup.enemyDifficulty
-        if playerTeam then
+        if team == playerTeam and not playtest then
             count, difficulty = setup.friendlyBots or teamSize - 1, setup.friendlyDifficulty
+        elseif team == playerTeam then
+            count, difficulty = setup.friendlyBots or teamSize, setup.friendlyDifficulty
         end
         -- The last few bots of each team are snipers (FPS.AI.Roles), a few before them shotgunners, the rest
         -- riflemen.
@@ -250,6 +270,12 @@ function onAwake()
     local routes = parseRoutes(routePoints)
     Registry.routes = #routes > 0 and { points = routes, chance = routeChance } or nil
     rng = (Registry.key(this) or 1) * 48271 % 2147483647 + 1
+    playtest = Playtest ~= nil and Playtest.isRunning()
+    nextTrafficSample = 0
+    if playtest then
+        scoreLimit = math.huge
+        timeLimitMinutes = math.huge
+    end
     local names = split(teamNames)
     MatchHud.reset()
     MatchHud.mount({ names[1] or "BLUE", names[2] or "RED" })
@@ -278,6 +304,15 @@ function onUpdate(dt)
         return
     end
     local winner = Match.step(state, dt)
+    if playtest and state.elapsed >= nextTrafficSample then
+        nextTrafficSample = state.elapsed + TRAFFIC_SECONDS
+        for _, soldier in pairs(soldiers) do
+            local p = positionOf(soldier.entity)
+            if p then
+                Playtest.record("traffic", p, soldier.team)
+            end
+        end
+    end
     for _, soldier in pairs(soldiers) do
         if soldier.respawnAt and state.elapsed >= soldier.respawnAt then
             if soldier.id == PLAYER then
@@ -315,7 +350,18 @@ function onCombatantDeath(victim, killer)
     if not soldier then
         return
     end
-    Match.kill(state, id, killer and byKey[Registry.key(killer)] or nil)
+    local killerId = killer and byKey[Registry.key(killer)] or nil
+    if playtest then
+        local where = positionOf(victim)
+        if where then
+            Playtest.record("death", where, soldier.team)
+        end
+        local from = killerId and positionOf(killer)
+        if from then
+            Playtest.record("kill", from, soldiers[killerId].team)
+        end
+    end
+    Match.kill(state, id, killerId)
     if soldier.id ~= PLAYER then
         byKey[soldier.key] = nil
         soldier.entity, soldier.key = nil, nil

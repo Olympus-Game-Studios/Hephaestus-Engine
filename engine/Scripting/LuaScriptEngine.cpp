@@ -5,6 +5,8 @@
 #include "LuaDebugger.h"
 #include "../Audio/AudioEngine.h"
 #include "../Scene/ParticleSimulation.h"
+#include "../Analysis/LevelChecks.h"
+#include "../Analysis/Playtest.h"
 #include "../Navigation/NavMesh.h"
 #include "../UI/HephaestusUI/UIContext.h"
 #include "../UI/HephaestusUI/Rendering/HUIGeometryBuilder.h"
@@ -590,6 +592,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
     m_SceneReloadRequested = false;
     m_ActiveUpdateOrder.clear();
     m_UpdatingScripts = true;
+    Hephaestus::Analysis::AdvancePlaytestClock(deltaTime);
 
     auto& registry = scene.GetRegistry();
     std::unordered_set<LuaScriptInstanceKey, LuaScriptInstanceKeyHash> activeKeys;
@@ -9249,21 +9252,23 @@ int LuaScriptEngine::Lua_Scene_Load(lua_State* L) {
 Hephaestus::Navigation::NavMesh* LuaScriptEngine::EnsureNavMesh() {
     if (!m_NavBuildAttempted && m_Scene) {
         m_NavBuildAttempted = true;
-        int skipped = 0;
-        auto geometry = Hephaestus::Navigation::CollectSceneGeometry(*m_Scene, &skipped);
-        const Hephaestus::Navigation::NavBuildSettings settings;
-        const int links = Hephaestus::Navigation::AddVaultLinks(*m_Scene, settings, geometry);
-        auto mesh = std::make_unique<Hephaestus::Navigation::NavMesh>();
         std::string error;
-        if (mesh->Build(geometry, settings, error)) {
+        Hephaestus::Navigation::NavUpdateStats stats;
+        Hephaestus::Navigation::NavGeometry geometry;
+        // The editor's level tools share this navmesh, so only tiles changed since they last used it are rebuilt.
+        int skipped = 0;
+        m_NavMesh = Hephaestus::Analysis::LevelNavMesh(*m_Scene, m_ProjectRoot, error, &stats, &geometry, &skipped);
+        if (m_NavMesh) {
+            const Hephaestus::Navigation::NavBuildSettings settings = Hephaestus::Navigation::SettingsForScene(*m_Scene);
             Hephaestus::EngineLog::Write(
                 Hephaestus::EngineLogLevel::Info,
-                "Navmesh built: " + std::to_string(mesh->PolygonCount()) + " polygons from " +
-                    std::to_string(geometry.triangles.size() / 3) + " triangles, " + std::to_string(links) +
-                    " vault links" +
-                    (skipped ? ", " + std::to_string(skipped) + " non-box static shapes left out" : ""),
+                "Navmesh ready: " + std::to_string(m_NavMesh->PolygonCount()) + " polygons from " +
+                    std::to_string(geometry.triangles.size() / 3) + " triangles, " +
+                    std::to_string(geometry.links.size()) + " vault links, " + std::to_string(stats.tilesBuilt) +
+                    " tiles built and " + std::to_string(stats.tilesKept) + " reused, agent radius " +
+                    std::to_string(settings.agentRadius) + " m, step " + std::to_string(settings.agentMaxClimb) + " m" +
+                    (skipped ? ", " + std::to_string(skipped) + " mesh collision models that could not be loaded left out" : ""),
                 "Navigation");
-            m_NavMesh = std::move(mesh);
         } else {
             Hephaestus::EngineLog::Write(Hephaestus::EngineLogLevel::Warning, "Navmesh not built: " + error,
                                          "Navigation");
@@ -9286,6 +9291,27 @@ void LuaScriptEngine::RegisterNavBindings() {
     lua_pushcfunction(m_State, Lua_Nav_randomPoint);
     lua_setfield(m_State, -2, "randomPoint");
     lua_setglobal(m_State, "Nav");
+
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, [](lua_State* L) -> int {
+        lua_pushboolean(L, Hephaestus::Analysis::IsPlaytestRunning());
+        return 1;
+    });
+    lua_setfield(m_State, -2, "isRunning");
+    // Playtest.record(kind, position, team): kind is "kill", "death" or "traffic".
+    lua_pushcfunction(m_State, [](lua_State* L) -> int {
+        LuaScriptEngine* engine = GetInstance();
+        Hephaestus::Analysis::PlaytestEvent event;
+        if (!engine || !lua_isstring(L, 1) || !engine->ReadNavPoint(L, 2, event.position)) {
+            return luaL_error(L, "Playtest.record expects (kind, {x, y, z}, team)");
+        }
+        event.kind = lua_tostring(L, 1);
+        event.team = static_cast<int>(luaL_optinteger(L, 3, 0));
+        Hephaestus::Analysis::RecordPlaytestEvent(std::move(event));
+        return 0;
+    });
+    lua_setfield(m_State, -2, "record");
+    lua_setglobal(m_State, "Playtest");
 #endif
 }
 

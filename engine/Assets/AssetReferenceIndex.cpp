@@ -37,7 +37,8 @@ bool StartsWithInsensitive(const std::string& value, const std::string& prefix) 
 
 bool IsIndexableExtension(const std::string& ext) {
     return ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" ||
-           ext == ".hui" || ext == ".hpcharacter" || ext == ".heproject" || ext == ".json" || ext == ".hpmesh";
+           ext == ".hui" || ext == ".hpcharacter" || ext == ".heproject" || ext == ".json" || ext == ".hpmesh" ||
+           ext == ".hpkit";
 }
 
 bool LooksLikeAssetPath(const std::string& value) {
@@ -90,7 +91,10 @@ AssetReferenceFieldKind FieldKindFromKey(const std::string& key) {
         key == "skyboxPath" || key == "skybox") {
         return AssetReferenceFieldKind::HdriPath;
     }
-    if (key == "prefabPath" || key == "blueprintPath") {
+    if (key == "kit") {
+        return AssetReferenceFieldKind::KitPath;
+    }
+    if (key == "prefabPath" || key == "blueprintPath" || key == "prefab") {
         return AssetReferenceFieldKind::PrefabPath;
     }
     if (key == "characterPath" || key == "sharedRig") {
@@ -127,6 +131,12 @@ bool IsKnownPathKey(const std::string& key) {
 bool AllowKeyForExtension(const std::string& ext, const std::string& key) {
     if (key == "source" || key == "material" || key == "sharedRig") {
         return ext == ".hpcharacter";
+    }
+    if (key == "prefab") {
+        return ext == ".hpkit";
+    }
+    if (key == "kit") {
+        return ext == ".hpscene" || ext == ".hpprefab";
     }
     if (key == "characterPath") {
         return ext == ".hpscene" || ext == ".hpprefab";
@@ -549,6 +559,8 @@ const char* ToString(AssetReferenceFieldKind kind) {
         return "CharacterPath";
     case AssetReferenceFieldKind::NestedAssetPath:
         return "NestedAssetPath";
+    case AssetReferenceFieldKind::KitPath:
+        return "KitPath";
     case AssetReferenceFieldKind::Unknown:
     default:
         return "Unknown";
@@ -721,7 +733,7 @@ void AssetReferenceIndex::ScanProject(const std::filesystem::path& projectRoot) 
             const auto& path = it->path();
             const std::string ext = ExtensionLower(path);
             if (ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" ||
-                ext == ".hui" || ext == ".hpcharacter" || ext == ".hpmesh") {
+                ext == ".hui" || ext == ".hpcharacter" || ext == ".hpmesh" || ext == ".hpkit") {
                 scanDocumentUnlocked(path);
             }
         }

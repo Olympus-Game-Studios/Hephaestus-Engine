@@ -78,10 +78,13 @@ void RegisterPlayAutomation(AutomationService& service)
         }, PlayRequirement::Any, HostMask::Editor | HostMask::Runtime));
 
     registerTool(Definition(
-        "play.start", "Start Play Mode (snapshots the scene and runs scripts).",
-        ObjectSchema(), [](ToolContext& context, const Json&) -> ToolOutcome {
+        "play.start",
+        "Start Play Mode (snapshots the scene and runs scripts). fromHere puts the player at the editor camera.",
+        ObjectSchema({{"fromHere", {{"type", "boolean"}}}}), [](ToolContext& context, const Json& arguments) -> ToolOutcome {
             std::string error;
-            if (!context.Backend().StartPlayMode(error)) {
+            const bool fromHere = arguments.contains("fromHere") && arguments["fromHere"].is_boolean() &&
+                                  arguments["fromHere"].get<bool>();
+            if (!(fromHere ? context.Backend().StartPlayModeFromHere(error) : context.Backend().StartPlayMode(error))) {
                 return Failure(ErrorCode::ToolUnavailable, std::move(error));
             }
             return ToolResult::Success({{"state", "playing"}});

@@ -1,5 +1,8 @@
 #include "NavMesh.h"
 
+#include "../Assets/MeshGeometryCache.h"
+#include "../Scene/CharacterComponent.h"
+#include "../Scene/CharacterControllerComponent.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
@@ -11,7 +14,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <memory>
+#include <unordered_map>
 
 namespace Hephaestus::Navigation {
 namespace {
@@ -19,6 +25,9 @@ namespace {
 constexpr int kMaxPathPolys = 256;
 constexpr unsigned short kWalkableFlag = 1;
 constexpr unsigned char kVaultArea = 1;
+// Cells along each side of a navmesh tile: 38 m at the default 0.15 m cell, so a tile stays far below Recast's
+// 2^24 spans per heightfield however large the level.
+constexpr int kTileCells = 256;
 
 struct HeightfieldDeleter { void operator()(rcHeightfield* p) const { rcFreeHeightField(p); } };
 struct CompactDeleter { void operator()(rcCompactHeightfield* p) const { rcFreeCompactHeightfield(p); } };
@@ -41,6 +50,7 @@ float NextRandom()
 
 void NavGeometry::AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3& offset)
 {
+    pieces.push_back({static_cast<int>(triangles.size() / 3), true});
     const int base = static_cast<int>(vertices.size() / 3);
     for (int i = 0; i < 8; ++i) {
         const Vec3 local(offset.x + ((i & 1) ? halfExtents.x : -halfExtents.x),
@@ -64,27 +74,231 @@ void NavGeometry::AddBox(const Mat4& world, const Vec3& halfExtents, const Vec3&
     }
 }
 
-NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes)
+void NavGeometry::AddCylinder(const Mat4& world, float radius, float height, const Vec3& offset)
+{
+    constexpr int kSides = 12;
+    pieces.push_back({static_cast<int>(triangles.size() / 3), true});
+    const int base = static_cast<int>(vertices.size() / 3);
+    for (int i = 0; i < kSides; ++i) {
+        const float a = 6.28318531f * static_cast<float>(i) / static_cast<float>(kSides);
+        for (float y : {-0.5f * height, 0.5f * height}) {
+            const Vec3 p = Mat4::TransformPoint(world, Vec3(offset.x + radius * std::cos(a), offset.y + y,
+                                                            offset.z + radius * std::sin(a)));
+            vertices.insert(vertices.end(), {p.x, p.y, p.z});
+        }
+    }
+    // Vertex 2i is the bottom of side i, 2i + 1 its top; angles run from +x towards +z.
+    for (int i = 0; i < kSides; ++i) {
+        const int b0 = base + 2 * i;
+        const int b1 = base + 2 * ((i + 1) % kSides);
+        triangles.insert(triangles.end(), {b0, b0 + 1, b1 + 1, b0, b1 + 1, b1});
+        if (i >= 1 && i + 1 < kSides) {
+            triangles.insert(triangles.end(), {base + 1, b1 + 1, b0 + 1});  // top, facing +y
+            triangles.insert(triangles.end(), {base, b0, b1});              // bottom
+        }
+    }
+}
+
+void NavGeometry::AddSphere(const Mat4& world, float radius, const Vec3& offset)
+{
+    constexpr int kSegments = 12;
+    constexpr int kRings = 6;
+    std::vector<Vec3> points;
+    for (int r = 0; r <= kRings; ++r) {
+        const float phi = 3.14159265f * static_cast<float>(r) / static_cast<float>(kRings);
+        for (int s = 0; s < (r == 0 || r == kRings ? 1 : kSegments); ++s) {
+            const float theta = 6.28318531f * static_cast<float>(s) / static_cast<float>(kSegments);
+            points.push_back(Vec3(radius * std::sin(phi) * std::cos(theta), -radius * std::cos(phi),
+                                  radius * std::sin(phi) * std::sin(theta)));
+        }
+    }
+    AddConvexHull(world, points, offset);
+}
+
+void NavGeometry::AddConvexHull(const Mat4& world, const std::vector<Vec3>& points, const Vec3& offset)
+{
+    if (points.size() < 4) {
+        return;
+    }
+    if (points.size() > 64) {
+        Vec3 mn = points[0];
+        Vec3 mx = points[0];
+        for (const Vec3& p : points) {
+            mn = Vec3(std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z));
+            mx = Vec3(std::max(mx.x, p.x), std::max(mx.y, p.y), std::max(mx.z, p.z));
+        }
+        AddBox(world, vscale(vsub(mx, mn), 0.5f), vadd(offset, vscale(vadd(mn, mx), 0.5f)));
+        return;
+    }
+    pieces.push_back({static_cast<int>(triangles.size() / 3), true});
+    const int base = static_cast<int>(vertices.size() / 3);
+    std::vector<Vec3> worldPoints;
+    for (const Vec3& local : points) {
+        const Vec3 p = Mat4::TransformPoint(world, vadd(local, offset));
+        worldPoints.push_back(p);
+        vertices.insert(vertices.end(), {p.x, p.y, p.z});
+    }
+    // Every triangle of points with all the others on one side is part of the hull; it is wound so that
+    // cross(v1 - v0, v2 - v0) faces out, which is how Recast tells floors from ceilings.
+    const int n = static_cast<int>(worldPoints.size());
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            for (int k = j + 1; k < n; ++k) {
+                const Vec3 normal = vcross(vsub(worldPoints[j], worldPoints[i]), vsub(worldPoints[k], worldPoints[i]));
+                const float length = vlen(normal);
+                if (length < 1e-8f) {
+                    continue;
+                }
+                bool behind = true;
+                bool front = true;
+                for (int m = 0; m < n && (behind || front); ++m) {
+                    const float d = vdot(normal, vsub(worldPoints[m], worldPoints[i])) / length;
+                    behind = behind && d <= 1e-4f;
+                    front = front && d >= -1e-4f;
+                }
+                if (behind) {
+                    triangles.insert(triangles.end(), {base + i, base + j, base + k});
+                } else if (front) {
+                    triangles.insert(triangles.end(), {base + i, base + k, base + j});
+                }
+            }
+        }
+    }
+}
+
+void NavGeometry::AddMesh(const Mat4& world, const MeshData& mesh)
+{
+    if (mesh.vertices.empty() || mesh.indices.size() < 3) {
+        return;
+    }
+    pieces.push_back({static_cast<int>(triangles.size() / 3), false});
+    const int base = static_cast<int>(vertices.size() / 3);
+    for (const Vertex& v : mesh.vertices) {
+        const Vec3 p = Mat4::TransformPoint(world, Vec3(v.pos[0], v.pos[1], v.pos[2]));
+        vertices.insert(vertices.end(), {p.x, p.y, p.z});
+    }
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        triangles.insert(triangles.end(), {base + static_cast<int>(mesh.indices[i]), base + static_cast<int>(mesh.indices[i + 1]),
+                                           base + static_cast<int>(mesh.indices[i + 2])});
+    }
+}
+
+NavGeometry CollectSceneGeometry(Scene& scene, int* skippedShapes, const std::filesystem::path& projectRoot)
 {
     NavGeometry geometry;
     int skipped = 0;
-    auto view = scene.GetRegistry().view<TransformComponent, RigidBodyComponent, PhysicsShapeComponent>();
-    for (auto handle : view) {
-        const auto& body = view.get<RigidBodyComponent>(handle);
+    entt::registry& registry = scene.GetRegistry();
+    auto addMesh = [&](entt::entity handle, const MeshRendererComponent& renderer, const Mat4& world) {
+        const auto mesh = renderer.meshAssetPath.empty() ? nullptr
+            : Hephaestus::MeshGeometryCache::Get(renderer.meshAssetPath, projectRoot);
+        if (mesh) {
+            geometry.AddMesh(world, *mesh);
+        } else {
+            ++skipped;
+        }
+        (void)handle;
+    };
+    // Static mesh colliders without a rigid body (JoltPhysicsSystem builds a mesh body for each).
+    for (auto handle : registry.view<TransformComponent, MeshColliderComponent, MeshRendererComponent>()) {
+        const auto& collider = registry.get<MeshColliderComponent>(handle);
+        if (registry.all_of<RigidBodyComponent>(handle) || !collider.enabled || !collider.useComplexCollision) {
+            continue;
+        }
+        addMesh(handle, registry.get<MeshRendererComponent>(handle), scene.GetWorldTransform(Entity(handle, &scene)));
+    }
+    for (auto handle : registry.view<TransformComponent, RigidBodyComponent>()) {
+        const auto& body = registry.get<RigidBodyComponent>(handle);
         if (!body.IsStatic() || body.isTrigger) {
             continue;
         }
-        const auto& shape = view.get<PhysicsShapeComponent>(handle);
-        if (shape.type != PhysicsShapeType::Box) {
-            ++skipped;
+        const auto* shape = registry.try_get<PhysicsShapeComponent>(handle);
+        const auto* renderer = registry.try_get<MeshRendererComponent>(handle);
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        // JoltPhysicsSystem uses the model's own triangles for a Mesh shape, or for complex collision when there is no
+        // other shape than the default box.
+        if (renderer) {
+            const auto* collider = registry.try_get<MeshColliderComponent>(handle);
+            const bool defaultBox = shape && shape->type == PhysicsShapeType::Box &&
+                std::fabs(shape->extents.x - 0.5f) <= 1e-4f && std::fabs(shape->extents.y - 0.5f) <= 1e-4f &&
+                std::fabs(shape->extents.z - 0.5f) <= 1e-4f && std::fabs(shape->offset.x) <= 1e-4f &&
+                std::fabs(shape->offset.y) <= 1e-4f && std::fabs(shape->offset.z) <= 1e-4f;
+            const bool explicitShape = shape && !defaultBox && shape->type != PhysicsShapeType::Mesh;
+            if ((shape && shape->type == PhysicsShapeType::Mesh) ||
+                (collider && collider->useComplexCollision && !explicitShape)) {
+                addMesh(handle, *renderer, world);
+                continue;
+            }
+        }
+        // JoltPhysicsSystem centres a shape on its entity's mesh bounds; characters excepted.
+        Vec3 meshCenter(0.0f, 0.0f, 0.0f);
+        if (renderer && !registry.all_of<CharacterComponent>(handle)) {
+            meshCenter = vscale(vadd(renderer->localBounds.min, renderer->localBounds.max), 0.5f);
+        }
+        if (!shape) {
+            if (renderer) {
+                const Vec3 half = vscale(vsub(renderer->localBounds.max, renderer->localBounds.min), 0.5f);
+                geometry.AddBox(world, Vec3(std::max(half.x, 0.001f), std::max(half.y, 0.001f), std::max(half.z, 0.001f)),
+                                meshCenter);
+            }
             continue;
         }
-        geometry.AddBox(scene.GetWorldTransform(Entity(handle, &scene)), shape.extents, shape.offset);
+        const Vec3 offset = vadd(shape->offset, meshCenter);
+        switch (shape->type) {
+        case PhysicsShapeType::Box:
+            geometry.AddBox(world, shape->extents, offset);
+            break;
+        case PhysicsShapeType::Sphere:
+            geometry.AddSphere(world, shape->radius, offset);
+            break;
+        case PhysicsShapeType::Capsule:
+            geometry.AddCylinder(world, shape->radius, shape->height + 2.0f * shape->radius, offset);
+            break;
+        case PhysicsShapeType::Cylinder:
+            geometry.AddCylinder(world, shape->radius, shape->height, offset);
+            break;
+        case PhysicsShapeType::ConvexHull:
+            geometry.AddConvexHull(world, shape->points, offset);
+            break;
+        case PhysicsShapeType::Mesh:
+            if (shape->triangles) {
+                geometry.AddMesh(Mat4::Multiply(world, Mat4::Translation(offset)), *shape->triangles);
+            } else {
+                ++skipped;  // a Mesh shape without a mesh renderer or triangles of its own has nothing to collide with
+            }
+            break;
+        }
     }
     if (skippedShapes) {
         *skippedShapes = skipped;
     }
     return geometry;
+}
+
+NavBuildSettings SettingsForScene(Scene& scene)
+{
+    NavBuildSettings settings;
+    bool any = false;
+    for (auto handle : scene.GetRegistry().view<CharacterControllerComponent>()) {
+        const auto& controller = scene.GetRegistry().get<CharacterControllerComponent>(handle);
+        if (!controller.enabled) {
+            continue;
+        }
+        if (!any) {
+            settings.agentRadius = controller.radius;
+            settings.agentHeight = controller.height;
+            settings.agentMaxClimb = controller.stepHeight;
+            settings.agentMaxSlopeDegrees = controller.maxSlopeAngleDegrees;
+            any = true;
+            continue;
+        }
+        settings.agentRadius = std::max(settings.agentRadius, controller.radius);
+        settings.agentHeight = std::max(settings.agentHeight, controller.height);
+        settings.agentMaxClimb = std::min(settings.agentMaxClimb, controller.stepHeight);
+        settings.agentMaxSlopeDegrees = std::min(settings.agentMaxSlopeDegrees, controller.maxSlopeAngleDegrees);
+    }
+    settings.agentRadius = std::max(settings.agentRadius, 0.05f);
+    settings.cellSize = settings.agentRadius * 0.5f;
+    return settings;
 }
 
 namespace {
@@ -120,11 +334,15 @@ int AddVaultLinks(Scene& scene, const NavBuildSettings& s, NavGeometry& geometry
             continue;
         }
         const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        Vec3 offset = shape.offset;
+        if (const auto* renderer = scene.GetRegistry().try_get<MeshRendererComponent>(handle);
+            renderer && !scene.GetRegistry().all_of<CharacterComponent>(handle)) {
+            offset = vadd(offset, vscale(vadd(renderer->localBounds.min, renderer->localBounds.max), 0.5f));
+        }
         Box box;
-        box.centre = Mat4::TransformPoint(world, shape.offset);
+        box.centre = Mat4::TransformPoint(world, offset);
         auto axis = [&](const Vec3& local) {
-            const Vec3 p = Mat4::TransformPoint(world, Vec3(shape.offset.x + local.x, shape.offset.y + local.y,
-                                                             shape.offset.z + local.z));
+            const Vec3 p = Mat4::TransformPoint(world, vadd(offset, local));
             return Vec3(p.x - box.centre.x, p.y - box.centre.y, p.z - box.centre.z);
         };
         box.axisX = axis(Vec3(shape.extents.x, 0.0f, 0.0f));
@@ -206,12 +424,22 @@ NavMesh::~NavMesh()
     Clear();
 }
 
+void NavMesh::SetTileCache(const std::filesystem::path& projectRoot)
+{
+    std::error_code ec;
+    m_tileCache.SetRoot(!projectRoot.empty() && std::filesystem::is_directory(projectRoot / ".hephaestus", ec)
+                            ? projectRoot : std::filesystem::path());
+}
+
 void NavMesh::Clear()
 {
     dtFreeNavMeshQuery(m_query);
     dtFreeNavMesh(m_navMesh);
     m_query = nullptr;
     m_navMesh = nullptr;
+    m_tileHashes.clear();
+    m_settingsHash = 0;
+    m_tileBits = 0;
 }
 
 int NavMesh::PolygonCount() const
@@ -220,22 +448,19 @@ int NavMesh::PolygonCount() const
         return 0;
     }
     const dtNavMesh* mesh = m_navMesh;
-    const dtMeshTile* tile = mesh->getTile(0);
-    return tile && tile->header ? tile->header->polyCount : 0;
+    int count = 0;
+    for (int i = 0; i < mesh->getMaxTiles(); ++i) {
+        const dtMeshTile* tile = mesh->getTile(i);
+        if (tile && tile->header) count += tile->header->polyCount;
+    }
+    return count;
 }
 
-bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std::string& error)
-{
-    Clear();
-    if (geometry.Empty()) {
-        error = "no walkable geometry (static box colliders) in the scene";
-        return false;
-    }
-    const float* verts = geometry.vertices.data();
-    const int vertCount = static_cast<int>(geometry.vertices.size() / 3);
-    const int* tris = geometry.triangles.data();
-    const int triCount = static_cast<int>(geometry.triangles.size() / 3);
+namespace {
 
+// The Recast settings shared by every tile.
+rcConfig BaseConfig(const NavBuildSettings& s)
+{
     rcConfig cfg{};
     cfg.cs = s.cellSize;
     cfg.ch = s.cellHeight;
@@ -250,20 +475,100 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     cfg.maxVertsPerPoly = 6;
     cfg.detailSampleDist = s.detailSampleDistance < 0.9f ? 0.0f : s.cellSize * s.detailSampleDistance;
     cfg.detailSampleMaxError = s.cellHeight * s.detailSampleMaxError;
-    rcCalcBounds(verts, vertCount, cfg.bmin, cfg.bmax);
-    rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
+    cfg.tileSize = kTileCells;
+    // Recast needs the agent's erosion plus a few cells of neighbouring geometry around each tile.
+    cfg.borderSize = cfg.walkableRadius + 3;
+    cfg.width = cfg.tileSize + cfg.borderSize * 2;
+    cfg.height = cfg.tileSize + cfg.borderSize * 2;
+    return cfg;
+}
 
+struct PieceBounds {
+    int firstTriangle = 0;
+    int endTriangle = 0;
+    bool solid = false;
+    float min[3] = {0.0f, 0.0f, 0.0f};
+    float max[3] = {0.0f, 0.0f, 0.0f};
+};
+
+// One tile of the navmesh, from the geometry overlapping cfg.bmin to cfg.bmax. Returns false with error on a Recast
+// failure, and true with no data for a tile with nothing walkable.
+bool BuildTile(const NavGeometry& geometry, const std::vector<PieceBounds>& pieces, const std::vector<unsigned char>& areas,
+               const NavBuildSettings& s, rcConfig cfg, int tileX, int tileY, unsigned char*& data, int& dataSize,
+               std::string& error)
+{
+    data = nullptr;
+    dataSize = 0;
+    const float* verts = geometry.vertices.data();
+    const int vertCount = static_cast<int>(geometry.vertices.size() / 3);
+    const int* tris = geometry.triangles.data();
     rcContext ctx(false);
     std::unique_ptr<rcHeightfield, HeightfieldDeleter> solid(rcAllocHeightfield());
     if (!solid || !rcCreateHeightfield(&ctx, *solid, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch)) {
         error = "could not create the heightfield";
         return false;
     }
-    std::vector<unsigned char> areas(static_cast<size_t>(triCount), 0);
-    rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, vertCount, tris, triCount, areas.data());
-    if (!rcRasterizeTriangles(&ctx, verts, vertCount, tris, areas.data(), triCount, *solid, cfg.walkableClimb)) {
-        error = "could not rasterize the geometry";
-        return false;
+    bool any = false;
+    for (const PieceBounds& piece : pieces) {
+        if (piece.max[0] < cfg.bmin[0] || piece.min[0] > cfg.bmax[0] || piece.max[2] < cfg.bmin[2] ||
+            piece.min[2] > cfg.bmax[2]) {
+            continue;
+        }
+        any = true;
+        const int t0 = piece.firstTriangle;
+        const int t1 = piece.endTriangle;
+        if (!piece.solid) {
+            if (!rcRasterizeTriangles(&ctx, verts, vertCount, tris + t0 * 3, areas.data() + t0, t1 - t0, *solid,
+                                      cfg.walkableClimb)) {
+                error = "could not rasterize the geometry";
+                return false;
+            }
+            continue;
+        }
+        // Recast rasterizes surfaces only, so a block taller than an agent would have walkable floor inside it.
+        // Each solid is rasterized on its own and its columns are filled from its lowest to its highest point.
+        const int ox = std::max(0, static_cast<int>(std::floor((piece.min[0] - cfg.bmin[0]) / cfg.cs)));
+        const int oz = std::max(0, static_cast<int>(std::floor((piece.min[2] - cfg.bmin[2]) / cfg.cs)));
+        const int w = std::min(cfg.width - ox, static_cast<int>(std::ceil((piece.max[0] - cfg.bmin[0]) / cfg.cs)) - ox + 1);
+        const int h = std::min(cfg.height - oz, static_cast<int>(std::ceil((piece.max[2] - cfg.bmin[2]) / cfg.cs)) - oz + 1);
+        if (w <= 0 || h <= 0) {
+            continue;
+        }
+        const float tbmin[3] = {cfg.bmin[0] + ox * cfg.cs, cfg.bmin[1], cfg.bmin[2] + oz * cfg.cs};
+        const float tbmax[3] = {tbmin[0] + w * cfg.cs, cfg.bmax[1], tbmin[2] + h * cfg.cs};
+        std::unique_ptr<rcHeightfield, HeightfieldDeleter> part(rcAllocHeightfield());
+        if (!part || !rcCreateHeightfield(&ctx, *part, w, h, tbmin, tbmax, cfg.cs, cfg.ch) ||
+            !rcRasterizeTriangles(&ctx, verts, vertCount, tris + t0 * 3, areas.data() + t0, t1 - t0, *part,
+                                  cfg.walkableClimb)) {
+            error = "could not rasterize the geometry";
+            return false;
+        }
+        for (int z = 0; z < h; ++z) {
+            for (int x = 0; x < w; ++x) {
+                const rcSpan* span = part->spans[x + z * w];
+                if (!span) {
+                    continue;
+                }
+                unsigned int lo = span->smin;
+                unsigned int hi = span->smax;
+                unsigned char area = static_cast<unsigned char>(span->area);
+                for (; span; span = span->next) {
+                    lo = std::min(lo, static_cast<unsigned int>(span->smin));
+                    if (span->smax >= hi) {
+                        hi = span->smax;
+                        area = static_cast<unsigned char>(span->area);
+                    }
+                }
+                if (!rcAddSpan(&ctx, *solid, x + ox, z + oz, static_cast<unsigned short>(lo),
+                               static_cast<unsigned short>(hi), area, cfg.walkableClimb)) {
+                    error = "could not rasterize the geometry";
+                    return false;
+                }
+            }
+        }
+    }
+    if (!any) {
+        return true;
     }
     rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *solid);
     rcFilterLedgeSpans(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid);
@@ -276,7 +581,7 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     }
     solid.reset();
     if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf) || !rcBuildDistanceField(&ctx, *chf) ||
-        !rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea)) {
+        !rcBuildRegions(&ctx, *chf, cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea)) {
         error = "could not build walkable regions";
         return false;
     }
@@ -284,6 +589,9 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     if (!contours || !rcBuildContours(&ctx, *chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *contours)) {
         error = "could not build contours";
         return false;
+    }
+    if (contours->nconts == 0) {
+        return true;
     }
     std::unique_ptr<rcPolyMesh, PolyMeshDeleter> pmesh(rcAllocPolyMesh());
     if (!pmesh || !rcBuildPolyMesh(&ctx, *contours, cfg.maxVertsPerPoly, *pmesh)) {
@@ -296,8 +604,7 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
         return false;
     }
     if (pmesh->npolys == 0) {
-        error = "no walkable area";
-        return false;
+        return true;
     }
     for (int i = 0; i < pmesh->npolys; ++i) {
         pmesh->flags[i] = pmesh->areas[i] == RC_WALKABLE_AREA ? kWalkableFlag : 0;
@@ -319,55 +626,296 @@ bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std:
     params.walkableHeight = s.agentHeight;
     params.walkableRadius = s.agentRadius;
     params.walkableClimb = s.agentMaxClimb;
+    params.tileX = tileX;
+    params.tileY = tileY;
+    params.tileLayer = 0;
     rcVcopy(params.bmin, pmesh->bmin);
     rcVcopy(params.bmax, pmesh->bmax);
     params.cs = cfg.cs;
     params.ch = cfg.ch;
     params.buildBvTree = true;
+    // Links belong to the tile their start is in; Detour joins their far ends across tiles.
     std::vector<float> linkVerts;
     std::vector<float> linkRadii;
     std::vector<unsigned char> linkDirs;
     std::vector<unsigned char> linkAreas;
     std::vector<unsigned short> linkFlags;
     std::vector<unsigned int> linkIds;
-    for (const NavLink& link : geometry.links) {
+    const float tileMin[2] = {cfg.bmin[0] + cfg.borderSize * cfg.cs, cfg.bmin[2] + cfg.borderSize * cfg.cs};
+    const float tileExtent = cfg.tileSize * cfg.cs;
+    for (size_t n = 0; n < geometry.links.size(); ++n) {
+        const NavLink& link = geometry.links[n];
+        if (link.from.x < tileMin[0] || link.from.x >= tileMin[0] + tileExtent || link.from.z < tileMin[1] ||
+            link.from.z >= tileMin[1] + tileExtent) {
+            continue;
+        }
         linkVerts.insert(linkVerts.end(), {link.from.x, link.from.y, link.from.z, link.to.x, link.to.y, link.to.z});
         linkRadii.push_back(s.agentRadius);
         linkDirs.push_back(DT_OFFMESH_CON_BIDIR);
         linkAreas.push_back(kVaultArea);
         linkFlags.push_back(kWalkableFlag);
-        linkIds.push_back(static_cast<unsigned int>(linkIds.size()));
+        linkIds.push_back(static_cast<unsigned int>(n));
     }
-    if (!geometry.links.empty()) {
+    if (!linkIds.empty()) {
         params.offMeshConVerts = linkVerts.data();
         params.offMeshConRad = linkRadii.data();
         params.offMeshConDir = linkDirs.data();
         params.offMeshConAreas = linkAreas.data();
         params.offMeshConFlags = linkFlags.data();
         params.offMeshConUserID = linkIds.data();
-        params.offMeshConCount = static_cast<int>(geometry.links.size());
+        params.offMeshConCount = static_cast<int>(linkIds.size());
     }
-
-    unsigned char* data = nullptr;
-    int dataSize = 0;
     if (!dtCreateNavMeshData(&params, &data, &dataSize)) {
         error = "could not create the navmesh data";
         return false;
     }
-    m_navMesh = dtAllocNavMesh();
-    if (!m_navMesh || dtStatusFailed(m_navMesh->init(data, dataSize, DT_TILE_FREE_DATA))) {
-        dtFree(data);
+    return true;
+}
+
+unsigned int Log2Ceil(unsigned int value)
+{
+    unsigned int bits = 0;
+    while ((1u << bits) < value) ++bits;
+    return bits;
+}
+
+} // namespace
+
+namespace {
+
+struct Hasher {
+    std::uint64_t value = 1469598103934665603ull;
+    void Bytes(const void* data, size_t size)
+    {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            value = (value ^ bytes[i]) * 1099511628211ull;
+        }
+    }
+    template <typename T> void Add(const T& item) { Bytes(&item, sizeof(T)); }
+};
+
+std::uint64_t SettingsHash(const NavBuildSettings& s)
+{
+    Hasher h;
+    for (float value : {s.cellSize, s.cellHeight, s.agentHeight, s.agentRadius, s.agentMaxClimb, s.agentMaxSlopeDegrees,
+                        s.regionMinSize, s.regionMergeSize, s.edgeMaxLength, s.edgeMaxError, s.detailSampleDistance,
+                        s.detailSampleMaxError}) {
+        h.Add(value);
+    }
+    h.Add(kTileCells);
+    return h.value;
+}
+
+std::int64_t TileKey(int x, int y)
+{
+    return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
+}
+
+} // namespace
+
+bool NavMesh::Build(const NavGeometry& geometry, const NavBuildSettings& s, std::string& error)
+{
+    Clear();
+    return Update(geometry, s, error);
+}
+
+bool NavMesh::Update(const NavGeometry& geometry, const NavBuildSettings& s, std::string& error, NavUpdateStats* stats)
+{
+    NavUpdateStats counts;
+    if (geometry.Empty()) {
         Clear();
-        error = "could not initialise the navmesh";
+        error = "no walkable geometry (static colliders) in the scene";
         return false;
     }
-    m_query = dtAllocNavMeshQuery();
-    if (!m_query || dtStatusFailed(m_query->init(m_navMesh, 2048))) {
+    const float* verts = geometry.vertices.data();
+    const int vertCount = static_cast<int>(geometry.vertices.size() / 3);
+    const int* tris = geometry.triangles.data();
+    const int triCount = static_cast<int>(geometry.triangles.size() / 3);
+    const rcConfig cfg = BaseConfig(s);
+    const float extent = cfg.tileSize * cfg.cs;
+    const float border = cfg.borderSize * cfg.cs;
+
+    std::vector<unsigned char> areas(static_cast<size_t>(triCount), 0);
+    rcContext ctx(false);
+    rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, vertCount, tris, triCount, areas.data());
+    std::vector<PieceBounds> pieces;
+    std::vector<std::uint64_t> pieceHashes;
+    {
+        std::vector<NavGeometry::Piece> listed = geometry.pieces;
+        if (listed.empty() || listed.front().firstTriangle > 0) {
+            listed.insert(listed.begin(), NavGeometry::Piece{0, false});
+        }
+        for (size_t n = 0; n < listed.size(); ++n) {
+            PieceBounds piece;
+            piece.firstTriangle = listed[n].firstTriangle;
+            piece.endTriangle = n + 1 < listed.size() ? listed[n + 1].firstTriangle : triCount;
+            piece.solid = listed[n].solid;
+            if (piece.endTriangle <= piece.firstTriangle) continue;
+            const float* first = &verts[tris[piece.firstTriangle * 3] * 3];
+            rcVcopy(piece.min, first);
+            rcVcopy(piece.max, first);
+            Hasher h;
+            h.Add(piece.solid);
+            for (int i = piece.firstTriangle * 3; i < piece.endTriangle * 3; ++i) {
+                const float* v = &verts[tris[i] * 3];
+                rcVmin(piece.min, v);
+                rcVmax(piece.max, v);
+                h.Bytes(v, sizeof(float) * 3);
+            }
+            pieces.push_back(piece);
+            pieceHashes.push_back(h.value);
+        }
+    }
+
+    // Tiles sit on a fixed world grid, so an edit only changes the tiles its geometry (and their borders) touch.
+    struct TileWork {
+        int x = 0;
+        int y = 0;
+        std::uint64_t hash = 0;
+        std::vector<size_t> pieces;
+    };
+    std::unordered_map<std::int64_t, TileWork> wanted;
+    for (size_t n = 0; n < pieces.size(); ++n) {
+        const PieceBounds& piece = pieces[n];
+        const int x0 = static_cast<int>(std::floor((piece.min[0] - border) / extent));
+        const int x1 = static_cast<int>(std::floor((piece.max[0] + border) / extent));
+        const int y0 = static_cast<int>(std::floor((piece.min[2] - border) / extent));
+        const int y1 = static_cast<int>(std::floor((piece.max[2] + border) / extent));
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                TileWork& work = wanted[TileKey(x, y)];
+                work.x = x;
+                work.y = y;
+                work.pieces.push_back(n);
+            }
+        }
+    }
+    const std::uint64_t settingsHash = SettingsHash(s);
+    for (auto& [key, work] : wanted) {
+        Hasher h;
+        h.Add(settingsHash);
+        h.Add(work.x);
+        h.Add(work.y);
+        for (size_t n : work.pieces) h.Add(pieceHashes[n]);
+        const float lo[2] = {work.x * extent, work.y * extent};
+        for (const NavLink& link : geometry.links) {
+            if (link.from.x >= lo[0] && link.from.x < lo[0] + extent && link.from.z >= lo[1] && link.from.z < lo[1] + extent) {
+                h.Add(link.from);
+                h.Add(link.to);
+            }
+        }
+        work.hash = h.value;
+    }
+
+    const unsigned int tileBits = Log2Ceil(static_cast<unsigned int>(std::max<size_t>(1, wanted.size() * 2)));
+    if (tileBits > 14) {
         Clear();
-        error = "could not initialise the navmesh query";
+        error = "the level is too large for the navmesh (" + std::to_string(wanted.size()) + " tiles)";
         return false;
     }
-    m_vaultLinkCost = s.vaultLinkCost;
+    if (!m_navMesh || settingsHash != m_settingsHash || tileBits > m_tileBits) {
+        Clear();
+        dtNavMeshParams meshParams{};
+        meshParams.tileWidth = extent;
+        meshParams.tileHeight = extent;
+        // 32-bit polygon references leave 22 bits for the tile and the polygon within it.
+        m_tileBits = std::max(tileBits, 6u);
+        meshParams.maxTiles = 1 << m_tileBits;
+        meshParams.maxPolys = 1 << (22 - m_tileBits);
+        m_navMesh = dtAllocNavMesh();
+        m_query = dtAllocNavMeshQuery();
+        if (!m_navMesh || dtStatusFailed(m_navMesh->init(&meshParams)) || !m_query ||
+            dtStatusFailed(m_query->init(m_navMesh, 2048))) {
+            Clear();
+            error = "could not initialise the navmesh";
+            return false;
+        }
+        m_settingsHash = settingsHash;
+        m_vaultLinkCost = s.vaultLinkCost;
+    }
+
+    for (auto it = m_tileHashes.begin(); it != m_tileHashes.end();) {
+        if (wanted.find(it->first) == wanted.end()) {
+            const int x = static_cast<int>(it->first >> 32);
+            const int y = static_cast<int>(static_cast<std::int32_t>(it->first & 0xffffffff));
+            m_navMesh->removeTile(m_navMesh->getTileRefAt(x, y, 0), nullptr, nullptr);
+            ++counts.tilesRemoved;
+            it = m_tileHashes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto& [key, work] : wanted) {
+        auto known = m_tileHashes.find(key);
+        if (known != m_tileHashes.end() && known->second == work.hash) {
+            ++counts.tilesKept;
+            continue;
+        }
+        rcConfig tile = cfg;
+        tile.bmin[0] = work.x * extent - border;
+        tile.bmin[2] = work.y * extent - border;
+        tile.bmax[0] = (work.x + 1) * extent + border;
+        tile.bmax[2] = (work.y + 1) * extent + border;
+        std::vector<PieceBounds> overlapping;
+        tile.bmin[1] = pieces[work.pieces.front()].min[1];
+        tile.bmax[1] = pieces[work.pieces.front()].max[1];
+        for (size_t n : work.pieces) {
+            overlapping.push_back(pieces[n]);
+            tile.bmin[1] = std::min(tile.bmin[1], pieces[n].min[1]);
+            tile.bmax[1] = std::max(tile.bmax[1], pieces[n].max[1]);
+        }
+        tile.bmax[1] += s.agentHeight;
+        unsigned char* data = nullptr;
+        int dataSize = 0;
+        char cacheKey[64] = {};
+        bool loaded = false;
+        if (m_tileCache.HasRoot()) {
+            std::snprintf(cacheKey, sizeof(cacheKey), "navmesh/v1/%016llx.tile",
+                          static_cast<unsigned long long>(work.hash));
+            std::vector<std::uint8_t> bytes;
+            if (m_tileCache.Load(cacheKey, bytes)) {
+                const auto* header = reinterpret_cast<const dtMeshHeader*>(bytes.data());
+                if (bytes.empty()) {
+                    loaded = true;
+                } else if (bytes.size() >= sizeof(dtMeshHeader) && header->magic == DT_NAVMESH_MAGIC &&
+                           header->version == DT_NAVMESH_VERSION && header->x == work.x && header->y == work.y) {
+                    data = static_cast<unsigned char*>(dtAlloc(static_cast<int>(bytes.size()), DT_ALLOC_PERM));
+                    std::memcpy(data, bytes.data(), bytes.size());
+                    dataSize = static_cast<int>(bytes.size());
+                    loaded = true;
+                }
+            }
+        }
+        if (loaded) {
+            ++counts.tilesLoaded;
+        } else {
+            if (!BuildTile(geometry, overlapping, areas, s, tile, work.x, work.y, data, dataSize, error)) {
+                Clear();
+                return false;
+            }
+            if (cacheKey[0]) {
+                m_tileCache.Store(cacheKey, data ? std::vector<std::uint8_t>(data, data + dataSize)
+                                                 : std::vector<std::uint8_t>());
+            }
+            ++counts.tilesBuilt;
+        }
+        if (const dtTileRef old = m_navMesh->getTileRefAt(work.x, work.y, 0)) {
+            m_navMesh->removeTile(old, nullptr, nullptr);
+        }
+        if (data && dtStatusFailed(m_navMesh->addTile(data, dataSize, DT_TILE_FREE_DATA, 0, nullptr))) {
+            dtFree(data);
+            Clear();
+            error = "could not add a navmesh tile";
+            return false;
+        }
+        m_tileHashes[key] = work.hash;
+    }
+    if (stats) *stats = counts;
+    if (PolygonCount() == 0) {
+        error = "no walkable area";
+        return false;
+    }
     return true;
 }
 
@@ -386,6 +934,109 @@ bool NavMesh::ClosestPoint(const Vec3& point, Vec3& out, const Vec3& searchExten
     }
     out = Vec3(nearest[0], nearest[1], nearest[2]);
     return true;
+}
+
+std::vector<NavIsland> NavMesh::Islands(const std::vector<Vec3>& starts, const Vec3& searchExtents) const
+{
+    std::vector<NavIsland> islands;
+    const dtNavMesh* mesh = m_navMesh;
+    if (!m_query || !mesh) {
+        return islands;
+    }
+    // Every polygon of every tile gets one index: the tile's offset plus its index in the tile.
+    std::vector<int> offsets(static_cast<size_t>(mesh->getMaxTiles()), -1);
+    int total = 0;
+    for (int i = 0; i < mesh->getMaxTiles(); ++i) {
+        const dtMeshTile* tile = mesh->getTile(i);
+        if (tile && tile->header) {
+            offsets[static_cast<size_t>(i)] = total;
+            total += tile->header->polyCount;
+        }
+    }
+    auto indexOf = [&](dtPolyRef ref) {
+        unsigned int salt = 0, tileIndex = 0, polyIndex = 0;
+        mesh->decodePolyId(ref, salt, tileIndex, polyIndex);
+        return tileIndex < offsets.size() && offsets[tileIndex] >= 0 ? offsets[tileIndex] + static_cast<int>(polyIndex)
+                                                                     : -1;
+    };
+    std::vector<int> islandOf(static_cast<size_t>(total), -1);
+    for (int ti = 0; ti < mesh->getMaxTiles(); ++ti) {
+        const dtMeshTile* seedTile = mesh->getTile(ti);
+        if (!seedTile || !seedTile->header) continue;
+        for (int seed = 0; seed < seedTile->header->polyCount; ++seed) {
+            if (islandOf[static_cast<size_t>(offsets[static_cast<size_t>(ti)] + seed)] >= 0) continue;
+            const int id = static_cast<int>(islands.size());
+            NavIsland island;
+            bool first = true;
+            float weightedX = 0.0f, weightedY = 0.0f, weightedZ = 0.0f;
+            std::vector<dtPolyRef> open{mesh->getPolyRefBase(seedTile) | static_cast<dtPolyRef>(seed)};
+            islandOf[static_cast<size_t>(offsets[static_cast<size_t>(ti)] + seed)] = id;
+            while (!open.empty()) {
+                const dtPolyRef ref = open.back();
+                open.pop_back();
+                const dtMeshTile* tile = nullptr;
+                const dtPoly* poly = nullptr;
+                if (dtStatusFailed(mesh->getTileAndPolyByRef(ref, &tile, &poly))) continue;
+                for (unsigned int k = poly->firstLink; k != DT_NULL_LINK; k = tile->links[k].next) {
+                    const int next = indexOf(tile->links[k].ref);
+                    if (next >= 0 && islandOf[static_cast<size_t>(next)] < 0) {
+                        islandOf[static_cast<size_t>(next)] = id;
+                        open.push_back(tile->links[k].ref);
+                    }
+                }
+                if (poly->getType() != DT_POLYTYPE_GROUND) continue;
+                float area = 0.0f;
+                Vec3 sum(0.0f, 0.0f, 0.0f);
+                for (int v = 0; v < poly->vertCount; ++v) {
+                    const float* a = &tile->verts[poly->verts[v] * 3];
+                    const float* b = &tile->verts[poly->verts[(v + 1) % poly->vertCount] * 3];
+                    // An edge on a tile border is open only where a link crosses it into the next tile.
+                    bool open = poly->neis[v] != 0;
+                    if (poly->neis[v] & DT_EXT_LINK) {
+                        open = false;
+                        for (unsigned int k = poly->firstLink; k != DT_NULL_LINK; k = tile->links[k].next) {
+                            open = open || tile->links[k].edge == v;
+                        }
+                    }
+                    if (!open) {
+                        island.edges.push_back({Vec3(a[0], a[1], a[2]), Vec3(b[0], b[1], b[2])});
+                    }
+                    area += a[0] * b[2] - b[0] * a[2];
+                    sum = vadd(sum, Vec3(a[0], a[1], a[2]));
+                    const Vec3 point(a[0], a[1], a[2]);
+                    island.min = first ? point : Vec3(std::min(island.min.x, point.x), std::min(island.min.y, point.y),
+                                                      std::min(island.min.z, point.z));
+                    island.max = first ? point : Vec3(std::max(island.max.x, point.x), std::max(island.max.y, point.y),
+                                                      std::max(island.max.z, point.z));
+                    first = false;
+                }
+                area = std::fabs(area) * 0.5f;
+                const Vec3 centre = vscale(sum, 1.0f / static_cast<float>(std::max<int>(1, poly->vertCount)));
+                island.area += area;
+                weightedX += centre.x * area;
+                weightedY += centre.y * area;
+                weightedZ += centre.z * area;
+            }
+            if (island.area > 0.0f) {
+                island.centre = Vec3(weightedX / island.area, weightedY / island.area, weightedZ / island.area);
+            }
+            islands.push_back(island);
+        }
+    }
+    dtQueryFilter filter;
+    const float extents[3] = {searchExtents.x, searchExtents.y, searchExtents.z};
+    for (const Vec3& start : starts) {
+        const float p[3] = {start.x, start.y, start.z};
+        dtPolyRef ref = 0;
+        float nearest[3];
+        if (dtStatusSucceed(m_query->findNearestPoly(p, extents, &filter, &ref, nearest)) && ref != 0) {
+            const int index = indexOf(ref);
+            if (index >= 0) {
+                islands[static_cast<size_t>(islandOf[static_cast<size_t>(index)])].reached = true;
+            }
+        }
+    }
+    return islands;
 }
 
 bool NavMesh::FindPath(const Vec3& from, const Vec3& to, std::vector<Vec3>& corners,

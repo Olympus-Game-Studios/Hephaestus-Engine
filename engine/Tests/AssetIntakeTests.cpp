@@ -292,6 +292,45 @@ bool TestImportModel(const fs::path& scratch) {
     AssetIntakeResult again;
     ok &= Check(AssetIntake::Import(request, again, error) && again.folder == "assets/Imported/Sketchfab/Props_2",
                 "a second import goes to a new folder instead of overwriting");
+
+    // Reimport updates the first pack in place: the model is replaced and the prefab keeps its guid and node ids.
+    ok &= Check(fs::equivalent(AssetIntake::RecordedSource(project, "assets/Imported/Sketchfab/Props"), pack / "Props.glb"),
+                "a pack remembers the file it was imported from");
+    const fs::path prefabFile = project / result.prefabs[0];
+    json kept = json::parse(ReadText(prefabFile));
+    kept["guid"] = "kept-guid";
+    const std::string rootId = kept["nodes"][0]["id"];
+    const std::string meshId = kept["nodes"][1]["id"];
+    kept["nodes"][0]["id"] = "kept_root";
+    kept["rootNodeId"] = "kept_root";
+    kept["nodes"][1]["id"] = "kept_mesh";
+    kept["nodes"][1]["parentId"] = "kept_root";
+    {
+        std::ofstream out(prefabFile, std::ios::trunc);
+        out << kept.dump(2);
+    }
+    const fs::path copiedModel = project / "assets/Imported/Sketchfab/Props/Models/Props.glb";
+    {
+        std::ofstream out(copiedModel, std::ios::binary | std::ios::trunc);
+        out << "stale";
+    }
+    AssetIntakeResult reimported;
+    ok &= Check(AssetIntake::Reimport(project, "assets/Imported/Sketchfab/Props", {}, reimported, error),
+                "reimport succeeds: " + error);
+    const json after = json::parse(ReadText(prefabFile));
+    ok &= Check(after["guid"] == "kept-guid" && after["rootNodeId"] == "kept_root" && after["nodes"][0]["id"] == "kept_root" &&
+                    after["nodes"][1]["id"] == "kept_mesh" && after["nodes"][1]["parentId"] == "kept_root",
+                "the reimported prefab keeps its guid and node ids");
+    ok &= Check(after["nodes"][1]["components"][0]["data"]["meshSource"] == "assets/Imported/Sketchfab/Props/Models/Props.glb" &&
+                    ReadText(copiedModel) == ReadText(pack / "Props.glb"),
+                "the model is replaced in place and the prefab still points at it");
+    ok &= Check(reimported.folder == "assets/Imported/Sketchfab/Props" && reimported.prefabs.size() == 1 &&
+                    reimported.prefabs[0] == result.prefabs[0] &&
+                    !fs::exists(project / "assets/Imported/Sketchfab/Props_reimport") &&
+                    !fs::exists(project / "assets/Imported/Sketchfab/Props_3"),
+                "nothing is left beside the pack");
+    (void)rootId;
+    (void)meshId;
     return ok;
 }
 

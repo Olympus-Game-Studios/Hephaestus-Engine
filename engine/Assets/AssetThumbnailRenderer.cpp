@@ -5,6 +5,7 @@
 #include "ModelImporter.h"
 #include "../Gfx/BuiltinMeshes.h"
 #include "../Scene/PrefabInstantiator.h"
+#include "../Scene/PrefabOverrideSystem.h"
 #include "../Scene/PrefabSerializer.h"
 #include "../Scene/Scene.h"
 #include "../UI/MaterialEditor/MaterialAssetSerializer.h"
@@ -630,6 +631,16 @@ bool RenderAssetThumbnail(const std::filesystem::path& projectRoot,
             if (!PrefabSerializer::Deserialize(asset, assetFile, outError)) {
                 return false;
             }
+            // Thumbnails render on worker threads, so nested prefabs are read from disk rather than the shared cache.
+            std::function<bool(const std::string&, PrefabAsset&, std::string&)> loadNested;
+            loadNested = [&](const std::string& path, PrefabAsset& out, std::string& error) {
+                const std::filesystem::path file = sources.Resolve(path);
+                outDependencies.push_back(file);
+                return PrefabSerializer::Deserialize(out, file, error) &&
+                       (PrefabOverrideSystem::ExpandNested(out, error, loadNested), true);
+            };
+            std::string nestedError;
+            PrefabOverrideSystem::ExpandNested(asset, nestedError, loadNested);
             Scene scene("Thumbnail");
             PrefabInstantiateOptions options;
             options.prefabPath = assetFile.generic_string();

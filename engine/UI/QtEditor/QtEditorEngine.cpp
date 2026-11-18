@@ -29,6 +29,8 @@
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
 #include "../../Scene/PrefabOverrideSystem.h"
+#include "../../Assets/AssetManager.h"
+#include "../../Construction/ConstructionGeometry.h"
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Assets/SkeletalModelImporter.h"
@@ -209,6 +211,72 @@ QtEditorEngine::QtEditorEngine(QObject* parent)
     
     m_frameTimer.start();
     m_editorContext.SetRebuildSceneVisualsCallback([this]() { RebuildSceneMeshes(); });
+    ensureConstructionSink();
+}
+
+void QtEditorEngine::ensureConstructionSink()
+{
+    Hephaestus::Construction::MeshSink sink;
+    sink.upload = [this](size_t existing, const std::string& name, const MeshData& mesh) {
+        return m_frameRenderer ? m_frameRenderer->UploadDynamicMesh(existing, name, mesh)
+                               : MeshRendererComponent::InvalidMesh;
+    };
+    sink.release = [this](size_t handle) {
+        if (m_frameRenderer) {
+            m_frameRenderer->ReleaseDynamicMesh(handle);
+        }
+    };
+    sink.loadMesh = [this](MeshRendererComponent& renderer) { loadRendererMesh(renderer); };
+    m_construction.SetMeshSink(std::move(sink));
+
+    Hephaestus::Construction::ToolHost host;
+    host.pushUndo = [this](const std::string& label) { EditorUndoManager::PushSnapshot(&m_editorContext, label); };
+    host.discardUndo = [this]() { EditorUndoManager::DiscardLastSnapshot(&m_editorContext); };
+    host.select = [this](entt::entity entity) { m_editorContext.SelectEntity(entity); };
+    host.selected = [this]() { return m_editorContext.GetSelectedEntity(); };
+    host.projectRoot = []() { return std::filesystem::path(AssetManager::GetInstance().GetProjectRoot()); };
+    host.changed = [this]() {
+        m_editorContext.MarkDirty();
+        emit sceneHierarchyChanged();
+    };
+    host.stepHeight = [this]() {
+        Scene* scene = m_editorContext.GetActiveScene();
+        if (scene) {
+            for (entt::entity entity : scene->GetRegistry().view<CharacterControllerComponent>()) {
+                return scene->GetRegistry().get<CharacterControllerComponent>(entity).stepHeight;
+            }
+        }
+        return CharacterControllerComponent{}.stepHeight;
+    };
+    host.created = [this](entt::entity entity) {
+        if (Scene* scene = m_editorContext.GetActiveScene()) {
+            Hephaestus::Construction::ConstructionSystem::AddBlockoutMaterial(*scene, entity);
+        }
+    };
+    m_constructionTool.SetHost(std::move(host));
+}
+
+void QtEditorEngine::SetConstructionToolMode(Hephaestus::Construction::ToolMode mode)
+{
+    if (Scene* scene = m_editorContext.GetActiveScene()) {
+        m_constructionTool.Cancel(*scene);
+    }
+    m_constructionTool.SetMode(mode);
+    m_lastConstructionStatus = m_constructionTool.StatusText();
+    emit constructionStatusChanged(QString::fromStdString(m_lastConstructionStatus));
+}
+
+void QtEditorEngine::UpdateConstruction()
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    if (!scene) {
+        return;
+    }
+    if (scene->GetIdentity() != m_constructionSceneIdentity) {
+        m_construction.Reset();
+        m_constructionSceneIdentity = scene->GetIdentity();
+    }
+    m_construction.Update(*scene);
 }
 
 QtEditorEngine::~QtEditorEngine()
@@ -590,6 +658,7 @@ void QtEditorEngine::Shutdown()
 void QtEditorEngine::cleanupVulkanResources()
 {
     // Cleanup frame renderer (handles pipeline, sync objects, command buffers)
+    m_construction.Reset();
     if (m_frameRenderer) {
         m_frameRenderer->Shutdown();
         m_frameRenderer.reset();
@@ -775,6 +844,35 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         return true;
     };
 
+    auto constructionInput = [&](float x, float y, Hephaestus::Construction::ToolInput& out) -> bool {
+        Mat4 viewMatrix;
+        Mat4 projMatrix;
+        Vec3 camPos;
+        if (!buildViewProj(viewMatrix, projMatrix, camPos)) {
+            return false;
+        }
+        float px = x;
+        float py = y;
+        toPixelCoords(x, y, px, py);
+        out.ray = buildRayFromScreen(px, py, viewMatrix, projMatrix);
+        out.screenX = px;
+        out.screenY = py;
+        out.viewProj = Mat4::Multiply(projMatrix, viewMatrix);
+        out.viewportWidth = static_cast<float>(m_swapchain->extent.width);
+        out.viewportHeight = static_cast<float>(m_swapchain->extent.height);
+        out.shift = (event.modifiers & 0x02000000) != 0;
+        out.ctrl = (event.modifiers & 0x04000000) != 0;
+        out.alt = (event.modifiers & 0x08000000) != 0;
+        const auto& snap = m_editorContext.GetSnapSettings();
+        out.gridStep = snap.enableSnap && snap.translateSnap > 0.0f ? snap.translateSnap : 0.25f;
+        return true;
+    };
+    auto constructionAvailable = [&]() -> bool {
+        return m_playModeManager.IsEditor() && m_editorContext.HasActiveScene() &&
+               !m_cameraController.IsFlyModeActive() && !m_cameraController.IsOrbitModeActive() &&
+               !m_cameraController.IsPanModeActive() && !m_cameraController.IsDollyModeActive();
+    };
+
     auto endGizmoDrag = [&]() {
         if (m_gizmoDragging && m_frameRenderer && m_frameRenderer->IsGizmoAvailable()) {
             m_frameRenderer->GetGizmo()->EndDrag();
@@ -846,6 +944,19 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
             std::cout << "[UI Debug] Mouse Press at (" << uiPos.x << ", " << uiPos.y << ") button=" << event.button << std::endl;
             runtimeUIState->context->QueueMousePress(uiPos, event.button);
+        }
+
+        if (event.button == 1 && !m_inputState.rmbDown && !m_inputState.altDown && constructionAvailable()) {
+            Hephaestus::Construction::ToolInput toolInput;
+            if (constructionInput(event.x, event.y, toolInput) &&
+                m_constructionTool.OnPress(*m_editorContext.GetActiveScene(), m_construction, toolInput)) {
+                m_constructionOwnsClick = true;
+                m_pickPressValid = false;
+                m_lastMouseX = event.x;
+                m_lastMouseY = event.y;
+                m_hasLastMousePos = true;
+                break;
+            }
         }
 
         if (event.button == 1 && !m_inputState.rmbDown) {
@@ -932,6 +1043,15 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                 endGizmoDrag();
                 break;
             }
+            if (m_constructionOwnsClick && m_editorContext.HasActiveScene()) {
+                m_constructionOwnsClick = false;
+                Hephaestus::Construction::ToolInput toolInput;
+                if (constructionInput(event.x, event.y, toolInput)) {
+                    m_constructionTool.OnRelease(*m_editorContext.GetActiveScene(), m_construction, toolInput);
+                }
+                m_pickPressValid = false;
+                break;
+            }
             if (m_marqueeSelecting) {
                 const bool ctrlHeld = (event.modifiers & 0x04000000) != 0;
                 const bool shiftHeld = (event.modifiers & 0x02000000) != 0;
@@ -968,6 +1088,20 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                     m_viewportPickShiftHeld = shiftHeld;
                     m_viewportPickAltHeld = altHeld;
                     m_viewportPickWaitingReadback = true;
+                    // Openings have no mesh, so the GPU pick sees through them; find one the click passes through.
+                    m_viewportPickOpening = entt::null;
+                    Mat4 viewMatrix;
+                    Mat4 projMatrix;
+                    Vec3 camPos;
+                    if (Scene* pickScene = m_editorContext.GetActiveScene();
+                        pickScene && buildViewProj(viewMatrix, projMatrix, camPos)) {
+                        Vec3 openingLocal;
+                        entt::entity opening = entt::null;
+                        if (m_constructionTool.PickOpening(*pickScene, buildRayFromScreen(px, py, viewMatrix, projMatrix),
+                                                           opening, openingLocal)) {
+                            m_viewportPickOpening = opening;
+                        }
+                    }
                     m_frameRenderer->PickEntityAt(pixX, pixY);
                 }
             }
@@ -1029,6 +1163,19 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                 const float rdx = event.x - m_rmbPressX;
                 const float rdy = event.y - m_rmbPressY;
                 if (rdx * rdx + rdy * rdy > 16.0f) m_rmbMoved = true;
+            }
+
+            if (constructionAvailable() && !m_inputState.rmbDown) {
+                Hephaestus::Construction::ToolInput toolInput;
+                if (constructionInput(event.x, event.y, toolInput)) {
+                    m_constructionTool.OnMove(*m_editorContext.GetActiveScene(), m_construction, toolInput);
+                }
+                if (m_constructionOwnsClick) {
+                    m_lastMouseX = event.x;
+                    m_lastMouseY = event.y;
+                    m_hasLastMousePos = true;
+                    break;
+                }
             }
 
             if (m_placementPreview != entt::null) {
@@ -1155,6 +1302,10 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                                             newWorldPrimary.m[14] = surfaceHit.point.z;
                                         }
                                     }
+                                }
+                                if (m_editorContext.GetGizmoMode() == Hephaestus::GizmoMode::Translate &&
+                                    !m_inputState.shiftDown && !m_inputState.ctrlDown) {
+                                    SnapMovedFacesToNeighbours(*scene, selectedEntity, newWorldPrimary);
                                 }
 
                                 if (!m_gizmoDragEntityWorldStart.empty()) {
@@ -1293,6 +1444,16 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_inputState.shiftDown = (event.modifiers & 0x02000000) != 0;
         m_inputState.ctrlDown = (event.modifiers & 0x04000000) != 0;
 
+        if (m_playModeManager.IsEditor() && m_editorContext.HasActiveScene() && m_constructionTool.IsBusy() &&
+            m_constructionTool.OnKey(*m_editorContext.GetActiveScene(), m_construction, event.key)) {
+            m_constructionOwnsClick = false;
+            break;
+        }
+        if (event.key == 0x01000000 && m_constructionTool.Mode() != Hephaestus::Construction::ToolMode::Select &&
+            m_playModeManager.IsEditor()) {
+            SetConstructionToolMode(Hephaestus::Construction::ToolMode::Select);
+            break;
+        }
         if (event.key == 0x01000000 && m_placementPreview != entt::null) {
             m_placementPreview = entt::null;
             std::string error;
@@ -1353,18 +1514,48 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         
         // Gizmo mode shortcuts (only when not in fly mode and not in play mode)
         if (!m_inputState.rmbDown && !m_playModeManager.ShouldSuppressEditorInteraction()) {
+            using Hephaestus::Construction::ToolMode;
             switch (event.key) {
                 case 0x57: // Qt::Key_W - Translate mode
                     m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::Translate);
+                    SetConstructionToolMode(ToolMode::Select);
                     break;
                 case 0x45: // Qt::Key_E - Rotate mode
                     m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::Rotate);
+                    SetConstructionToolMode(ToolMode::Select);
                     break;
                 case 0x52: // Qt::Key_R - Scale mode
                     m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::Scale);
+                    SetConstructionToolMode(ToolMode::Select);
                     break;
                 case 0x51: // Qt::Key_Q - No gizmo
                     m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::None);
+                    SetConstructionToolMode(ToolMode::Select);
+                    break;
+                case 0x42: // Qt::Key_B - Draw Block, Shift+B Draw Room
+                    if (!m_inputState.ctrlDown) {
+                        SetConstructionToolMode(m_inputState.shiftDown ? ToolMode::DrawRoom : ToolMode::DrawBox);
+                    }
+                    break;
+                case 0x54: // Qt::Key_T - Draw Stairs, Shift+T Draw Ramp
+                    if (!m_inputState.ctrlDown) {
+                        SetConstructionToolMode(m_inputState.shiftDown ? ToolMode::DrawRamp : ToolMode::DrawStairs);
+                    }
+                    break;
+                case 0x4D: // Qt::Key_M - Measure Walk
+                    if (!m_inputState.ctrlDown) {
+                        SetConstructionToolMode(ToolMode::MeasureWalk);
+                    }
+                    break;
+                case 0x4C: // Qt::Key_L - Draw Wall
+                    if (!m_inputState.ctrlDown) {
+                        SetConstructionToolMode(ToolMode::DrawWall);
+                    }
+                    break;
+                case 0x4F: // Qt::Key_O - Draw Opening
+                    if (!m_inputState.ctrlDown) {
+                        SetConstructionToolMode(ToolMode::DrawOpening);
+                    }
                     break;
                 case 0x58: // Qt::Key_X - Toggle local/world space
                     m_editorContext.ToggleGizmoSpace();
@@ -1774,13 +1965,89 @@ void QtEditorEngine::FocusAll()
     m_cameraController.FocusOnPoint(center.x, center.y, center.z, radius);
 }
 
+bool QtEditorEngine::PickConstructionFace(float x, float y, Hephaestus::Construction::ConstructionHit& outHit)
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    Ray ray;
+    return scene && viewportRay(x, y, ray) && m_construction.Raycast(*scene, ray, outHit);
+}
+
 bool QtEditorEngine::RaycastViewport(
     float x, float y, Hephaestus::SceneAuthoring::SceneRaycastHit& outHit,
     const std::unordered_set<entt::entity>& ignored)
 {
     Scene* scene = m_editorContext.GetActiveScene();
-    if (!scene || !m_swapchain || m_swapchain->extent.width == 0 ||
-        m_swapchain->extent.height == 0) {
+    Ray ray;
+    if (!scene || !viewportRay(x, y, ray)) {
+        return false;
+    }
+    if (Hephaestus::SceneAuthoring::RaycastBounds(
+            *scene, ray, outHit, ignored)) {
+        return true;
+    }
+    if (std::abs(ray.direction.y) > 1e-6f) {
+        const float distance = -ray.origin.y / ray.direction.y;
+        if (distance >= 0.0f) {
+            outHit.entity = entt::null;
+            outHit.point = ray.at(distance);
+            outHit.normal = Vec3(0, 1, 0);
+            outHit.distance = distance;
+            return true;
+        }
+    }
+    return false;
+}
+
+void QtEditorEngine::SnapMovedFacesToNeighbours(Scene& scene, entt::entity primary, Mat4& newWorldPrimary) const
+{
+    constexpr float kReach = 0.2f;
+    entt::registry& registry = scene.GetRegistry();
+    // The selection's bounds where this drag puts it (the gizmo is at the selection's centre when several move).
+    std::vector<std::pair<entt::entity, Mat4>> moved = m_gizmoDragEntityWorldStart;
+    if (moved.empty()) {
+        moved.push_back({primary, newWorldPrimary});
+    } else {
+        const Mat4 delta = Mat4::Multiply(newWorldPrimary, Mat4::Invert(m_gizmoDragPrimaryWorldStart));
+        for (auto& [entity, world] : moved) world = Mat4::Multiply(delta, world);
+    }
+    bool any = false;
+    AABB moving;
+    for (const auto& [entity, world] : moved) {
+        const auto* renderer = registry.try_get<MeshRendererComponent>(entity);
+        if (!renderer) continue;
+        const AABB bounds = Hephaestus::SceneAuthoring::TransformBounds(renderer->localBounds, world);
+        if (!any) {
+            moving = bounds;
+            any = true;
+        } else {
+            moving.min = Vec3(std::min(moving.min.x, bounds.min.x), std::min(moving.min.y, bounds.min.y),
+                              std::min(moving.min.z, bounds.min.z));
+            moving.max = Vec3(std::max(moving.max.x, bounds.max.x), std::max(moving.max.y, bounds.max.y),
+                              std::max(moving.max.z, bounds.max.z));
+        }
+    }
+    if (!any) {
+        return;
+    }
+    const auto selection = m_editorContext.GetSelectedEntities();
+    const std::vector<AABB> neighbours = Hephaestus::SceneAuthoring::NeighbourBounds(
+        scene, moving, kReach, [&](entt::entity handle) {
+            return !m_editorContext.IsEditorEntityShown(handle) ||
+                   std::find(selection.begin(), selection.end(), handle) != selection.end();
+        });
+    const Vec3 offset = Hephaestus::SceneAuthoring::SnapBoundsToNeighbours(moving, neighbours, kReach);
+    // Only along axes the drag moves, so a single-axis drag never slides sideways.
+    const float snap[3] = {offset.x, offset.y, offset.z};
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::fabs(newWorldPrimary.m[12 + axis] - m_gizmoDragPrimaryWorldStart.m[12 + axis]) > 1e-4f) {
+            newWorldPrimary.m[12 + axis] += snap[axis];
+        }
+    }
+}
+
+bool QtEditorEngine::viewportRay(float x, float y, Ray& outRay) const
+{
+    if (!m_swapchain || m_swapchain->extent.width == 0 || m_swapchain->extent.height == 0) {
         return false;
     }
 
@@ -1828,22 +2095,8 @@ bool QtEditorEngine::RaycastViewport(
         inverseView, Mat4::TransformPoint(inverseProjection, nearNdc));
     const Vec3 farWorld = Mat4::TransformPoint(
         inverseView, Mat4::TransformPoint(inverseProjection, farNdc));
-    const Ray ray(nearWorld, vnorm(vsub(farWorld, nearWorld)));
-    if (Hephaestus::SceneAuthoring::RaycastBounds(
-            *scene, ray, outHit, ignored)) {
-        return true;
-    }
-    if (std::abs(ray.direction.y) > 1e-6f) {
-        const float distance = -ray.origin.y / ray.direction.y;
-        if (distance >= 0.0f) {
-            outHit.entity = entt::null;
-            outHit.point = ray.at(distance);
-            outHit.normal = Vec3(0, 1, 0);
-            outHit.distance = distance;
-            return true;
-        }
-    }
-    return false;
+    outRay = Ray(nearWorld, vnorm(vsub(farWorld, nearWorld)));
+    return true;
 }
 
 void QtEditorEngine::BeginPlacement(entt::entity previewEntity)
@@ -2105,6 +2358,7 @@ void QtEditorEngine::renderFrame()
     }
     
     Scene* scene = m_editorContext.GetActiveScene();
+    UpdateConstruction();
     std::string sceneName = scene->GetName();
     if (sceneName != lastSceneName) {
         std::cout << "[QtEditorEngine::renderFrame] NEW scene: " << sceneName 
@@ -2169,6 +2423,14 @@ void QtEditorEngine::renderFrame()
     AppendProbeVolumeDebugDraw(*scene, m_renderConfig.debugLines, m_renderConfig.debugPoints);
     AppendMeshColliderBoundsDebugDraw(*scene, m_renderConfig.debugLines);
     AppendCameraFrustumDebugDraw(*scene, m_renderConfig.debugLines);
+    if (m_playModeManager.IsEditor()) {
+        m_constructionTool.AppendOverlay(*scene, m_construction, m_renderConfig.debugLines, m_renderConfig.debugPoints);
+        m_renderConfig.debugLines.insert(m_renderConfig.debugLines.end(), m_heatmapLines.begin(), m_heatmapLines.end());
+    }
+    if (m_constructionTool.StatusText() != m_lastConstructionStatus) {
+        m_lastConstructionStatus = m_constructionTool.StatusText();
+        emit constructionStatusChanged(QString::fromStdString(m_lastConstructionStatus));
+    }
     // Set snap value based on current gizmo mode
     switch (m_editorContext.GetGizmoMode()) {
         case Hephaestus::GizmoMode::Translate:
@@ -2313,7 +2575,57 @@ void QtEditorEngine::tryApplyCompletedViewportPick()
         picked = static_cast<entt::entity>(raw);
     }
     Scene* scene = m_editorContext.GetActiveScene();
-    if (!m_viewportPickAltHeld && scene && picked != entt::null &&
+    // A click through a doorway or window selects the opening, unless it landed on something of another shape in
+    // front of the wall (the pick only knows the entity, so anything outside the opening's host counts as behind).
+    // Whether the picked entity's middle is on the camera's side of the opening's wall.
+    auto inFrontOfWall = [&](entt::entity entity, entt::entity opening) {
+        auto& registry = scene->GetRegistry();
+        const entt::entity host = registry.get<TransformComponent>(opening).parent;
+        const auto* hostShape = registry.try_get<ConstructionShapeComponent>(host);
+        const auto& params = registry.get<ConstructionShapeComponent>(opening).opening;
+        Hephaestus::Construction::WallFrame frame;
+        if (!hostShape || !registry.valid(entity) ||
+            !Hephaestus::Construction::GetHostWallFrame(*hostShape, params.side, params.segment, frame)) {
+            return false;
+        }
+        const Mat4 hostWorld = scene->GetWorldTransform(Entity(host, scene));
+        const Vec3 wallPoint = Mat4::TransformPoint(hostWorld, frame.center);
+        const Vec3 wallNormal = Mat4::TransformDirection(hostWorld, frame.normal);
+        Vec3 middle = Mat4::TransformPoint(scene->GetWorldTransform(Entity(entity, scene)), Vec3(0.0f, 0.0f, 0.0f));
+        if (const auto* renderer = registry.try_get<MeshRendererComponent>(entity)) {
+            middle = Mat4::TransformPoint(scene->GetWorldTransform(Entity(entity, scene)),
+                                          vscale(vadd(renderer->localBounds.min, renderer->localBounds.max), 0.5f));
+        }
+        const Vec3 camera(m_camera.positionX, m_camera.positionY, m_camera.positionZ);
+        return (vdot(vsub(camera, wallPoint), wallNormal) > 0.0f) == (vdot(vsub(middle, wallPoint), wallNormal) > 0.0f);
+    };
+    if (scene && !m_viewportPickAltHeld && m_viewportPickOpening != entt::null &&
+        scene->GetRegistry().valid(m_viewportPickOpening)) {
+        const entt::entity host = scene->GetRegistry().get<TransformComponent>(m_viewportPickOpening).parent;
+        const auto* generated = picked != entt::null && scene->GetRegistry().valid(picked)
+            ? scene->GetRegistry().try_get<ConstructionGeneratedComponent>(picked) : nullptr;
+        const bool hostOrBehind = picked == entt::null || picked == host ||
+                                  (generated && static_cast<entt::entity>(generated->ownerEntity) == host) ||
+                                  !inFrontOfWall(picked, m_viewportPickOpening);
+        if (hostOrBehind) {
+            picked = m_viewportPickOpening;
+        }
+    }
+    m_viewportPickOpening = entt::null;
+    bool kitPiece = false;
+    if (scene && picked != entt::null && scene->GetRegistry().valid(picked)) {
+        const auto* generated = scene->GetRegistry().try_get<ConstructionGeneratedComponent>(picked);
+        const auto owner = generated ? static_cast<entt::entity>(generated->ownerEntity) : entt::null;
+        if (generated && !generated->kitSlot.empty() && scene->GetRegistry().valid(owner)) {
+            m_construction.SetPickedPiece(owner, generated->kitSlot);
+            picked = owner;
+            kitPiece = true;
+        }
+    }
+    if (!kitPiece) {
+        m_construction.SetPickedPiece(entt::null, {});
+    }
+    if (!kitPiece && !m_viewportPickAltHeld && scene && picked != entt::null &&
         scene->GetRegistry().valid(picked)) {
         Entity pickedEntity(picked, scene);
         if (pickedEntity.HasComponent<PrefabNodeComponent>()) {
@@ -2324,6 +2636,9 @@ void QtEditorEngine::tryApplyCompletedViewportPick()
     }
     m_editorContext.SelectFromViewportClick(picked, m_viewportPickCtrlHeld, m_viewportPickShiftHeld);
     m_viewportPickWaitingReadback = false;
+    if (kitPiece) {
+        emit kitPiecePicked();
+    }
 }
 
 void QtEditorEngine::createTestMesh()
@@ -2626,6 +2941,30 @@ void QtEditorEngine::loadRendererMesh(MeshRendererComponent& renderer)
     }
 }
 
+void QtEditorEngine::ReloadMeshFiles(const std::vector<std::string>& meshAssetPaths)
+{
+    if (!m_frameRenderer || !m_editorContext.HasActiveScene() || meshAssetPaths.empty()) {
+        return;
+    }
+    std::unordered_set<std::string> keys;
+    for (const std::string& path : meshAssetPaths) {
+        keys.insert(normalizeAssetPath(path));
+    }
+    m_frameRenderer->WaitGpuIdle();
+    for (const std::string& key : keys) {
+        m_frameRenderer->InvalidateMesh(key);
+    }
+    Scene* scene = m_editorContext.GetActiveScene();
+    for (auto handle : scene->GetEntitiesWith<MeshRendererComponent>()) {
+        auto& renderer = scene->GetRegistry().get<MeshRendererComponent>(handle);
+        if (keys.count(normalizeAssetPath(renderer.meshAssetPath))) {
+            // The old handle points at a destroyed mesh, so look the model up again.
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            loadRendererMesh(renderer);
+        }
+    }
+}
+
 void QtEditorEngine::RebuildSceneMeshes()
 {
     if (!m_frameRenderer || !m_device || !m_editorContext.HasActiveScene()) {
@@ -2905,6 +3244,68 @@ void QtEditorEngine::RebuildSceneMeshes()
 // Play Mode API
 // ─────────────────────────────────────────────────────────────────────────────
 
+void QtEditorEngine::StartPlayModeFromHere()
+{
+    if (!m_editorContext.HasActiveScene() || !m_playModeManager.IsEditor()) {
+        return;
+    }
+    const Vec3 eye(m_camera.positionX, m_camera.positionY, m_camera.positionZ);
+    const float yaw = m_camera.yawDeg * 3.14159265f / 180.0f;
+    m_playAfterSnapshot = [this, eye, yaw](Scene& scene) {
+        m_playerSpawnEye = eye;
+        m_playerSpawnYaw = yaw;
+        placePlayerAtEditorCamera(scene);
+    };
+    StartPlayMode();
+    m_playAfterSnapshot = {};
+}
+
+void QtEditorEngine::placePlayerAtEditorCamera(Scene& scene)
+{
+    entt::registry& registry = scene.GetRegistry();
+    entt::entity player = entt::null;
+    float eyeHeight = 0.0f;
+    // The player is the character controller that carries a camera on itself or below it.
+    entt::entity fallback = entt::null;
+    for (entt::entity entity : registry.view<CharacterControllerComponent, TransformComponent>()) {
+        std::vector<entt::entity> pending{entity};
+        while (!pending.empty() && player == entt::null) {
+            const entt::entity current = pending.back();
+            pending.pop_back();
+            if (registry.all_of<CameraComponent>(current)) {
+                player = entity;
+                const Mat4 cameraWorld = scene.GetWorldTransform(Entity(current, &scene));
+                const Mat4 playerWorld = scene.GetWorldTransform(Entity(entity, &scene));
+                eyeHeight = cameraWorld.m[13] - playerWorld.m[13];
+            }
+            if (const auto* transform = registry.try_get<TransformComponent>(current)) {
+                pending.insert(pending.end(), transform->children.begin(), transform->children.end());
+            }
+        }
+        if (player != entt::null) {
+            break;
+        }
+        if (fallback == entt::null) {
+            fallback = entity;
+        }
+    }
+    if (player == entt::null && fallback != entt::null) {
+        player = fallback;
+        eyeHeight = registry.get<CharacterControllerComponent>(fallback).height * 0.9f;
+    }
+    if (player == entt::null) {
+        std::cout << "[QtEditorEngine] Play From Here: no player (a Character Controller) in the scene\n";
+        return;
+    }
+    Vec3 feet = vsub(m_playerSpawnEye, Vec3(0.0f, eyeHeight, 0.0f));
+    auto& transform = registry.get<TransformComponent>(player);
+    if (transform.parent != entt::null && registry.valid(transform.parent)) {
+        feet = Mat4::TransformPoint(Mat4::Invert(scene.GetWorldTransform(Entity(transform.parent, &scene))), feet);
+    }
+    transform.position = feet;
+    transform.rotation.y = m_playerSpawnYaw;
+}
+
 void QtEditorEngine::StartPlayMode()
 {
     if (!m_editorContext.HasActiveScene()) {
@@ -3149,7 +3550,10 @@ void QtEditorEngine::StartPlayMode()
     PrefabOverrideSystem::InvalidateAssetCache();
 
     // Start!
-    m_playModeManager.StartPlayMode();
+    m_constructionTool.Cancel(*scene);
+    m_constructionOwnsClick = false;
+    m_playModeManager.StartPlayMode(m_playAfterSnapshot);
+    m_playAfterSnapshot = {};
 
     // Request keyboard focus on the viewport so Lua scripts can receive input
     // Enable force input forwarding so mouse events reach the UI even when overlay is visible

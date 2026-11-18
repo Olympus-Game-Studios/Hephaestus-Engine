@@ -39,6 +39,8 @@
 #include "../../Scene/SceneAuthoring.h"
 #include "../../Automation/AutomationBackend.h"
 #include "../../Core/PlayModeManager.h"
+#include "../../Construction/ConstructionSystem.h"
+#include "../../Construction/ConstructionTool.h"
 #include "../../Input/InputSystem.h"
 
 // Forward declarations (avoid including heavy engine headers)
@@ -173,6 +175,8 @@ public:
      * to the GPU and entity handles are set correctly.
      */
     void RebuildSceneMeshes();
+    /// Loads these model files again (after they changed on disk) for every mesh renderer that shows them.
+    void ReloadMeshFiles(const std::vector<std::string>& meshAssetPaths);
     AudioEngine* GetAudioEngine() const { return m_audioEngine.get(); }
 
     /**
@@ -189,6 +193,8 @@ public:
     bool RaycastViewport(float x, float y,
                          Hephaestus::SceneAuthoring::SceneRaycastHit& outHit,
                          const std::unordered_set<entt::entity>& ignored = {});
+    /// The construction shape face under viewport-local coordinates.
+    bool PickConstructionFace(float x, float y, Hephaestus::Construction::ConstructionHit& outHit);
 
     /**
      * @brief Get the camera controller for external configuration.
@@ -212,12 +218,29 @@ public:
         m_debugPoints = std::move(points);
     }
 
+    // Construction shapes: their evaluation and the viewport tools that draw and edit them.
+    Hephaestus::Construction::ConstructionSystem& GetConstruction() { return m_construction; }
+    void SetConstructionToolMode(Hephaestus::Construction::ToolMode mode);
+    Hephaestus::Construction::ToolMode GetConstructionToolMode() const { return m_constructionTool.Mode(); }
+    std::string ConstructionStatusText() const { return m_constructionTool.StatusText(); }
+    std::string MeasureSummary() const { return m_constructionTool.MeasureSummary(); }
+    // Lines drawn over the level in the editor (not in Play), such as a playtest heatmap; empty clears them.
+    void SetHeatmapLines(std::vector<EditorDebugLine> lines) { m_heatmapLines = std::move(lines); }
+    /// Evaluate construction shapes now, so automation sees up-to-date geometry and collision.
+    void UpdateConstruction();
+
     // ── Play Mode API ─────────────────────────────────────────────────────
 
     /**
      * @brief Start play mode – snapshots scene, inits scripts, transitions camera.
      */
     void StartPlayMode();
+
+    /**
+     * @brief Start play mode with the player standing where the editor camera is, facing the same way.
+     * The scene snapshot is taken first, so Stop puts the player back where it was authored.
+     */
+    void StartPlayModeFromHere();
 
     /**
      * @brief Stop play mode – tears down scripts, restores scene + editor camera.
@@ -335,6 +358,8 @@ public:
 signals:
     void sceneHierarchyChanged();
     void deleteSelectionRequested();
+    // A kit piece was clicked in the viewport; its shape is selected and ConstructionSystem::PickedPiece names it.
+    void kitPiecePicked();
     void viewportContextMenuRequested(float x, float y);
     void cameraSpeedChanged(float speed);
 
@@ -364,6 +389,9 @@ signals:
     /** @brief Rendering moved to this window (the editor viewport, or a Play window). */
     void presentationTargetChanged(QtViewportWindow* window);
 
+    /** @brief The construction tool changed mode or what it is asking for. */
+    void constructionStatusChanged(const QString& status);
+
 private slots:
     /**
      * @brief Called by QTimer to tick the engine.
@@ -371,6 +399,8 @@ private slots:
     void onTick();
 
 private:
+    void placePlayerAtEditorCamera(Scene& scene);
+    void ensureConstructionSink();
     bool createVulkanInstance();
     bool initializeVulkanDevice();
     void applyPresentationTarget();
@@ -395,6 +425,8 @@ private:
     void simulateGameplayFrame(float dt);
     bool reloadRuntimeScene(const std::string& scenePath, std::string& outError);
     void captureGizmoMultiDragWorldStarts(Scene* scene);
+    // Moves a translated world transform so the moved shape's faces sit flush on nearby shapes' faces.
+    void SnapMovedFacesToNeighbours(Scene& scene, entt::entity primary, Mat4& newWorldPrimary) const;
     void clearGizmoMultiDragWorldStarts();
     void selectEntitiesInViewportRect(float x0, float y0, float x1, float y1,
                                       bool add, bool toggle);
@@ -516,6 +548,17 @@ private:
     float m_rmbPressY = 0.0f;
     bool m_rmbMoved = false;
     entt::entity m_placementPreview = entt::null;
+    bool viewportRay(float x, float y, Ray& outRay) const;
+    Hephaestus::Construction::ConstructionSystem m_construction;
+    std::vector<EditorDebugLine> m_heatmapLines;
+    entt::entity m_viewportPickOpening = entt::null;  // the opening the last pick click passed through
+    Hephaestus::Construction::ConstructionTool m_constructionTool;
+    std::uint64_t m_constructionSceneIdentity = 0;
+    std::string m_lastConstructionStatus;
+    bool m_constructionOwnsClick = false;
+    std::function<void(Scene&)> m_playAfterSnapshot;
+    Vec3 m_playerSpawnEye;
+    float m_playerSpawnYaw = 0.0f;
 };
 
 } // namespace QtEditor

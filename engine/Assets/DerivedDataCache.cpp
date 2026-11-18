@@ -48,6 +48,18 @@ bool DerivedDataCache::Store(const std::string& key, const std::vector<uint8_t>&
     return true;
 }
 
+bool DerivedDataCache::Load(const std::string& key, std::vector<uint8_t>& payload) const {
+    if (root_.empty() || key.empty()) {
+        return false;
+    }
+    std::ifstream in(GetPathForKey(key), std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    payload.assign(std::istreambuf_iterator<char>(in), {});
+    return in.good() || in.eof();
+}
+
 bool DerivedDataCache::Has(const std::string& key) const {
     if (root_.empty() || key.empty()) {
         return false;

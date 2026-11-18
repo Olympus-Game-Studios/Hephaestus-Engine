@@ -114,7 +114,9 @@ public:
 
     /// Enter play mode.  Snapshots the scene, initialises scripts, transitions camera.
     /// @return true on success; false if already playing or scene is null.
-    bool StartPlayMode();
+    /// @param afterSnapshot Runs on the scene after the snapshot and before scripts wake, so its changes are
+    ///        seen by scripts but undone on Stop.
+    bool StartPlayMode(const std::function<void(Scene&)>& afterSnapshot = {});
 
     /// Freeze / unfreeze the play loop.
     void TogglePause();

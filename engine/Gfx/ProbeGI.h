@@ -31,6 +31,7 @@ public:
     // Optional: without it the probes see the sun unoccluded.
     bool InitSunMap(VkRenderPass depthOnlyRenderPass);
     void Shutdown();
+    void ForgetMesh(VkBuffer vertexBuffer) { m_tracer.ForgetMesh(vertexBuffer); }
 
     VkDescriptorSetLayout SetLayout() const { return m_setLayout; }
     VkDescriptorSetLayout EmptySetLayout() const { return m_emptySetLayout; }
