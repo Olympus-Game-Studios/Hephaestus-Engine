@@ -927,6 +927,7 @@ struct PluginScriptHost::HostApi {
         api.archiveReadFile = &ArchiveReadFile;
         api.meshCreate = &MeshCreate;
         api.colliderAddConvexHulls = &ColliderAddConvexHulls;
+        api.meshUpdate = &MeshUpdate;
     }
 
     // Archives
@@ -988,19 +989,9 @@ struct PluginScriptHost::HostApi {
         box.max = Vec3(std::max(box.max.x, p.x), std::max(box.max.y, p.y), std::max(box.max.z, p.z));
     }
 
-    static HPEntityId MeshCreate(void* host, const char* name, const HPMeshSection* sections, uint32_t sectionCount,
-                                 char* error, size_t errorSize) {
-        PluginScriptHost& self = Host(host);
-        if (!self.m_Scene || !self.m_MeshSink.upload) {
-            WriteError("runtime meshes are not available here", error, errorSize);
-            return 0;
-        }
-        if (!sections || sectionCount == 0) {
-            WriteError("meshCreate needs at least one section", error, errorSize);
-            return 0;
-        }
-        MeshData mesh;
-        std::vector<std::string> materials;
+    // The sections as one mesh with a submesh each; false with a message when one is malformed.
+    static bool BuildMesh(const HPMeshSection* sections, uint32_t sectionCount, MeshData& mesh,
+                          std::vector<std::string>& materials, char* error, size_t errorSize) {
         bool meshEmpty = true;
         for (uint32_t s = 0; s < sectionCount; ++s) {
             const HPMeshSection& section = sections[s];
@@ -1048,10 +1039,29 @@ struct PluginScriptHost::HostApi {
         }
         if (mesh.indices.empty()) {
             WriteError("the mesh has no triangles", error, errorSize);
+            return false;
+        }
+        return true;
+    }
+
+    static HPEntityId MeshCreate(void* host, const char* name, const HPMeshSection* sections, uint32_t sectionCount,
+                                 char* error, size_t errorSize) {
+        PluginScriptHost& self = Host(host);
+        if (!self.m_Scene || !self.m_MeshSink.upload) {
+            WriteError("runtime meshes are not available here", error, errorSize);
+            return 0;
+        }
+        if (!sections || sectionCount == 0) {
+            WriteError("meshCreate needs at least one section", error, errorSize);
+            return 0;
+        }
+        MeshData mesh;
+        std::vector<std::string> materials;
+        if (!BuildMesh(sections, sectionCount, mesh, materials, error, errorSize)) {
             return 0;
         }
         const std::string entityName = name && *name ? name : "Runtime Mesh";
-        const size_t handle = self.m_MeshSink.upload(entityName, mesh);
+        const size_t handle = self.m_MeshSink.upload(MeshRendererComponent::InvalidMesh, entityName, mesh);
         if (handle == MeshRendererComponent::InvalidMesh) {
             WriteError("the mesh could not be uploaded", error, errorSize);
             return 0;
@@ -1063,6 +1073,40 @@ struct PluginScriptHost::HostApi {
         renderer.appliedMaterialPaths = std::move(materials);
         renderer.materialIndices.assign(sectionCount, -1);
         return ToHandle(static_cast<uint32_t>(static_cast<entt::entity>(entity)));
+    }
+
+    static int32_t MeshUpdate(void* host, HPEntityId entity, const HPMeshSection* sections, uint32_t sectionCount,
+                              char* error, size_t errorSize) {
+        PluginScriptHost& self = Host(host);
+        if (!self.m_Scene || !self.m_MeshSink.upload || !Valid(host, entity)) {
+            WriteError("meshUpdate needs a mesh made by meshCreate", error, errorSize);
+            return 0;
+        }
+        const auto handleEntity = static_cast<entt::entity>(ToEntityId(entity));
+        auto* renderer = self.m_Scene->GetRegistry().try_get<MeshRendererComponent>(handleEntity);
+        if (!renderer || std::find(self.m_SessionMeshes.begin(), self.m_SessionMeshes.end(), renderer->meshHandle) ==
+                             self.m_SessionMeshes.end()) {
+            WriteError("meshUpdate needs a mesh made by meshCreate", error, errorSize);
+            return 0;
+        }
+        if (!sections || sectionCount != static_cast<uint32_t>(renderer->submeshCount)) {
+            WriteError("meshUpdate must keep the mesh's " + std::to_string(renderer->submeshCount) + " sections", error,
+                       errorSize);
+            return 0;
+        }
+        MeshData mesh;
+        std::vector<std::string> ignored;
+        if (!BuildMesh(sections, sectionCount, mesh, ignored, error, errorSize)) {
+            return 0;
+        }
+        const auto* tag = self.m_Scene->GetRegistry().try_get<TagComponent>(handleEntity);
+        const size_t handle = self.m_MeshSink.upload(renderer->meshHandle, tag ? tag->tag : std::string("Runtime Mesh"), mesh);
+        if (handle != renderer->meshHandle) {
+            WriteError("the mesh could not be uploaded", error, errorSize);
+            return 0;
+        }
+        renderer->localBounds = mesh.bounds;
+        return 1;
     }
 
     // Static collision

@@ -405,6 +405,13 @@ typedef struct HPScriptHostAPI {
        added. */
     int32_t (*colliderAddConvexHulls)(void* host, HPEntityId entity, const float* points, const uint32_t* hullSizes,
                                       uint32_t hullCount, char* error, size_t errorSize);
+
+    /* Replaces the geometry of a mesh made by meshCreate, for vertex animation:
+       check structSize. The sections must keep the mesh's section count;
+       their materials are ignored and the mesh keeps its own. Returns 1, or 0
+       with a message in `error` and the mesh unchanged. */
+    int32_t (*meshUpdate)(void* host, HPEntityId entity, const HPMeshSection* sections, uint32_t sectionCount,
+                          char* error, size_t errorSize);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity: its Script

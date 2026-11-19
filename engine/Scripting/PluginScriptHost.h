@@ -48,7 +48,8 @@ public:
 
     /// GPU upload for meshes game modules create (the renderer's dynamic mesh slots).
     struct MeshSink {
-        std::function<size_t(const std::string& name, const MeshData& mesh)> upload;
+        /// Uploads into `handle`'s slot, or a new slot for MeshRendererComponent::InvalidMesh.
+        std::function<size_t(size_t handle, const std::string& name, const MeshData& mesh)> upload;
         std::function<void(size_t handle)> release;
     };
     void SetMeshSink(MeshSink sink) { m_MeshSink = std::move(sink); }

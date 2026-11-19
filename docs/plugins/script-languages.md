@@ -163,3 +163,5 @@ HP_GetGameModules(uint32_t hostApiVersion, uint32_t* count) {
 Game modules, like scripts, can mount read only ZIP or PK3 archives with `archiveMount` and read their files with `archiveReadFile`. Mounted files share one namespace that ignores case, a later mount wins for the same path, and every mount is removed when play stops. A game that reads content the player owns (an install folder outside the project) mounts it this way at runtime, so it is never packaged.
 
 `meshCreate` builds an entity from triangle sections (`HPMeshSection`, one material slot each, counter-clockwise front faces, positions in metres). Its GPU buffers are freed when play stops, together with the session's archives.
+
+`meshUpdate` replaces that mesh's geometry, for animation: pass the same number of sections (their vertex and index counts may change); the mesh keeps its materials and its bounds follow the new vertices. Uploads go to host visible buffers and never wait on the GPU, so a module can pose a model each frame.

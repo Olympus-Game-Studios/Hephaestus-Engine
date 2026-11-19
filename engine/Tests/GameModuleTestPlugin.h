@@ -19,6 +19,8 @@ typedef struct GameModuleTestStats {
     int badMeshRejected;
     int hullsAdded;
     int badHullRejected;
+    int meshUpdated;
+    int meshUpdateCountRejected;
 } GameModuleTestStats;
 
 GameModuleTestStats* TestGameModule_Stats(void);

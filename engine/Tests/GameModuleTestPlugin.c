@@ -50,6 +50,17 @@ static void* BeginPlay(const HPScriptHostAPI* host) {
         section.indices = badIndices;
         g_Stats.badMeshRejected = host->meshCreate(host->host, "Bad", &section, 1, error, sizeof error) == 0 &&
                                   strstr(error, "index") != NULL;
+        {
+            static const HPMeshVertex moved[3] = {
+                {{0, 0, 0}, {0, 1, 0}, {1, 1, 1}, {0, 0}},
+                {{2, 0, 0}, {0, 1, 0}, {1, 1, 1}, {1, 0}},
+                {{0, 0, -1}, {0, 1, 0}, {1, 1, 1}, {0, 1}}};
+            HPMeshSection frame = {sizeof(HPMeshSection), moved, 3, indices, 3, NULL};
+            HPMeshSection two[2] = {frame, frame};
+            g_Stats.meshUpdated = host->meshUpdate(host->host, g_Stats.meshEntity, &frame, 1, error, sizeof error);
+            g_Stats.meshUpdateCountRejected = host->meshUpdate(host->host, g_Stats.meshEntity, two, 2, error, sizeof error) == 0 &&
+                                              strstr(error, "sections") != NULL;
+        }
     }
     {
         static const float cube[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1,

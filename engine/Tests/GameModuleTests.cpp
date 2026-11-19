@@ -207,9 +207,16 @@ int main(int argc, char** argv)
         std::vector<size_t> uploads;
         std::vector<size_t> releases;
         std::size_t uploadedIndices = 0;
+        std::vector<size_t> replaced;
+        float uploadedMaxX = 0.0f;
         host.SetMeshSink(PluginScriptHost::MeshSink{
-            [&](const std::string&, const MeshData& mesh) {
+            [&](size_t handle, const std::string&, const MeshData& mesh) {
                 uploadedIndices = mesh.indices.size();
+                uploadedMaxX = mesh.bounds.max.x;
+                if (handle != MeshRendererComponent::InvalidMesh) {
+                    replaced.push_back(handle);
+                    return handle;
+                }
                 uploads.push_back(40 + uploads.size());
                 return uploads.back();
             },
@@ -237,8 +244,14 @@ int main(int argc, char** argv)
         pass &= Check(renderer && uploads.size() == 1 && uploadedIndices == 3 && renderer->meshHandle == 40 &&
                           renderer->submeshCount == 1 && renderer->appliedMaterialPaths.size() == 1 &&
                           renderer->appliedMaterialPaths[0] == "materials/floor.hematerial" &&
-                          renderer->localBounds.min.z == -1.0f && renderer->localBounds.max.x == 1.0f,
+                          renderer->localBounds.min.z == -1.0f,
                       "a game module creates a mesh entity with its material slots and bounds");
+        pass &= Check(stats.meshUpdated == 1 && replaced.size() == 1 && replaced[0] == 40 && uploadedMaxX == 2.0f &&
+                          renderer && renderer->localBounds.max.x == 2.0f &&
+                          renderer->appliedMaterialPaths[0] == "materials/floor.hematerial",
+                      "meshUpdate replaces the geometry in the same slot, with new bounds and the same materials");
+        pass &= Check(stats.meshUpdateCountRejected == 1 && replaced.size() == 1,
+                      "meshUpdate refuses a different section count and uploads nothing");
         pass &= Check(stats.badMeshRejected == 1 && uploads.size() == 1, "a mesh with an index past its vertices is rejected");
         int hulls = 0;
         bool parented = true;

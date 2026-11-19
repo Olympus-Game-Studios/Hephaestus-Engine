@@ -759,8 +759,8 @@ int main(int argc, char* argv[]) {
     pluginScripts.SetLuaEngine(&luaEngine);
     pluginScripts.SetInputSystem(&inputSystem);
     pluginScripts.SetMeshSink(PluginScriptHost::MeshSink{
-        [&frameRenderer](const std::string& name, const MeshData& mesh) {
-            return frameRenderer.UploadDynamicMesh(MeshRendererComponent::InvalidMesh, name, mesh);
+        [&frameRenderer](size_t handle, const std::string& name, const MeshData& mesh) {
+            return frameRenderer.UploadDynamicMesh(handle, name, mesh);
         },
         [&frameRenderer](size_t handle) { frameRenderer.ReleaseDynamicMesh(handle); }});
     for (const fs::path& module : Hephaestus::Plugins::StagedRuntimeModules(g_RuntimeRoot)) {
