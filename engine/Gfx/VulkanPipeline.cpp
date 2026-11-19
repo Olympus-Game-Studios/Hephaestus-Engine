@@ -1,4 +1,5 @@
 ﻿#include "VulkanPipeline.h"
+#include "MaterialTextureSlots.h"
 #include "VulkanSwapchain.h"
 #include <fstream>
 #include <stdexcept>
@@ -50,7 +51,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     extent = ext;
     ownsDescriptorSetLayout = true;
 
-    constexpr uint32_t kTextureArraySize = 128; // Keep in sync with main texture slot count
+    constexpr uint32_t kTextureArraySize = kMaxMaterialTextureSlots;
 
     // Create descriptor set layout with 6 bindings:
     // - binding 0: UBO (view/proj matrices + camera position)

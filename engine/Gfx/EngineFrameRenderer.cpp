@@ -2409,7 +2409,7 @@ bool EngineFrameRenderer::createDescriptorSets()
     size_t imageCount = m_swapchain->images.size();
     
     // Create descriptor pool
-    constexpr uint32_t kTextureArraySize = 128;
+    constexpr uint32_t kTextureArraySize = kMaxMaterialTextureSlots;
     VkDescriptorPoolSize poolSizes[] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount) },

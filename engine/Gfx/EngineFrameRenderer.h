@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "MaterialTextureSlots.h"
+
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <vector>
@@ -602,7 +604,6 @@ private:
     std::unordered_map<std::string, uint32_t> m_materialTextureLookup;
     std::vector<std::vector<uint32_t>> m_pendingTextureSlotUpdates;
     uint32_t m_defaultMaterialTextureSlot = 0;
-    static constexpr uint32_t kMaxMaterialTextureSlots = 128;
 
     // Per-frame material UBO parameters
     VkDeviceSize m_materialStride = 0;           // Aligned stride for one material in the dynamic UBO

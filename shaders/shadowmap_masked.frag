@@ -1,7 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
-#define MAX_TEXTURE_SLOTS 128
+#define MAX_TEXTURE_SLOTS 512 // engine/Gfx/MaterialTextureSlots.h
 
 layout(push_constant) uniform MaskedShadowPush {
     mat4 lightModelViewProj;

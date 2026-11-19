@@ -4,7 +4,7 @@
 #extension GL_EXT_ray_query : require
 #endif
 
-#define MAX_TEXTURE_SLOTS 128
+#define MAX_TEXTURE_SLOTS 512 // engine/Gfx/MaterialTextureSlots.h
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragColor;
