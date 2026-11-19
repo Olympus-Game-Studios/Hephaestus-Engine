@@ -91,7 +91,8 @@ public:
     /**
      * Resolve a font file for a family/weight/style.
      * Search order:
-     *   1. A literal file matching <family> (.ttf/.otf) in any search path.
+     *   1. The file <family> names: an absolute path, or a file in any search path, as given or with
+     *      .ttf/.otf added, or with its letters and digits lowercased.
      *   2. The bundled Roboto font (assets/fonts) for common families.
      *   3. Platform system font directories.
      * Returns an empty string when nothing can be resolved.

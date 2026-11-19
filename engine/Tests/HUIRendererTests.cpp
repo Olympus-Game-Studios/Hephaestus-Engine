@@ -684,6 +684,12 @@ bool TestFontAtlas(const std::string& repoRoot) {
     const std::string file = HUI::UIFontAtlas::ResolveFontFile(
         "Default", false, false, {repoRoot + "/assets"});
     if (!Check(!file.empty(), "ResolveFontFile finds the bundled font")) local = false;
+    const std::string byName = HUI::UIFontAtlas::ResolveFontFile("Roboto-Bold", false, false, {repoRoot + "/assets/fonts"});
+    if (!Check(std::filesystem::path(byName).filename() == "Roboto-Bold.ttf",
+               "a family names its file, punctuation and all")) local = false;
+    const std::string absolute = std::filesystem::absolute(repoRoot + "/assets/fonts/Roboto-Bold.ttf").string();
+    if (!Check(HUI::UIFontAtlas::ResolveFontFile(absolute, false, false, {}) == absolute,
+               "a family can be an absolute font file path")) local = false;
 
     HUI::UIFontAtlas atlas;
     if (!Check(atlas.LoadFromFile(file, 32.0f), "LoadFromFile succeeds at 32px")) local = false;

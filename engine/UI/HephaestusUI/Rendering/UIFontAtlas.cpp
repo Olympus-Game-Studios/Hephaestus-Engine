@@ -94,11 +94,29 @@ std::string UIFontAtlas::ResolveFontFile(const std::string& family, bool bold, b
     }
     if (norm.empty()) norm = "default";
 
-    // 1. Explicit font file referenced by the family name (e.g. "MyFont.ttf").
-    for (const std::string& dir : searchPaths) {
+    // 1. Explicit font file referenced by the family name (e.g. "My-Font.ttf", "My-Font", or an absolute path).
+    const fs::path named = fs::u8path(family);
+    std::string extension = named.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::vector<fs::path> names;
+    if (extension == ".ttf" || extension == ".otf") {
+        names.push_back(named);
+    } else {
         for (const char* ext : {".ttf", ".otf"}) {
-            const fs::path candidate = fs::path(dir) / (norm + ext);
-            if (FileExists(candidate)) {
+            names.push_back(fs::u8path(family + ext));
+            names.push_back(fs::path(norm + ext));
+        }
+    }
+    for (const fs::path& name : names) {
+        if (name.is_absolute() && FileExists(name)) {
+            return name.string();
+        }
+    }
+    for (const std::string& dir : searchPaths) {
+        for (const fs::path& name : names) {
+            const fs::path candidate = fs::path(dir) / name;
+            if (!name.is_absolute() && FileExists(candidate)) {
                 return candidate.string();
             }
         }

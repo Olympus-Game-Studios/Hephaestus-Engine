@@ -405,7 +405,7 @@ UITextureInfo VulkanHUIRenderer::ResolveTexture(const std::string& imageId) {
 
     VulkanTexture texture;
     if (!texture.LoadFromFile(m_Allocator, m_Device->device, m_Device->physicalDevice,
-                              m_Device->commandPool, m_Device->graphicsQueue, absPath, false)) {
+                              m_Device->commandPool, m_Device->graphicsQueue, absPath, false, m_SrgbOutput)) {
         if (!m_MissingAssetsLogged[absPath]) {
             std::cerr << "[HUI] Missing image asset: " << imageId
                       << " (resolved to " << absPath << ")\n";
