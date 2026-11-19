@@ -17,6 +17,8 @@ typedef struct GameModuleTestStats {
     int refusedCalls;
     unsigned long long meshEntity;
     int badMeshRejected;
+    int hullsAdded;
+    int badHullRejected;
 } GameModuleTestStats;
 
 GameModuleTestStats* TestGameModule_Stats(void);

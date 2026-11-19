@@ -51,6 +51,15 @@ static void* BeginPlay(const HPScriptHostAPI* host) {
         g_Stats.badMeshRejected = host->meshCreate(host->host, "Bad", &section, 1, error, sizeof error) == 0 &&
                                   strstr(error, "index") != NULL;
     }
+    {
+        static const float cube[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1,
+                                     0, 0, 0, 1, 0, 0, 0, 1, 0};
+        const uint32_t good[] = {8};
+        const uint32_t bad[] = {8, 3};
+        g_Stats.hullsAdded = host->colliderAddConvexHulls(host->host, g_Stats.meshEntity, cube, good, 1, error, sizeof error);
+        g_Stats.badHullRejected = host->colliderAddConvexHulls(host->host, g_Stats.meshEntity, cube, bad, 2, error,
+                                                               sizeof error) == 0 && strstr(error, "fewer than 4") != NULL;
+    }
     return &g_Session;
 }
 

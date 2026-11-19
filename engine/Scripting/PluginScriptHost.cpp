@@ -17,6 +17,7 @@
 #include "../Scene/Scene.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -925,6 +926,7 @@ struct PluginScriptHost::HostApi {
         api.archiveFileName = &ArchiveFileName;
         api.archiveReadFile = &ArchiveReadFile;
         api.meshCreate = &MeshCreate;
+        api.colliderAddConvexHulls = &ColliderAddConvexHulls;
     }
 
     // Archives
@@ -1061,6 +1063,64 @@ struct PluginScriptHost::HostApi {
         renderer.appliedMaterialPaths = std::move(materials);
         renderer.materialIndices.assign(sectionCount, -1);
         return ToHandle(static_cast<uint32_t>(static_cast<entt::entity>(entity)));
+    }
+
+    // Static collision
+
+    static int32_t ColliderAddConvexHulls(void* host, HPEntityId owner, const float* points, const uint32_t* hullSizes,
+                                          uint32_t hullCount, char* error, size_t errorSize) {
+        PluginScriptHost& self = Host(host);
+        if (!Valid(host, owner)) {
+            WriteError("colliderAddConvexHulls needs an existing entity", error, errorSize);
+            return 0;
+        }
+        if (hullCount > 0 && (!points || !hullSizes)) {
+            WriteError("colliderAddConvexHulls needs points and hull sizes", error, errorSize);
+            return 0;
+        }
+        // Check every hull before creating anything, so a bad one adds nothing.
+        size_t total = 0;
+        for (uint32_t h = 0; h < hullCount; ++h) {
+            if (hullSizes[h] < 4) {
+                WriteError("hull " + std::to_string(h) + " has fewer than 4 points", error, errorSize);
+                return 0;
+            }
+            total += hullSizes[h];
+        }
+        for (size_t i = 0; i < total * 3; ++i) {
+            if (!std::isfinite(points[i])) {
+                WriteError("a hull point is not finite", error, errorSize);
+                return 0;
+            }
+        }
+        Scene& scene = *self.m_Scene;
+        Entity ownerEntity(static_cast<entt::entity>(ToEntityId(owner)), &scene);
+        const float* p = points;
+        for (uint32_t h = 0; h < hullCount; ++h) {
+            float sum[3] = {0.0f, 0.0f, 0.0f};
+            for (uint32_t k = 0; k < hullSizes[h]; ++k) {
+                for (int c = 0; c < 3; ++c) sum[c] += p[3 * k + c];
+            }
+            const float inverse = 1.0f / static_cast<float>(hullSizes[h]);
+            const Vec3 center(sum[0] * inverse, sum[1] * inverse, sum[2] * inverse);
+            Entity collider = scene.CreateEntity("Collision");
+            collider.GetComponent<TransformComponent>().position = center;
+            PhysicsShapeComponent shape;
+            shape.type = PhysicsShapeType::ConvexHull;
+            for (uint32_t k = 0; k < hullSizes[h]; ++k) {
+                shape.points.push_back(Vec3(p[3 * k] - center.x, p[3 * k + 1] - center.y, p[3 * k + 2] - center.z));
+            }
+            collider.AddComponent<PhysicsShapeComponent>(shape);
+            auto& body = collider.AddComponent<RigidBodyComponent>();
+            body.isStatic = true;
+            body.motion = RigidBodyMotion::Static;
+            body.mass = 0.0f;
+            body.useGravity = false;
+            body.layer = 1;
+            scene.SetParent(collider, ownerEntity, false);
+            p += 3 * static_cast<size_t>(hullSizes[h]);
+        }
+        return 1;
     }
 };
 

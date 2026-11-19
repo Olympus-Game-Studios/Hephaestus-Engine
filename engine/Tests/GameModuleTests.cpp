@@ -240,6 +240,19 @@ int main(int argc, char** argv)
                           renderer->localBounds.min.z == -1.0f && renderer->localBounds.max.x == 1.0f,
                       "a game module creates a mesh entity with its material slots and bounds");
         pass &= Check(stats.badMeshRejected == 1 && uploads.size() == 1, "a mesh with an index past its vertices is rejected");
+        int hulls = 0;
+        bool parented = true;
+        for (auto [handle, shape, transform] :
+             scene.GetRegistry().view<PhysicsShapeComponent, TransformComponent>().each()) {
+            if (shape.type == PhysicsShapeType::ConvexHull) {
+                ++hulls;
+                parented &= transform.parent == meshEntity && shape.points.size() == 8 &&
+                            transform.position.x == 0.5f && scene.GetRegistry().all_of<RigidBodyComponent>(handle);
+            }
+        }
+        pass &= Check(stats.hullsAdded == 1 && hulls == 1 && parented,
+                      "a game module adds a static convex hull collider under its mesh, centred on its points");
+        pass &= Check(stats.badHullRejected == 1, "a hull with fewer than four points is rejected and adds nothing");
 
         host.OnSimulationStopped();
         lua.OnSimulationStopped();

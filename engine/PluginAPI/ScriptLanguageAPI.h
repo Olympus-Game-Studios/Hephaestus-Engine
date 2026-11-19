@@ -396,6 +396,15 @@ typedef struct HPScriptHostAPI {
        mesh's GPU buffers are freed when play stops. */
     HPEntityId (*meshCreate)(void* host, const char* name, const HPMeshSection* sections, uint32_t sectionCount,
                              char* error, size_t errorSize);
+
+    /* Static collision for an entity, added with game modules: check
+       structSize. Each convex hull is hullSizes[i] points (x, y, z in the
+       entity's local space, metres) taken in turn from `points`, and becomes a
+       static collider child of the entity on the World layer, so it moves
+       with the entity. Returns 1, or 0 with a message in `error` and nothing
+       added. */
+    int32_t (*colliderAddConvexHulls)(void* host, HPEntityId entity, const float* points, const uint32_t* hullSizes,
+                                      uint32_t hullCount, char* error, size_t errorSize);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity: its Script
