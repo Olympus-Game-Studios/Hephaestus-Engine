@@ -17,6 +17,7 @@
 #include "../UI/HephaestusUI/Rendering/VulkanHUIRenderer.h"
 
 #include <nlohmann/json.hpp>
+#include "../Scene/MaterialLayersJson.h"
 
 #include <iostream>
 #include <cstring>
@@ -78,8 +79,21 @@ struct alignas(16) MaterialUBO {
     uint32_t useLightmap;
     uint32_t lightmapTextureIndex;
     uint32_t graphTextureSlots[16]; // shaders/triangle.frag graphTextureSlots, read by compiled material graphs
+    uint32_t layerCount;
+    uint32_t layerPadding[3];
+    // shaders/triangle.frag MaterialLayerData
+    struct Layer {
+        uint32_t config[4];
+        uint32_t frames[8];
+        float colorWave[4];
+        float alphaWave[4];
+        float constant[4];
+        float uv0[4];
+        float uv1[4];
+    } layers[kMaxMaterialLayers];
 };
 static_assert(offsetof(MaterialUBO, graphTextureSlots) == 144);
+static_assert(offsetof(MaterialUBO, layers) == 224 && sizeof(MaterialUBO::Layer) == 128);
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
 constexpr float kLightIconHalfExtent = 0.045f; // fraction of the viewport half-height
@@ -3875,6 +3889,12 @@ const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::st
         if (j.contains("aoTexturePath")) loadedMaterial.aoTexturePath = j["aoTexturePath"].get<std::string>();
         loadedMaterial.useLightmap = j.value("useLightmap", false);
         loadedMaterial.lightmapTexturePath = j.value("lightmapTexturePath", std::string());
+        if (j.contains("layers")) {
+            std::string layerError;
+            if (!ParseMaterialLayers(j["layers"], loadedMaterial.layers, layerError)) {
+                std::cerr << "[EngineFrameRenderer] " << cacheKey << ": " << layerError << "\n";
+            }
+        }
         loadedMaterial.roughnessChannel = j.value("roughnessChannel", 0u) & 3u;
         loadedMaterial.metallicChannel = j.value("metallicChannel", 0u) & 3u;
         loadedMaterial.aoChannel = j.value("aoChannel", 0u) & 3u;
@@ -4746,6 +4766,45 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                     matUBO.lightmapTextureIndex = ensureMaterialTextureSlot(mat.lightmapTexturePath);
                 }
                 matUBO.useLightmap = matUBO.lightmapTextureIndex != m_defaultMaterialTextureSlot ? 1u : 0u;
+                matUBO.layerCount = static_cast<uint32_t>(std::min(mat.layers.size(), kMaxMaterialLayers));
+                for (uint32_t i = 0; i < matUBO.layerCount; ++i) {
+                    const MaterialLayer& layer = mat.layers[i];
+                    MaterialUBO::Layer& out = matUBO.layers[i];
+                    const MaterialLayer::Source source =
+                        layer.source == MaterialLayer::Source::Lightmap && !matUBO.useLightmap ? MaterialLayer::Source::White
+                                                                                               : layer.source;
+                    out.config[0] = static_cast<uint32_t>(source) | (layer.clamp ? 0x100u : 0u);
+                    out.config[1] = static_cast<uint32_t>(layer.src) | (static_cast<uint32_t>(layer.dst) << 8) |
+                                    (static_cast<uint32_t>(layer.alphaTest) << 16) |
+                                    (static_cast<uint32_t>(layer.color) << 24);
+                    const size_t frameCount = std::min(layer.frames.size(), MaterialLayer::kMaxFrames);
+                    out.config[2] = static_cast<uint32_t>(frameCount);
+                    out.config[3] = static_cast<uint32_t>(layer.colorWave.function) |
+                                    (static_cast<uint32_t>(layer.alphaWave.function) << 8);
+                    for (size_t f = 0; f < MaterialLayer::kMaxFrames; ++f) {
+                        out.frames[f] = f < frameCount ? ensureMaterialTextureSlot(layer.frames[f]) : m_defaultMaterialTextureSlot;
+                    }
+                    const auto wave = [](const MaterialWave& w, float* to) {
+                        to[0] = w.base;
+                        to[1] = w.amplitude;
+                        to[2] = w.phase;
+                        to[3] = w.frequency;
+                    };
+                    wave(layer.colorWave, out.colorWave);
+                    wave(layer.alphaWave, out.alphaWave);
+                    out.constant[0] = layer.constantColor[0];
+                    out.constant[1] = layer.constantColor[1];
+                    out.constant[2] = layer.constantColor[2];
+                    out.constant[3] = layer.frameRate;
+                    out.uv0[0] = layer.scale[0];
+                    out.uv0[1] = layer.scale[1];
+                    out.uv0[2] = layer.scroll[0];
+                    out.uv0[3] = layer.scroll[1];
+                    out.uv1[0] = layer.rotation;
+                    out.uv1[1] = layer.turbulenceAmplitude;
+                    out.uv1[2] = layer.turbulenceFrequency;
+                    out.uv1[3] = layer.turbulencePhase;
+                }
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);

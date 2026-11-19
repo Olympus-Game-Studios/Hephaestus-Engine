@@ -9,6 +9,7 @@
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
+#include "../../Scene/MaterialLayersJson.h"
 
 namespace MaterialEditor {
 namespace {
@@ -126,6 +127,12 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("aoTexturePath") && root["aoTexturePath"].is_string()) outMaterial.aoTexturePath = root["aoTexturePath"].get<std::string>();
     if (root.contains("useLightmap") && root["useLightmap"].is_boolean()) outMaterial.useLightmap = root["useLightmap"].get<bool>();
     if (root.contains("lightmapTexturePath") && root["lightmapTexturePath"].is_string()) outMaterial.lightmapTexturePath = root["lightmapTexturePath"].get<std::string>();
+    if (root.contains("layers")) {
+        std::string layerError;
+        if (!ParseMaterialLayers(root["layers"], outMaterial.layers, layerError)) {
+            outMaterial.layers.clear();
+        }
+    }
     if (root.contains("useWorldAlignedTexture") && root["useWorldAlignedTexture"].is_boolean()) outMaterial.useWorldAlignedTexture = root["useWorldAlignedTexture"].get<bool>();
     for (auto [key, channel] : {std::pair{"roughnessChannel", &outMaterial.roughnessChannel},
                                 std::pair{"metallicChannel", &outMaterial.metallicChannel},
@@ -360,6 +367,11 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     } else {
         root.erase("useLightmap");
         root.erase("lightmapTexturePath");
+    }
+    if (!material.layers.empty()) {
+        root["layers"] = MaterialLayersToJson(material.layers);
+    } else {
+        root.erase("layers");
     }
     for (const auto& [key, channel] : {std::pair{"roughnessChannel", material.roughnessChannel},
                                        std::pair{"metallicChannel", material.metallicChannel},

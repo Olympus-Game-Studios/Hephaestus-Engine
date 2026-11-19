@@ -23,6 +23,18 @@ layout(std140, set = 0, binding = 0) uniform UBO {
     float time;        // seconds since the renderer started, for material graphs
 } ubo;
 
+// One texture layer of a layered material (engine/Scene/MaterialLayers.h, EngineFrameRenderer.cpp MaterialUBO::Layer).
+struct MaterialLayerData {
+    uvec4 config;    // x source (0 texture, 1 lightmap, 2 white) | 0x100 clamp; y src | dst << 8 | alpha test << 16 | colour << 24;
+                     // z frame count; w colour wave | alpha wave << 8
+    uvec4 frames[2]; // texture slots of up to 8 frames
+    vec4 colorWave;  // base, amplitude, phase, frequency
+    vec4 alphaWave;
+    vec4 constant;   // rgb constant colour, w frames a second
+    vec4 uv0;        // scale xy, scroll xy (per second)
+    vec4 uv1;        // rotation (degrees a second), turbulence amplitude, frequency, phase
+};
+
 // Material properties (set via push constants or additional descriptor sets)
 layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     vec3 albedo;              // offset 0, size 12 (padded to 16 in std140)
@@ -58,6 +70,8 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     uint useLightmap;         // offset 136: baked lighting from lightmapTextureIndex at the second UV set
     uint lightmapTextureIndex; // offset 140
     uvec4 graphTextureSlots[4]; // offset 144: texture slots a compiled material graph samples
+    uvec4 layerInfo;            // offset 208: x layer count
+    MaterialLayerData layers[4]; // offset 224
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -70,6 +84,94 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #define GI_SET 2
 #include "probe_common.glsl"
 #include "material_common.glsl"
+
+float layerWave(uint function, vec4 wave) {
+    if (function == 0u) {
+        return 1.0;
+    }
+    float t = fract(wave.z + wave.w * ubo.time);
+    float f = t;                                          // 4 sawtooth
+    if (function == 1u) f = sin(t * 6.28318530718);       // sin
+    else if (function == 2u) f = 1.0 - 4.0 * abs(fract(t + 0.25) - 0.5); // triangle: 0, 1, 0, -1
+    else if (function == 3u) f = t < 0.5 ? 1.0 : -1.0;    // square
+    else if (function == 5u) f = 1.0 - t;                 // inverse sawtooth
+    return wave.x + wave.y * f;
+}
+
+vec4 layerBlendFactor(uint factor, vec4 src, vec4 dst) {
+    if (factor == 0u) return vec4(0.0);
+    if (factor == 1u) return vec4(1.0);
+    if (factor == 2u) return src;
+    if (factor == 3u) return 1.0 - src;
+    if (factor == 4u) return vec4(src.a);
+    if (factor == 5u) return vec4(1.0 - src.a);
+    if (factor == 6u) return dst;
+    if (factor == 7u) return 1.0 - dst;
+    if (factor == 8u) return vec4(dst.a);
+    return vec4(1.0 - dst.a);
+}
+
+vec4 sampleLayer(MaterialLayerData layer) {
+    uint source = layer.config.x & 0xFFu;
+    if (source == 2u) {
+        return vec4(1.0);
+    }
+    if (source == 1u) {
+        return texture(materialTextures[material.lightmapTextureIndex % MAX_TEXTURE_SLOTS], fragLightmapUV);
+    }
+    vec2 uv = fragTexCoord;
+    if (layer.uv1.y != 0.0) {
+        float phase = layer.uv1.w + layer.uv1.z * ubo.time;
+        uv += layer.uv1.y * sin(6.28318530718 * (phase + vec2(uv.y, uv.x) * 0.125));
+    }
+    uv *= layer.uv0.xy;
+    if (layer.uv1.x != 0.0) {
+        float angle = radians(-layer.uv1.x * ubo.time);
+        vec2 centred = uv - 0.5;
+        uv = vec2(cos(angle) * centred.x - sin(angle) * centred.y, sin(angle) * centred.x + cos(angle) * centred.y) + 0.5;
+    }
+    uv += fract(layer.uv0.zw * ubo.time);
+    if ((layer.config.x & 0x100u) != 0u) {
+        uv = clamp(uv, 0.0, 1.0);
+    }
+    uint frameCount = max(layer.config.z, 1u);
+    uint frame = layer.constant.w > 0.0 ? uint(floor(ubo.time * layer.constant.w)) % frameCount : 0u;
+    uint slot = frame < 4u ? layer.frames[0][frame] : layer.frames[1][frame - 4u];
+    return texture(materialTextures[slot % MAX_TEXTURE_SLOTS], uv);
+}
+
+// The layers drawn over each other in order, as multipass blending would leave them. A layer whose alpha test
+// fails is skipped; on the first layer it discards the fragment.
+vec4 evaluateLayers() {
+    vec4 result = vec4(0.0);
+    uint count = min(material.layerInfo.x, 4u);
+    for (uint i = 0u; i < count; ++i) {
+        MaterialLayerData layer = material.layers[i];
+        vec4 src = sampleLayer(layer);
+        uint colorMode = (layer.config.y >> 24) & 0xFFu;
+        if (colorMode == 1u) src.rgb *= fragColor;
+        else if (colorMode == 2u) src.rgb *= clamp(layerWave(layer.config.w & 0xFFu, layer.colorWave), 0.0, 1.0);
+        else if (colorMode == 3u) src.rgb *= layer.constant.rgb;
+        uint alphaFunction = (layer.config.w >> 8) & 0xFFu;
+        if (alphaFunction != 0u) {
+            src.a = clamp(layerWave(alphaFunction, layer.alphaWave), 0.0, 1.0);
+        }
+        uint alphaTest = (layer.config.y >> 16) & 0xFFu;
+        bool fails = (alphaTest == 1u && src.a <= 0.0) || (alphaTest == 2u && src.a >= 0.5) ||
+                     (alphaTest == 3u && src.a < 0.5);
+        if (fails) {
+            if (i == 0u) discard;
+            continue;
+        }
+        if (i == 0u) {
+            result = src;
+        } else {
+            result = src * layerBlendFactor(layer.config.y & 0xFFu, src, result) +
+                     result * layerBlendFactor((layer.config.y >> 8) & 0xFFu, src, result);
+        }
+    }
+    return result;
+}
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
@@ -391,6 +493,18 @@ void main() {
         }
     } else if (opacity < clamp(surface.clipThreshold, 0.0, 1.0)) {
         discard;
+    }
+    // Layers make the whole colour, lighting included (a lightmap is one of the layers).
+    if (material.layerInfo.x > 0u) {
+        vec4 layered = evaluateLayers();
+        if (material.blendMode == 2u) {
+            outColor = vec4(layered.rgb * opacity, opacity);
+        } else if (material.blendMode == 1u) {
+            outColor = vec4(layered.rgb, clamp(layered.a, 0.0, 1.0) * opacity);
+        } else {
+            outColor = vec4(layered.rgb, opacity);
+        }
+        return;
     }
     if (material.blendMode == 2u) {
         outColor = vec4((albedo + surface.emissive) * opacity, opacity);

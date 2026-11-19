@@ -15,6 +15,7 @@
 #include "CharacterComponent.h"
 #include "CharacterControllerComponent.h"
 #include "../Core/PropertyValue.h"
+#include "MaterialLayers.h"
 
 // ═══════════════════════════════════════════════════════════════
 // CORE COMPONENTS
@@ -687,6 +688,9 @@ struct MaterialComponent {
     // Baked lighting sampled at the mesh's second UV set; replaces dynamic lighting when used
     std::string lightmapTexturePath;
     bool useLightmap = false;
+
+    // Texture layers drawn over each other in order (see MaterialLayers.h); when present they make the whole colour
+    std::vector<MaterialLayer> layers;
 
     // Channel (0 R, 1 G, 2 B, 3 A) each scalar map is read from, so one packed ORM-style texture can feed all three
     uint32_t roughnessChannel = 0;

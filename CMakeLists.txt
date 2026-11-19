@@ -407,6 +407,7 @@ add_library(HephaestusRuntime STATIC
     engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
     engine/Scene/Json.cpp
+    engine/Scene/MaterialLayers.cpp
     engine/Scene/PrefabSerializer.cpp
     engine/Scene/PrefabInstantiator.cpp
     engine/Scene/PrefabComponentIO.cpp
@@ -2344,6 +2345,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         target_link_libraries(GameModuleTests PRIVATE HephaestusRuntime)
         add_dependencies(GameModuleTests GameModuleTestPlugin)
         add_test(NAME GameModules COMMAND GameModuleTests $<TARGET_FILE:GameModuleTestPlugin>)
+        add_executable(MaterialLayersTests engine/Tests/MaterialLayersTests.cpp)
+        target_link_libraries(MaterialLayersTests PRIVATE HephaestusRuntime)
+        add_test(NAME MaterialLayers COMMAND MaterialLayersTests)
         if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
             add_custom_command(TARGET GameModuleTests POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
