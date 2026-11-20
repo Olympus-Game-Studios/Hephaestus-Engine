@@ -4568,6 +4568,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 Hephaestus::MakeViewModelFovAdjust(m_frameViewMatrix, activeCamera->fovDegrees,
                                                    activeCamera->viewModelFovDegrees),
                 *viewModelRebase);
+        } else {
+            // No camera component (a game module driving the view camera): view models are in the view's own frame.
+            viewModelRebase = m_frameViewFrame;
         }
     }
     enum DepthLayer { kWorldLayer = 0, kOverWorldLayer = 1, kViewModelLayer = 2 };

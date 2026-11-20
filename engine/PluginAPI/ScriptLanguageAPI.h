@@ -412,6 +412,16 @@ typedef struct HPScriptHostAPI {
        with a message in `error` and the mesh unchanged. */
     int32_t (*meshUpdate)(void* host, HPEntityId entity, const HPMeshSection* sections, uint32_t sectionCount,
                           char* error, size_t errorSize);
+
+    /* Makes a mesh made by meshCreate a first-person view model, or an
+       ordinary mesh again: check structSize. A view model's position,
+       rotation and scale are in the view's frame (+X forward, +Y up, +Z
+       right, metres): it becomes a child of the active camera, or, when no
+       entity has a camera, sits in the frame of the view camera the module
+       drives. In play it draws in front of the world and casts no shadows.
+       Returns 1, or 0 with a message in `error` and the mesh unchanged when
+       meshCreate did not make it. */
+    int32_t (*meshSetViewModel)(void* host, HPEntityId entity, int32_t viewModel, char* error, size_t errorSize);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity: its Script

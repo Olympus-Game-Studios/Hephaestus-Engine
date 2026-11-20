@@ -11,6 +11,7 @@
 #include "../Input/InputSystem.h"
 #include "../Physics/PhysicsContactEvents.h"
 #include "../Scene/CharacterComponent.h"
+#include "../Scene/ActiveCameraSync.h"
 #include "../Scene/CharacterControllerComponent.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
@@ -928,6 +929,7 @@ struct PluginScriptHost::HostApi {
         api.meshCreate = &MeshCreate;
         api.colliderAddConvexHulls = &ColliderAddConvexHulls;
         api.meshUpdate = &MeshUpdate;
+        api.meshSetViewModel = &MeshSetViewModel;
     }
 
     // Archives
@@ -1073,6 +1075,28 @@ struct PluginScriptHost::HostApi {
         renderer.appliedMaterialPaths = std::move(materials);
         renderer.materialIndices.assign(sectionCount, -1);
         return ToHandle(static_cast<uint32_t>(static_cast<entt::entity>(entity)));
+    }
+
+    static int32_t MeshSetViewModel(void* host, HPEntityId entity, int32_t viewModel, char* error, size_t errorSize) {
+        PluginScriptHost& self = Host(host);
+        const auto handleEntity = static_cast<entt::entity>(ToEntityId(entity));
+        auto* renderer = self.m_Scene && Valid(host, entity)
+                             ? self.m_Scene->GetRegistry().try_get<MeshRendererComponent>(handleEntity)
+                             : nullptr;
+        if (!renderer || std::find(self.m_SessionMeshes.begin(), self.m_SessionMeshes.end(), renderer->meshHandle) ==
+                             self.m_SessionMeshes.end()) {
+            WriteError("meshSetViewModel needs a mesh made by meshCreate", error, errorSize);
+            return 0;
+        }
+        Entity mesh(handleEntity, self.m_Scene);
+        const auto camera = viewModel ? Hephaestus::TryReadActiveCameraView(*self.m_Scene) : std::nullopt;
+        if (camera) {
+            self.m_Scene->SetParent(mesh, Entity(camera->entity, self.m_Scene));
+        } else if (self.m_Scene->GetParent(mesh)) {
+            self.m_Scene->RemoveParent(mesh);
+        }
+        renderer->viewModel = viewModel != 0;
+        return 1;
     }
 
     static int32_t MeshUpdate(void* host, HPEntityId entity, const HPMeshSection* sections, uint32_t sectionCount,

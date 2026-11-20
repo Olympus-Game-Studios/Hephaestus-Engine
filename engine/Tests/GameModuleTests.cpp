@@ -202,6 +202,8 @@ int main(int argc, char** argv)
     GameModuleTestStats& stats = *TestGameModule_Stats();
     {
         Scene scene("GameModules");
+        Entity camera = scene.CreateEntity("Camera");
+        camera.AddComponent<CameraComponent>().isActive = true;
         LuaScriptEngine lua;
         PluginScriptHost host;
         std::vector<size_t> uploads;
@@ -241,7 +243,7 @@ int main(int argc, char** argv)
                       "a module that refuses to start gets no update or endPlay");
         const auto meshEntity = static_cast<entt::entity>(static_cast<uint32_t>(stats.meshEntity - 1));
         const auto* renderer = stats.meshEntity ? scene.GetRegistry().try_get<MeshRendererComponent>(meshEntity) : nullptr;
-        pass &= Check(renderer && uploads.size() == 1 && uploadedIndices == 3 && renderer->meshHandle == 40 &&
+        pass &= Check(renderer && uploads.size() == 3 && uploadedIndices == 3 && renderer->meshHandle == 40 &&
                           renderer->submeshCount == 1 && renderer->appliedMaterialPaths.size() == 1 &&
                           renderer->appliedMaterialPaths[0] == "materials/floor.hematerial" &&
                           renderer->localBounds.min.z == -1.0f,
@@ -252,7 +254,19 @@ int main(int argc, char** argv)
                       "meshUpdate replaces the geometry in the same slot, with new bounds and the same materials");
         pass &= Check(stats.meshUpdateCountRejected == 1 && replaced.size() == 1,
                       "meshUpdate refuses a different section count and uploads nothing");
-        pass &= Check(stats.badMeshRejected == 1 && uploads.size() == 1, "a mesh with an index past its vertices is rejected");
+        pass &= Check(stats.badMeshRejected == 1 && uploads.size() == 3, "a mesh with an index past its vertices is rejected");
+        const auto gunEntity = static_cast<entt::entity>(static_cast<uint32_t>(stats.gunEntity - 1));
+        const auto clearedEntity = static_cast<entt::entity>(static_cast<uint32_t>(stats.clearedEntity - 1));
+        const auto* gun = stats.gunEntity ? scene.GetRegistry().try_get<MeshRendererComponent>(gunEntity) : nullptr;
+        const auto* cleared = stats.clearedEntity ? scene.GetRegistry().try_get<MeshRendererComponent>(clearedEntity) : nullptr;
+        pass &= Check(stats.viewModelSet == 1 && gun && gun->viewModel &&
+                          scene.GetRegistry().get<TransformComponent>(gunEntity).parent ==
+                              static_cast<entt::entity>(camera),
+                      "meshSetViewModel makes a runtime mesh a view model held by the active camera");
+        pass &= Check(stats.viewModelCleared == 1 && cleared && !cleared->viewModel &&
+                          scene.GetRegistry().get<TransformComponent>(clearedEntity).parent == entt::null,
+                      "and turning it off lets the mesh go back to the world");
+        pass &= Check(stats.viewModelOfNonMeshRejected == 1, "meshSetViewModel refuses anything meshCreate did not make");
         int hulls = 0;
         bool parented = true;
         for (auto [handle, shape, transform] :
@@ -271,7 +285,7 @@ int main(int argc, char** argv)
         lua.OnSimulationStopped();
         pass &= Check(stats.ends == 1 && host.GameSessionCount() == 0 && host.Archives().MountCount() == 0,
                       "stopping play ends the session and unmounts its archives");
-        pass &= Check(releases == std::vector<size_t>{40}, "stopping play frees the session's meshes");
+        pass &= Check(releases == std::vector<size_t>{40, 41, 42}, "stopping play frees the session's meshes");
 
         lua.OnSimulationStarted();
         Hephaestus::RunSimulationStep(step, 0.25f);

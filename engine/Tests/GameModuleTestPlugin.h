@@ -21,6 +21,11 @@ typedef struct GameModuleTestStats {
     int badHullRejected;
     int meshUpdated;
     int meshUpdateCountRejected;
+    int viewModelSet;
+    int viewModelCleared;
+    int viewModelOfNonMeshRejected;
+    unsigned long long gunEntity;
+    unsigned long long clearedEntity;
 } GameModuleTestStats;
 
 GameModuleTestStats* TestGameModule_Stats(void);

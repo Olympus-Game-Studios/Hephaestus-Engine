@@ -165,3 +165,5 @@ Game modules, like scripts, can mount read only ZIP or PK3 archives with `archiv
 `meshCreate` builds an entity from triangle sections (`HPMeshSection`, one material slot each, counter-clockwise front faces, positions in metres). Its GPU buffers are freed when play stops, together with the session's archives.
 
 `meshUpdate` replaces that mesh's geometry, for animation: pass the same number of sections (their vertex and index counts may change); the mesh keeps its materials and its bounds follow the new vertices. Uploads go to host visible buffers and never wait on the GPU, so a module can pose a model each frame.
+
+`meshSetViewModel` makes such a mesh a first-person view model: its position, rotation and scale are then in the view's frame (+X forward, +Y up, +Z right, metres), it draws in front of the world in play and casts no shadows. It follows the active camera entity, or the view camera the module drives when no entity has a camera. Pass 0 to make it an ordinary mesh again.

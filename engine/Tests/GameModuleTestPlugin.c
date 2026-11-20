@@ -51,6 +51,16 @@ static void* BeginPlay(const HPScriptHostAPI* host) {
         g_Stats.badMeshRejected = host->meshCreate(host->host, "Bad", &section, 1, error, sizeof error) == 0 &&
                                   strstr(error, "index") != NULL;
         {
+            HPMeshSection gun = {sizeof(HPMeshSection), vertices, 3, indices, 3, NULL};
+            const HPEntityId cleared = host->meshCreate(host->host, "Holstered", &gun, 1, error, sizeof error);
+            g_Stats.gunEntity = host->meshCreate(host->host, "Gun", &gun, 1, error, sizeof error);
+            g_Stats.viewModelOfNonMeshRejected = host->meshSetViewModel(host->host, 12345, 1, error, sizeof error) == 0;
+            g_Stats.viewModelCleared = host->meshSetViewModel(host->host, cleared, 1, error, sizeof error) &&
+                                       host->meshSetViewModel(host->host, cleared, 0, error, sizeof error);
+            g_Stats.clearedEntity = cleared;
+            g_Stats.viewModelSet = host->meshSetViewModel(host->host, g_Stats.gunEntity, 1, error, sizeof error);
+        }
+        {
             static const HPMeshVertex moved[3] = {
                 {{0, 0, 0}, {0, 1, 0}, {1, 1, 1}, {0, 0}},
                 {{2, 0, 0}, {0, 1, 0}, {1, 1, 1}, {1, 0}},
