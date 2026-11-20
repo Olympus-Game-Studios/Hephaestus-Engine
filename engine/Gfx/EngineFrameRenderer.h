@@ -597,7 +597,16 @@ private:
         std::string key;
         std::string resolvedPath;
         bool linear = false;
+        uint64_t lastUsedFrame = 0; // the frame that last looked it up
     };
+    // A texture whose slot was given to another, destroyed once every swapchain image's descriptors were rewritten
+    // and no frame in flight can read it.
+    struct RetiredTexture {
+        VulkanTexture texture;
+        uint64_t lastUsedFrame = 0;
+    };
+    std::unordered_map<uint64_t, RetiredTexture> m_retiredTextures;
+    uint64_t m_nextRetiredTexture = 0;
     uint32_t m_maxMaterialTextureSize = 0;
     ScopeLens m_scopeLens;
     std::vector<MaterialTextureSlot> m_materialTextureSlots;

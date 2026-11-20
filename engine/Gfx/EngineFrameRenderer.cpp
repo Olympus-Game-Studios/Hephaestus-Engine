@@ -836,6 +836,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     ++m_frameSerial;
     RetireIdleEntries(m_characterBonePalettes, m_frameSerial, MAX_FRAMES_IN_FLIGHT,
                       [this](CharacterBoneGpu& gpu) { releaseCharacterBonePalette(gpu); });
+    RetireIdleEntries(m_retiredTextures, m_frameSerial,
+                      MAX_FRAMES_IN_FLIGHT + (m_swapchain ? m_swapchain->images.size() : 0),
+                      [this](RetiredTexture& retired) { retired.texture.Destroy(m_device->allocator, m_device->device); });
     RetireIdleEntries(m_retiredMeshes, m_frameSerial, MAX_FRAMES_IN_FLIGHT, [this](RetiredMesh& retired) {
         m_probeGI.ForgetMesh(retired.mesh.vertexBuffer.buffer);
         retired.mesh.Destroy(m_device->allocator);
@@ -3996,15 +3999,26 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
 
     // Check if already loaded
     auto existingIt = m_materialTextureLookup.find(key);
-    if (existingIt != m_materialTextureLookup.end()) return existingIt->second;
+    if (existingIt != m_materialTextureLookup.end()) {
+        m_materialTextureSlots[existingIt->second].lastUsedFrame = m_frameSerial;
+        return existingIt->second;
+    }
 
+    uint32_t reuse = kNoMaterialTextureSlot;
     if (m_materialTextureSlots.size() >= kMaxMaterialTextureSlots) {
-        static bool overflowLogged = false;
-        if (!overflowLogged) {
-            std::cerr << "[EngineFrameRenderer] Material texture cache full (" << kMaxMaterialTextureSlots << "). Using default.\n";
-            overflowLogged = true;
+        std::vector<uint64_t> lastUsed;
+        lastUsed.reserve(m_materialTextureSlots.size());
+        for (const auto& slot : m_materialTextureSlots) lastUsed.push_back(slot.lastUsedFrame);
+        reuse = PickIdleMaterialTextureSlot(lastUsed, m_defaultMaterialTextureSlot, m_frameSerial, MAX_FRAMES_IN_FLIGHT);
+        if (reuse == kNoMaterialTextureSlot) {
+            static bool overflowLogged = false;
+            if (!overflowLogged) {
+                std::cerr << "[EngineFrameRenderer] Material texture cache full (" << kMaxMaterialTextureSlots
+                          << ") with every texture in use. Using default.\n";
+                overflowLogged = true;
+            }
+            return m_defaultMaterialTextureSlot;
         }
-        return m_defaultMaterialTextureSlot;
     }
 
     // Resolve path relative to project root
@@ -4061,9 +4075,19 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
     newSlot.resolvedPath = resolvedPath.string();
     newSlot.linear = linear;
     newSlot.valid = true;
+    newSlot.lastUsedFrame = m_frameSerial;
 
     uint32_t slotIndex = static_cast<uint32_t>(m_materialTextureSlots.size());
-    m_materialTextureSlots.push_back(std::move(newSlot));
+    if (reuse != kNoMaterialTextureSlot) {
+        // The idle texture's view stays alive until every descriptor set has been rewritten to the new one.
+        MaterialTextureSlot& old = m_materialTextureSlots[reuse];
+        m_materialTextureLookup.erase(old.key);
+        m_retiredTextures.emplace(m_nextRetiredTexture++, RetiredTexture{old.texture, m_frameSerial});
+        old = std::move(newSlot);
+        slotIndex = reuse;
+    } else {
+        m_materialTextureSlots.push_back(std::move(newSlot));
+    }
     m_materialTextureLookup.emplace(key, slotIndex);
 
     // Defer descriptor writes and apply them when each swapchain image is acquired.
@@ -5764,6 +5788,10 @@ void EngineFrameRenderer::destroyAllResources()
     }
     m_materialTextureSlots.clear();
     m_materialTextureLookup.clear();
+    for (auto& [id, retired] : m_retiredTextures) {
+        retired.texture.Destroy(m_device->allocator, m_device->device);
+    }
+    m_retiredTextures.clear();
     m_pendingTextureSlotUpdates.clear();
     destroyMaterialShaderPipelines();
     m_materialShaderPrograms.clear();

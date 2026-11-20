@@ -154,12 +154,25 @@ bool TestRetiredCharacterPalettesFreeTheirSlots() {
 
 } // namespace
 
+// A full texture array gives the least recently drawn texture's slot to a new one, once no frame in flight reads it.
+bool TestIdleMaterialTextureSlotsAreReused() {
+    const uint64_t frame = 100;
+    std::vector<uint64_t> lastUsed = {0, 99, 40, 98, 10, 100};
+    bool ok = Check(PickIdleMaterialTextureSlot(lastUsed, 0, frame, 2) == 4,
+                    "the least recently drawn slot is reused, never the default texture's");
+    lastUsed = {0, 99, 100};
+    ok &= Check(PickIdleMaterialTextureSlot(lastUsed, 0, frame, 2) == kNoMaterialTextureSlot,
+                "no slot drawn by a frame still in flight is taken");
+    return ok;
+}
+
 int main() {
     bool ok = true;
     ok &= TestVertexLayout();
     ok &= TestRestPaletteIdentitySkinning();
     ok &= TestRestFixturePalette();
     ok &= TestRetiredCharacterPalettesFreeTheirSlots();
+    ok &= TestIdleMaterialTextureSlotsAreReused();
     if (ok) {
         std::cout << "Skinned mesh tests passed.\n";
         return 0;
