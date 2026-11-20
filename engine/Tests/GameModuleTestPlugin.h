@@ -22,6 +22,7 @@ typedef struct GameModuleTestStats {
     int meshUpdated;
     int meshUpdateCountRejected;
     int viewModelSet;
+    int meshDestroyed;
     int viewModelCleared;
     int viewModelOfNonMeshRejected;
     unsigned long long gunEntity;

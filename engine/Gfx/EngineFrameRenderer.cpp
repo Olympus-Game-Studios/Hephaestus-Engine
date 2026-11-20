@@ -4865,38 +4865,44 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         };
         std::vector<TranslucentDraw> translucentDraws;
 
+        // Each material is uploaded once a frame and every draw that uses it shares its slot, so the frame's limit
+        // is on distinct materials, not on draws.
+        std::unordered_map<const MaterialComponent*, uint32_t> frameMaterialSlots;
         auto drawWithMaterial = [&](const MaterialComponent* material,
                                     uint32_t indexOffset, uint32_t indexCount,
                                     const char* entityName, int submeshIdx, int submeshMatSlot) {
             if (indexCount == 0) return;
-            if (matSlotNext >= kMaxMaterialsPerFrame) {
+            uint32_t slot = 0; // slot 0 is the default material, the fallback when the frame runs out of slots
+            if (const auto cached = frameMaterialSlots.find(material); cached != frameMaterialSlots.end()) {
+                slot = cached->second;
+            } else if (matSlotNext >= kMaxMaterialsPerFrame) {
                 if (!materialOverflowLogged) {
-                    std::cerr << "[EngineFrameRenderer] Material UBO capacity exceeded (" 
-                              << kMaxMaterialsPerFrame << "). Remaining draws use default material.\n";
+                    std::cerr << "[EngineFrameRenderer] Material UBO capacity exceeded ("
+                              << kMaxMaterialsPerFrame << " materials). Remaining materials draw as the default.\n";
                     materialOverflowLogged = true;
                 }
-                // Fall back to slot 0 (default material)
-                uint32_t dynOffset = 0;
-                if (currentBoneSet != VK_NULL_HANDLE) {
-                    VkDescriptorSet sets[] = {m_descriptorSets[imageIndex], currentBoneSet};
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentDrawLayout,
-                                            0, 2, sets, 1, &dynOffset);
-                } else {
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentDrawLayout,
-                                            0, 1, &m_descriptorSets[imageIndex], 1, &dynOffset);
+            } else {
+                MaterialUBO matUBO = {};
+                buildMaterialUBO(material, matUBO);
+                slot = matSlotNext++;
+                std::memcpy(matMappedBase + static_cast<VkDeviceSize>(slot) * m_materialStride, &matUBO, sizeof(matUBO));
+                frameMaterialSlots.emplace(material, slot);
+
+                // Debug logging for first 10 draws when scene changes
+                if (!m_materialDebugLogged && m_materialDebugDrawCount < 10) {
+                    std::cout << "[MaterialDebug] entity='" << (entityName ? entityName : "?")
+                              << "' submesh=" << submeshIdx
+                              << " matSlot=" << submeshMatSlot
+                              << " uboSlot=" << slot
+                              << " albedo=(" << matUBO.albedo.x << "," << matUBO.albedo.y << "," << matUBO.albedo.z << ")"
+                              << " albedoTex=" << matUBO.albedoTextureIndex
+                              << " useAlbedoTex=" << matUBO.useAlbedoTexture
+                              << "\n";
+                    m_materialDebugDrawCount++;
                 }
-                vkCmdDrawIndexed(cmd, indexCount, 1, indexOffset, 0, 0);
-                drawnCount++;
-                return;
             }
 
-            MaterialUBO matUBO = {};
-            buildMaterialUBO(material, matUBO);
-
-            VkDeviceSize matOffsetBytes = static_cast<VkDeviceSize>(matSlotNext) * m_materialStride;
-            std::memcpy(matMappedBase + matOffsetBytes, &matUBO, sizeof(matUBO));
-
-            uint32_t dynOffset = static_cast<uint32_t>(matOffsetBytes);
+            const uint32_t dynOffset = static_cast<uint32_t>(static_cast<VkDeviceSize>(slot) * m_materialStride);
             if (currentBoneSet != VK_NULL_HANDLE) {
                 VkDescriptorSet sets[] = {m_descriptorSets[imageIndex], currentBoneSet};
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentDrawLayout,
@@ -4906,22 +4912,6 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                                         0, 1, &m_descriptorSets[imageIndex], 1, &dynOffset);
             }
             vkCmdDrawIndexed(cmd, indexCount, 1, indexOffset, 0, 0);
-
-            // Debug logging for first 10 draws when scene changes
-            if (!m_materialDebugLogged && m_materialDebugDrawCount < 10) {
-                std::cout << "[MaterialDebug] entity='" << (entityName ? entityName : "?") 
-                          << "' submesh=" << submeshIdx 
-                          << " matSlot=" << submeshMatSlot
-                          << " uboSlot=" << matSlotNext 
-                          << " dynOffset=" << dynOffset
-                          << " albedo=(" << matUBO.albedo.x << "," << matUBO.albedo.y << "," << matUBO.albedo.z << ")"
-                          << " albedoTex=" << matUBO.albedoTextureIndex
-                          << " useAlbedoTex=" << matUBO.useAlbedoTexture
-                          << "\n";
-                m_materialDebugDrawCount++;
-            }
-
-            matSlotNext++;
             drawnCount++;
         };
 

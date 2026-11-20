@@ -251,6 +251,14 @@ struct PluginScriptHost::HostApi {
         if (!lua || !Valid(host, entity)) {
             return 0;
         }
+        // Hull colliders belong to the entity colliderAddConvexHulls gave them to: they go with it rather than
+        // being left in the world as orphans.
+        PluginScriptHost& self = Host(host);
+        if (const auto colliders = self.m_SessionColliders.find(ToEntityId(entity));
+            colliders != self.m_SessionColliders.end()) {
+            for (const uint32_t collider : colliders->second) lua->DestroyEntity(collider);
+            self.m_SessionColliders.erase(colliders);
+        }
         lua->DestroyEntity(ToEntityId(entity));
         return 1;
     }
@@ -1186,6 +1194,8 @@ struct PluginScriptHost::HostApi {
             body.useGravity = false;
             body.layer = 1;
             scene.SetParent(collider, ownerEntity, false);
+            self.m_SessionColliders[ToEntityId(owner)].push_back(
+                static_cast<uint32_t>(static_cast<entt::entity>(collider)));
             p += 3 * static_cast<size_t>(hullSizes[h]);
         }
         return 1;
@@ -1541,6 +1551,7 @@ void PluginScriptHost::StopGameModules() {
         }
     }
     m_SessionMeshes.clear();
+    m_SessionColliders.clear();
 }
 
 void PluginScriptHost::OnSimulationStopped() {

@@ -280,6 +280,13 @@ int main(int argc, char** argv)
         pass &= Check(stats.hullsAdded == 1 && hulls == 1 && parented,
                       "a game module adds a static convex hull collider under its mesh, centred on its points");
         pass &= Check(stats.badHullRejected == 1, "a hull with fewer than four points is rejected and adds nothing");
+        Hephaestus::RunSimulationStep(step, 0.25f);
+        int hullsLeft = 0;
+        for (auto [handle, shape] : scene.GetRegistry().view<PhysicsShapeComponent>().each()) {
+            hullsLeft += shape.type == PhysicsShapeType::ConvexHull ? 1 : 0;
+        }
+        pass &= Check(stats.meshDestroyed == 1 && hullsLeft == 0 && !scene.GetRegistry().valid(meshEntity),
+                      "destroying a mesh destroys the hull colliders it was given");
 
         host.OnSimulationStopped();
         lua.OnSimulationStopped();

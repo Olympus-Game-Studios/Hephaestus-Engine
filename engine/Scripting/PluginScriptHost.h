@@ -146,5 +146,6 @@ private:
     bool m_GameModulesStarted = false;
     MeshSink m_MeshSink;
     std::vector<size_t> m_SessionMeshes;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> m_SessionColliders; // owner entity -> its hull colliders
     Hephaestus::ArchiveFileSystem m_Archives;
 };

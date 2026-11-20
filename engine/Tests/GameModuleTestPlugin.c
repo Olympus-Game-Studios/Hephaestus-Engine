@@ -88,6 +88,9 @@ static void Update(void* session, float deltaTime) {
     (void)session;
     g_Stats.updates++;
     g_Stats.lastDelta = deltaTime;
+    if (g_Stats.updates == 3 && g_Session.host) {
+        g_Stats.meshDestroyed = g_Session.host->destroyEntity(g_Session.host->host, g_Stats.meshEntity);
+    }
 }
 
 static void EndPlay(void* session) {
