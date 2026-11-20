@@ -218,6 +218,12 @@ static void FramebufferResizeCallback(GLFWwindow* /*window*/, int /*width*/, int
     g_FramebufferResized = true;
 }
 
+static std::vector<uint32_t> g_TypedCodepoints;
+
+static void CharCallback(GLFWwindow* /*window*/, unsigned int codepoint) {
+    g_TypedCodepoints.push_back(codepoint);
+}
+
 static void ScrollCallback(GLFWwindow* /*window*/, double xoffset, double yoffset) {
     g_ScrollDeltaX += xoffset;
     g_ScrollDeltaY += yoffset;
@@ -535,6 +541,7 @@ int main(int argc, char* argv[]) {
 
     glfwSetFramebufferSizeCallback(window, FramebufferResizeCallback);
     glfwSetScrollCallback(window, ScrollCallback);
+    glfwSetCharCallback(window, CharCallback);
     
     Bootstrap::EndStage(InitStage::Window, true);
 
@@ -1399,6 +1406,8 @@ int main(int argc, char* argv[]) {
         lastCursorY = cursorY;
         hasLastCursorPosition = true;
         inputSystem.AddScrollDelta(g_ScrollDeltaX, g_ScrollDeltaY);
+        for (const uint32_t codepoint : g_TypedCodepoints) inputSystem.AddTypedCodepoint(codepoint);
+        g_TypedCodepoints.clear();
         g_ScrollDeltaX = 0.0;
         g_ScrollDeltaY = 0.0;
 

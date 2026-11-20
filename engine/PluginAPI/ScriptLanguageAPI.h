@@ -422,6 +422,12 @@ typedef struct HPScriptHostAPI {
        Returns 1, or 0 with a message in `error` and the mesh unchanged when
        meshCreate did not make it. */
     int32_t (*meshSetViewModel)(void* host, HPEntityId entity, int32_t viewModel, char* error, size_t errorSize);
+
+    /* The text typed this frame, UTF-8 without control characters, for text
+       entry such as a console: check structSize. Copies with the
+       getEntityName convention; empty when nothing was typed. Keys such as
+       Backspace and Enter are read with isKeyDown. */
+    size_t (*getTypedText)(void* host, char* buffer, size_t bufferSize);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity: its Script

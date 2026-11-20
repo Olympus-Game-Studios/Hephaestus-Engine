@@ -1438,6 +1438,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
     case InputEvent::Type::KeyPress:
         // Update key states
         updateKeyState(event.key, true);
+        if (!m_playModeManager.IsEditor()) m_runtimeTypedText += event.text;
         
         // Update modifiers
         m_inputState.altDown = (event.modifiers & 0x08000000) != 0;
@@ -1784,6 +1785,7 @@ void QtEditorEngine::resetInputState()
     m_runtimeMouseDeltaX = 0.0;
     m_runtimeMouseDeltaY = 0.0;
     m_runtimeScrollDeltaY = 0.0;
+    m_runtimeTypedText.clear();
     m_gameplayInput.Reset();
 }
 
@@ -1814,6 +1816,7 @@ void QtEditorEngine::populateGameplayInput()
     m_gameplayInput.SetMousePosition(m_runtimeMouseX, m_runtimeMouseY);
     m_gameplayInput.AddMouseDelta(m_runtimeMouseDeltaX, m_runtimeMouseDeltaY);
     m_gameplayInput.AddScrollDelta(0.0, m_runtimeScrollDeltaY);
+    m_gameplayInput.AddTypedText(m_runtimeTypedText);
 #ifdef _WIN32
     // GLFW's macOS init replaces the NSApp delegate Qt owns, so editor gamepads are Windows only.
     if (!m_gamepadBackendTried) {
@@ -1835,6 +1838,7 @@ void QtEditorEngine::populateGameplayInput()
     m_runtimeMouseDeltaX = 0.0;
     m_runtimeMouseDeltaY = 0.0;
     m_runtimeScrollDeltaY = 0.0;
+    m_runtimeTypedText.clear();
 
     syncViewportCursorCapture();
 }

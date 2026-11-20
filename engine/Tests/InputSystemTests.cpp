@@ -170,6 +170,23 @@ bool TestRuntimeRebinding()
     return ok;
 }
 
+bool TestTypedText()
+{
+    bool ok = true;
+    Hephaestus::InputSystem input;
+    input.BeginFrame();
+    input.AddTypedCodepoint('g');
+    input.AddTypedCodepoint(0xe9);    // e acute, two bytes
+    input.AddTypedCodepoint(0x1f600); // four bytes
+    input.AddTypedCodepoint('\b');
+    input.AddTypedText("od\r\x7f");
+    ok &= Check(input.GetTypedText() == "g\xc3\xa9\xf0\x9f\x98\x80od",
+                "typed characters arrive as UTF-8 without control characters");
+    input.BeginFrame();
+    ok &= Check(input.GetTypedText().empty(), "typed text lasts one frame");
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -179,6 +196,7 @@ int main()
     ok &= TestAxesAndMultipleBindings();
     ok &= TestMapRoundTrip();
     ok &= TestRuntimeRebinding();
+    ok &= TestTypedText();
     if (ok) {
         std::cout << "InputSystemTests passed\n";
         return 0;

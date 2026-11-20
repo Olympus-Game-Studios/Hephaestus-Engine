@@ -45,6 +45,7 @@ void InputSystem::BeginFrame()
     m_QueuedMouseDeltaY = 0.0;
     m_Current.scrollDeltaX = 0.0;
     m_Current.scrollDeltaY = 0.0;
+    m_Current.typedText.clear();
 }
 
 void InputSystem::Reset()
@@ -112,6 +113,35 @@ void InputSystem::ResetTransientState()
 void InputSystem::QueueActionOverride(const std::string& name, float value)
 {
     if (HasAction(name)) m_QueuedActionOverrides[name] = value;
+}
+
+void InputSystem::AddTypedText(const std::string& utf8)
+{
+    for (const char c : utf8) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte >= 0x20 && byte != 0x7f) m_Current.typedText.push_back(c);
+    }
+}
+
+void InputSystem::AddTypedCodepoint(uint32_t cp)
+{
+    if (cp < 0x20 || cp == 0x7f || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return;
+    std::string& out = m_Current.typedText;
+    if (cp < 0x80) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xc0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
+    } else if (cp < 0x10000) {
+        out.push_back(static_cast<char>(0xe0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
+    } else {
+        out.push_back(static_cast<char>(0xf0 | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3f)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
+    }
 }
 
 void InputSystem::AddScrollDelta(double x, double y)

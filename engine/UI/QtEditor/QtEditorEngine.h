@@ -452,6 +452,7 @@ private:
     double m_runtimeMouseDeltaX = 0.0;
     double m_runtimeMouseDeltaY = 0.0;
     double m_runtimeScrollDeltaY = 0.0;
+    std::string m_runtimeTypedText;
     Hephaestus::InputSystem m_gameplayInput;
 
     // Vulkan resources (owned by main.cpp in legacy mode, but we need our own here)

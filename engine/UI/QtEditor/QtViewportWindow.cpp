@@ -294,6 +294,7 @@ void QtViewportWindow::keyPressEvent(QKeyEvent* event)
         ie.type = InputEvent::Type::KeyPress;
         ie.key = event->key();
         ie.modifiers = static_cast<int>(event->modifiers());
+        ie.text = event->text().toStdString();
         emitInputEvent(ie);
     }
     

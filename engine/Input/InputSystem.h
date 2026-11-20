@@ -3,6 +3,7 @@
 #include "InputMap.h"
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -31,6 +32,10 @@ public:
     void AddMouseDelta(double x, double y);
     void QueueMouseDelta(double x, double y);
     void AddScrollDelta(double x, double y);
+    /// Adds typed text (UTF-8) to this frame's; ASCII control characters are dropped.
+    void AddTypedText(const std::string& utf8);
+    /// Adds one typed character by its Unicode code point.
+    void AddTypedCodepoint(uint32_t codepoint);
     void SetGamepadConnected(bool connected);
     void SetGamepadButtonState(int button, bool down);
     void SetGamepadAxisState(int axis, float value);
@@ -51,6 +56,8 @@ public:
     double GetMouseDeltaY() const;
     double GetScrollDeltaX() const;
     double GetScrollDeltaY() const;
+    /// Text typed since the last BeginFrame, UTF-8, without control characters.
+    const std::string& GetTypedText() const { return m_Current.typedText; }
     bool IsGamepadConnected() const;
 
     bool IsActionDown(const std::string& name) const;
@@ -88,6 +95,7 @@ private:
         double mouseDeltaY = 0.0;
         double scrollDeltaX = 0.0;
         double scrollDeltaY = 0.0;
+        std::string typedText;
         bool gamepadConnected = false;
     };
 

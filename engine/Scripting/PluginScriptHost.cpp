@@ -297,6 +297,11 @@ struct PluginScriptHost::HostApi {
                      : HPVec2{0.0f, 0.0f};
     }
 
+    static size_t GetTypedText(void* host, char* buffer, size_t bufferSize) {
+        const auto* input = Host(host).m_Input;
+        return CopyOut(input ? input->GetTypedText() : std::string(), buffer, bufferSize);
+    }
+
     static HPVec2 GetMouseDelta(void* host) {
         const auto* input = Host(host).m_Input;
         return input ? HPVec2{static_cast<float>(input->GetMouseDeltaX()), static_cast<float>(input->GetMouseDeltaY())}
@@ -938,6 +943,7 @@ struct PluginScriptHost::HostApi {
         api.colliderAddConvexHulls = &ColliderAddConvexHulls;
         api.meshUpdate = &MeshUpdate;
         api.meshSetViewModel = &MeshSetViewModel;
+        api.getTypedText = &GetTypedText;
     }
 
     // Archives

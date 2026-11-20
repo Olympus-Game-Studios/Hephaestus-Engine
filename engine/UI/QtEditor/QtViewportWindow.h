@@ -16,6 +16,7 @@
 #include <QTimer>
 #include <algorithm>
 #include <functional>
+#include <string>
 #include "../../Gfx/NativeSurface.h"
 
 namespace Hephaestus {
@@ -43,6 +44,7 @@ struct InputEvent {
     float x = 0.0f;            // Mouse x position (viewport-local)
     float y = 0.0f;            // Mouse y position (viewport-local)
     float wheelDelta = 0.0f;   // Wheel delta (vertical)
+    std::string text;          // UTF-8 text a key press types
     bool accepted = false;
 };
 
