@@ -5206,8 +5206,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             VkPipeline translucentPipeline =
                 m_pipeline->GetTranslucentPipeline(static_cast<uint32_t>(draw.material->blendMode));
             if (const SurfacePipelines* own = materialShaderPipelines(draw.material)) {
-                translucentPipeline = draw.material->blendMode == MaterialBlendMode::Additive ? own->additive
-                                                                                              : own->alphaBlend;
+                translucentPipeline = own->Translucent(static_cast<uint32_t>(draw.material->blendMode));
             }
             if (translucentPipeline != currentPipeline) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, translucentPipeline);

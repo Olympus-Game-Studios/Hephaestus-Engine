@@ -14,6 +14,18 @@ struct SurfacePipelines {
     VkPipeline wireframeBackface = VK_NULL_HANDLE;
     VkPipeline alphaBlend = VK_NULL_HANDLE;
     VkPipeline additive = VK_NULL_HANDLE;
+    VkPipeline multiply = VK_NULL_HANDLE;
+    VkPipeline multiply2x = VK_NULL_HANDLE;
+
+    /// The pipeline for a translucent MaterialBlendMode (alpha blend for any other).
+    VkPipeline Translucent(uint32_t blendMode) const {
+        switch (blendMode) {
+        case 2: return additive;
+        case 4: return multiply;
+        case 5: return multiply2x;
+        default: return alphaBlend;
+        }
+    }
 };
 
 struct VulkanPipeline {
@@ -28,6 +40,8 @@ struct VulkanPipeline {
     VkPipeline pipelineWireframeBackface{};
     VkPipeline pipelineAlphaBlend{};
     VkPipeline pipelineAdditive{};
+    VkPipeline pipelineMultiply{};
+    VkPipeline pipelineMultiply2x{};
     VkPipeline outlinePipeline{};
     bool ownsDescriptorSetLayout = true;
 
@@ -44,7 +58,7 @@ struct VulkanPipeline {
     void DestroySurfacePipelines(SurfacePipelines& pipelines) const;
 
     VkPipeline GetPipeline(bool backfaceCullingEnabled, bool wireframe = false) const;
-    /// Depth-tested, non-depth-writing pipeline for a translucent blend mode (1 alpha, 2 additive).
+    /// Depth-tested, non-depth-writing pipeline for a translucent blend mode (1 alpha, 2 additive, 4 multiply, 5 multiply2x).
     VkPipeline GetTranslucentPipeline(uint32_t blendMode) const;
     bool HasWireframePipeline() const {
         return pipelineWireframe != VK_NULL_HANDLE;

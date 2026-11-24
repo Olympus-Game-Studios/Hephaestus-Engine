@@ -174,6 +174,8 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     pipelineWireframeBackface = surface.wireframeBackface;
     pipelineAlphaBlend = surface.alphaBlend;
     pipelineAdditive = surface.additive;
+    pipelineMultiply = surface.multiply;
+    pipelineMultiply2x = surface.multiply2x;
 }
 
 bool VulkanPipeline::buildSurfacePipelines(VkShaderModule fragShader, bool wireframe, SurfacePipelines& out)
@@ -308,6 +310,12 @@ bool VulkanPipeline::buildSurfacePipelines(VkShaderModule fragShader, bool wiref
     colorAttach.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
     out.additive = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+    // Multiply: destination times source. Multiply 2x: plus source times destination again.
+    colorAttach.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+    colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    out.multiply = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+    colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+    out.multiply2x = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
 
     vkDestroyShaderModule(device, vertShader, nullptr);
     if (!ok) {
@@ -336,7 +344,8 @@ bool VulkanPipeline::CreateSurfacePipelines(const std::vector<std::uint32_t>& fr
 void VulkanPipeline::DestroySurfacePipelines(SurfacePipelines& pipelines) const
 {
     for (VkPipeline* handle : {&pipelines.opaque, &pipelines.opaqueBackface, &pipelines.wireframe,
-                               &pipelines.wireframeBackface, &pipelines.alphaBlend, &pipelines.additive}) {
+                               &pipelines.wireframeBackface, &pipelines.alphaBlend, &pipelines.additive,
+                               &pipelines.multiply, &pipelines.multiply2x}) {
         if (*handle != VK_NULL_HANDLE) {
             vkDestroyPipeline(device, *handle, nullptr);
             *handle = VK_NULL_HANDLE;
@@ -477,6 +486,12 @@ void VulkanPipeline::Cleanup()
         vkDestroyPipeline(device, pipelineAdditive, nullptr);
         pipelineAdditive = VK_NULL_HANDLE;
     }
+    for (VkPipeline* multiply : {&pipelineMultiply, &pipelineMultiply2x}) {
+        if (*multiply) {
+            vkDestroyPipeline(device, *multiply, nullptr);
+            *multiply = VK_NULL_HANDLE;
+        }
+    }
     if (pipelineWireframe) {
         vkDestroyPipeline(device, pipelineWireframe, nullptr);
         pipelineWireframe = VK_NULL_HANDLE;
@@ -502,7 +517,12 @@ void VulkanPipeline::Cleanup()
 
 VkPipeline VulkanPipeline::GetTranslucentPipeline(uint32_t blendMode) const
 {
-    return blendMode == 2 ? pipelineAdditive : pipelineAlphaBlend;
+    switch (blendMode) {
+    case 2: return pipelineAdditive;
+    case 4: return pipelineMultiply;
+    case 5: return pipelineMultiply2x;
+    default: return pipelineAlphaBlend;
+    }
 }
 
 VkPipeline VulkanPipeline::GetPipeline(bool backfaceCullingEnabled, bool wireframe) const

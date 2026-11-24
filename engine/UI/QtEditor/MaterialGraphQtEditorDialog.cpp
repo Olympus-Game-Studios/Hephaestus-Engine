@@ -1819,10 +1819,14 @@ private:
         m_blendModeCombo->addItem(QObject::tr("Masked"), static_cast<int>(MaterialBlendMode::Masked));
         m_blendModeCombo->addItem(QObject::tr("Translucent"), static_cast<int>(MaterialBlendMode::AlphaBlend));
         m_blendModeCombo->addItem(QObject::tr("Additive"), static_cast<int>(MaterialBlendMode::Additive));
+        m_blendModeCombo->addItem(QObject::tr("Multiply"), static_cast<int>(MaterialBlendMode::Multiply));
+        m_blendModeCombo->addItem(QObject::tr("Multiply 2x"), static_cast<int>(MaterialBlendMode::Multiply2x));
         m_blendModeCombo->setItemData(0, QObject::tr("Solid surface. Writes depth and casts shadows."), Qt::ToolTipRole);
         m_blendModeCombo->setItemData(1, QObject::tr("Cut out where Opacity times the base color texture's alpha is below Opacity Mask Clip. Casts cut-out shadows; use for foliage, fences and grates."), Qt::ToolTipRole);
         m_blendModeCombo->setItemData(2, QObject::tr("Blended by Opacity times the base color texture's alpha, drawn after solid surfaces, furthest first. Casts no shadows; use for glass and decals."), Qt::ToolTipRole);
         m_blendModeCombo->setItemData(3, QObject::tr("Unlit, added to the image. Casts no shadows; use for flashes, sparks and glows."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(4, QObject::tr("Unlit, darkens what is behind by the colour; white leaves it unchanged. Casts no shadows; use for stains and fake shadows."), Qt::ToolTipRole);
+        m_blendModeCombo->setItemData(5, QObject::tr("Unlit, scales what is behind by twice the colour; mid grey leaves it unchanged. Casts no shadows; use for scorch marks and other decals."), Qt::ToolTipRole);
         m_blendModeCombo->setCurrentIndex(m_blendModeCombo->findData(static_cast<int>(m_material.blendMode)));
         materialForm->addRow(QObject::tr("Blend Mode"), m_blendModeCombo);
         inspectorLayout->addWidget(materialSection);

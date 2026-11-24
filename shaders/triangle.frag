@@ -65,7 +65,7 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float opacity;            // offset 116
     float opacityMask;        // offset 120
     float refraction;         // offset 124 (reserved)
-    uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive, 3 masked
+    uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive, 3 masked, 4 multiply, 5 multiply 2x
     uint textureChannels;     // offset 132: roughness, metallic, AO map channel, 2 bits each (0 R .. 3 A)
     uint useLightmap;         // offset 136: baked lighting from lightmapTextureIndex at the second UV set
     uint lightmapTextureIndex; // offset 140
@@ -474,6 +474,13 @@ vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv, vec3 tangentNormal) {
 #include "material_surface.glsl"
 #endif
 
+// What a multiply blend multiplies the image behind by: the colour, faded by opacity toward the mode's neutral
+// (white for multiply; mid grey for multiply 2x, whose blend doubles it).
+vec3 multiplyColor(vec3 color, float opacity) {
+    vec3 neutral = vec3(material.blendMode == 5u ? 0.5 : 1.0);
+    return mix(neutral, color, opacity);
+}
+
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(ubo.viewPos - fragWorldPos);
@@ -497,6 +504,10 @@ void main() {
     // Layers make the whole colour, lighting included (a lightmap is one of the layers).
     if (material.layerInfo.x > 0u) {
         vec4 layered = evaluateLayers();
+        if (material.blendMode >= 4u) {
+            outColor = vec4(multiplyColor(layered.rgb, clamp(layered.a, 0.0, 1.0) * opacity), 1.0);
+            return;
+        }
         if (material.blendMode == 2u) {
             outColor = vec4(layered.rgb * opacity, opacity);
         } else if (material.blendMode == 1u) {
@@ -508,6 +519,10 @@ void main() {
     }
     if (material.blendMode == 2u) {
         outColor = vec4((albedo + surface.emissive) * opacity, opacity);
+        return;
+    }
+    if (material.blendMode >= 4u) {
+        outColor = vec4(multiplyColor(albedo, opacity), 1.0);
         return;
     }
 

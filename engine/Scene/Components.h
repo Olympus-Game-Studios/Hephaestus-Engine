@@ -621,6 +621,8 @@ enum class MaterialBlendMode : uint32_t {
     AlphaBlend = 1, ///< lit, blended by opacity times the albedo texture's alpha, drawn after opaque surfaces
     Additive = 2,   ///< unlit, (albedo + emissive) times opacity added to the image; for flashes and glows
     Masked = 3,     ///< opaque pass and shadows; opacity times the albedo texture's alpha below opacityMask is cut out
+    Multiply = 4,   ///< unlit, the image behind times the colour (white leaves it); opacity fades toward white. Stains, shadows
+    Multiply2x = 5, ///< unlit, the image behind times twice the colour (mid grey leaves it), so it can lighten and darken. Decals
 };
 
 /// File-format name of a blend mode, as written to "blendMode" in .hematerial files.
@@ -629,6 +631,8 @@ inline const char* MaterialBlendModeName(MaterialBlendMode mode) {
     case MaterialBlendMode::AlphaBlend: return "alphaBlend";
     case MaterialBlendMode::Additive: return "additive";
     case MaterialBlendMode::Masked: return "masked";
+    case MaterialBlendMode::Multiply: return "multiply";
+    case MaterialBlendMode::Multiply2x: return "multiply2x";
     default: return "opaque";
     }
 }
@@ -638,12 +642,15 @@ inline MaterialBlendMode MaterialBlendModeFromName(std::string_view name) {
     if (name == "alphaBlend") return MaterialBlendMode::AlphaBlend;
     if (name == "additive") return MaterialBlendMode::Additive;
     if (name == "masked") return MaterialBlendMode::Masked;
+    if (name == "multiply") return MaterialBlendMode::Multiply;
+    if (name == "multiply2x") return MaterialBlendMode::Multiply2x;
     return MaterialBlendMode::Opaque;
 }
 
-/// AlphaBlend and Additive surfaces are sorted and drawn after opaque ones and cast no shadows.
+/// AlphaBlend, Additive and the multiply modes are sorted and drawn after opaque surfaces and cast no shadows.
 inline bool IsTranslucentBlendMode(MaterialBlendMode mode) {
-    return mode == MaterialBlendMode::AlphaBlend || mode == MaterialBlendMode::Additive;
+    return mode == MaterialBlendMode::AlphaBlend || mode == MaterialBlendMode::Additive ||
+           mode == MaterialBlendMode::Multiply || mode == MaterialBlendMode::Multiply2x;
 }
 
 /**
