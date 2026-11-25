@@ -355,6 +355,7 @@ add_library(HephaestusRuntime STATIC
     engine/Audio/AudioEngine.cpp
     engine/Audio/AudioMath.cpp
     engine/Audio/MiniaudioImplementation.c
+    engine/Audio/VideoPlayer.cpp
     engine/Assets/ArchiveFileSystem.cpp
     engine/Assets/GltfDocument.cpp
     engine/Assets/ModelImporter.cpp
@@ -443,6 +444,7 @@ add_library(HephaestusRuntime STATIC
     engine/UI/HephaestusUI/UIGridLayout.cpp
     engine/UI/HephaestusUI/UIHorizontalBox.cpp
     engine/UI/HephaestusUI/UIImage.cpp
+    engine/UI/HephaestusUI/UIDynamicImages.cpp
     engine/UI/HephaestusUI/UIInputRouter.cpp
     engine/UI/HephaestusUI/UILayout.cpp
     engine/UI/HephaestusUI/UIPanel.cpp
@@ -479,6 +481,10 @@ if(LUA_FOUND)
     target_compile_definitions(HephaestusRuntime PUBLIC LUA_AVAILABLE=1)
 else()
     target_compile_definitions(HephaestusRuntime PUBLIC LUA_AVAILABLE=0)
+endif()
+if(WIN32)
+    # VideoPlayer: Media Foundation's media engine, its frames copied out through WIC.
+    target_link_libraries(HephaestusRuntime PUBLIC mfplat mfuuid ole32 oleaut32 windowscodecs)
 endif()
 if(APPLE)
     target_link_libraries(HephaestusRuntime PUBLIC "-framework CoreFoundation" "-framework CoreAudio" "-framework AudioToolbox")

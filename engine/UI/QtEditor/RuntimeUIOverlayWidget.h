@@ -47,6 +47,7 @@ private:
     // Loaded images by imageId (a null image when it could not be loaded), and tinted copies by imageId + tint.
     std::unordered_map<std::string, QImage> m_images;
     std::unordered_map<std::string, QImage> m_tintedImages;
+    std::unordered_map<std::string, uint64_t> m_dynamicVersions; // UIDynamicImages versions last converted
 
     const QImage& TintedImage(const std::string& imageId, const Hephaestus::HephaestusUI::UIColor& tint);
 };

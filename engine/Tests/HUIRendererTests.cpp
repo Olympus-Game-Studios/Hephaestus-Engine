@@ -33,6 +33,8 @@
 #include <variant>
 #include <vector>
 
+#include "../UI/HephaestusUI/UIDynamicImages.h"
+
 namespace HUI = Hephaestus::HephaestusUI;
 
 namespace {
@@ -735,6 +737,25 @@ bool TestMeasureText(const std::string& repoRoot) {
     return local;
 }
 
+// Runtime-supplied images: published pixels are copied out once per version, then not again until they change.
+bool TestDynamicImages() {
+    bool local = true;
+    auto& store = HUI::UIDynamicImages::Instance();
+    const uint8_t red[4] = {255, 0, 0, 255}, blue[4] = {0, 0, 255, 255};
+    if (!Check(store.Version("test:frame") == 0, "an unknown dynamic image has no version")) local = false;
+    store.Set("test:frame", red, 1, 1);
+    HUI::UIDynamicImages::Image image;
+    const bool first = store.CopyIfNewer("test:frame", 0, image);
+    if (!Check(first && image.width == 1 && image.rgba[0] == 255, "a published image copies out")) local = false;
+    if (!Check(!store.CopyIfNewer("test:frame", image.version, image), "an unchanged image does not copy again")) local = false;
+    store.Set("test:frame", blue, 1, 1);
+    if (!Check(store.CopyIfNewer("test:frame", 1, image) && image.rgba[2] == 255 && image.rgba[0] == 0,
+               "a new frame copies out with its pixels")) local = false;
+    store.Remove("test:frame");
+    if (!Check(store.Version("test:frame") == 0, "a removed image is gone")) local = false;
+    return local;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -752,6 +773,7 @@ int main(int argc, char* argv[]) {
     TestGeometryConversion(repoRoot);
     TestFontAtlas(repoRoot);
     TestMeasureText(repoRoot);
+    TestDynamicImages();
 
     if (g_Ok) {
         std::printf("HUIRendererTests: ALL PASSED\n");

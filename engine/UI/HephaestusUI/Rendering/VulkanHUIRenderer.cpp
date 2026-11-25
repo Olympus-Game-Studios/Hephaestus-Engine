@@ -1,5 +1,7 @@
 #include "VulkanHUIRenderer.h"
 
+#include "../UIDynamicImages.h"
+
 #include "../../../Gfx/VulkanDevice.h"
 
 #include <algorithm>
@@ -391,6 +393,9 @@ UITextureInfo VulkanHUIRenderer::ResolveTexture(const std::string& imageId) {
     if (imageId.empty()) {
         return {-1, 1, 1};
     }
+    if (UIDynamicImages::Instance().Version(imageId) != 0) {
+        return ResolveDynamicTexture(imageId);
+    }
 
     std::string absPath = ResolveAssetPath(imageId);
     if (absPath.empty()) {
@@ -424,6 +429,53 @@ UITextureInfo VulkanHUIRenderer::ResolveTexture(const std::string& imageId) {
 
     std::cout << "[HUI] UI texture loaded: " << absPath << " (slot " << slot << ")\n";
     return {static_cast<int32_t>(slot), m_Textures[slot].width, m_Textures[slot].height};
+}
+
+UITextureInfo VulkanHUIRenderer::ResolveDynamicTexture(const std::string& imageId) {
+    auto found = m_DynamicTextures.find(imageId);
+    UIDynamicImages::Image image;
+    const uint64_t known = found != m_DynamicTextures.end() ? found->second.version : 0;
+    if (UIDynamicImages::Instance().CopyIfNewer(imageId, known, image)) {
+        if (found != m_DynamicTextures.end() && m_Textures[found->second.slot].valid &&
+            m_Textures[found->second.slot].width == image.width && m_Textures[found->second.slot].height == image.height) {
+            // Same size: overwrite in place. Frames still in flight may sample it, so let them finish first; this
+            // only runs while a dynamic image (a video) is changing.
+            vkQueueWaitIdle(m_Device->graphicsQueue);
+            CopyPixelsToTexture(m_Textures[found->second.slot].texture, image.rgba.data(), image.width, image.height);
+            found->second.version = image.version;
+        } else {
+            uint32_t slot;
+            if (found != m_DynamicTextures.end()) { // a new size: retire the old texture, as atlases do
+                slot = found->second.slot;
+                UITextureEntry& old = m_Textures[slot];
+                if (old.valid && old.texture.image != VK_NULL_HANDLE) {
+                    RetiredTexture retired;
+                    retired.texture = old.texture;
+                    retired.set = old.set;
+                    retired.retireFrame = m_FrameCounter;
+                    m_RetiredTextures.push_back(retired);
+                }
+                old.texture = VulkanTexture{};
+                old.set = VK_NULL_HANDLE;
+                old.valid = false;
+            } else {
+                slot = ReserveTextureSlot(image.width, image.height);
+            }
+            UITextureEntry& entry = m_Textures[slot];
+            if (!UploadPixelsToTexture(entry.texture, image.rgba.data(), image.width, image.height)) {
+                std::cerr << "[HUI] Failed to create dynamic image texture '" << imageId << "'\n";
+                return {-1, 1, 1};
+            }
+            entry.width = image.width;
+            entry.height = image.height;
+            entry.valid = true;
+            WriteDescriptorSet(slot);
+            found = m_DynamicTextures.insert_or_assign(imageId, DynamicTextureEntry{slot, image.version}).first;
+        }
+    }
+    if (found == m_DynamicTextures.end()) return {-1, 1, 1};
+    const UITextureEntry& entry = m_Textures[found->second.slot];
+    return {static_cast<int32_t>(found->second.slot), entry.width, entry.height};
 }
 
 VkDescriptorSet VulkanHUIRenderer::GetDescriptorSetForSlot(int32_t slot) const {
@@ -827,6 +879,12 @@ bool VulkanHUIRenderer::UploadPixelsToTexture(VulkanTexture& texture, const uint
     texture.width = width;
     texture.height = height;
     texture.mipLevels = 1;
+    return CopyPixelsToTexture(texture, pixels, width, height);
+}
+
+bool VulkanHUIRenderer::CopyPixelsToTexture(VulkanTexture& texture, const uint8_t* pixels, uint32_t width,
+                                            uint32_t height) {
+    if (!m_Device || !pixels || texture.image == VK_NULL_HANDLE) return false;
 
     // Stage the full atlas/region.
     VulkanBuffer staging;

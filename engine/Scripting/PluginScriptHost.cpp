@@ -944,6 +944,46 @@ struct PluginScriptHost::HostApi {
         api.meshUpdate = &MeshUpdate;
         api.meshSetViewModel = &MeshSetViewModel;
         api.getTypedText = &GetTypedText;
+        api.videoPlay = &VideoPlay;
+        api.videoUpdate = &VideoUpdate;
+        api.videoStop = &VideoStop;
+    }
+
+    // Video
+
+    static uint32_t VideoPlay(void* host, const char* path, const char* imageId, float volume, char* error, size_t errorSize) {
+        PluginScriptHost& self = Host(host);
+        const auto fail = [&](const std::string& message) -> uint32_t {
+            if (error && errorSize) {
+                const size_t n = std::min(message.size(), errorSize - 1);
+                std::memcpy(error, message.data(), n);
+                error[n] = '\0';
+            }
+            return 0;
+        };
+        if (!path || !*path || !imageId || !*imageId) return fail("a video needs a path and an image id");
+        std::filesystem::path file = std::filesystem::u8path(path);
+        if (file.is_relative() && self.m_Lua && !self.m_Lua->GetProjectRoot().empty()) file = self.m_Lua->GetProjectRoot() / file;
+        const std::u8string u8 = file.u8string();
+        const std::string utf8(reinterpret_cast<const char*>(u8.c_str()), u8.size());
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(file, ec)) return fail("no video at " + utf8);
+        auto player = std::make_unique<Hephaestus::VideoPlayer>();
+        std::string message;
+        if (!player->Open(utf8, imageId, volume, message)) return fail(message);
+        const uint32_t handle = self.m_NextVideo++;
+        self.m_Videos.emplace(handle, std::move(player));
+        return handle;
+    }
+
+    static int32_t VideoUpdate(void* host, uint32_t video) {
+        PluginScriptHost& self = Host(host);
+        const auto it = self.m_Videos.find(video);
+        return it != self.m_Videos.end() && it->second->Update() ? 1 : 0;
+    }
+
+    static void VideoStop(void* host, uint32_t video) {
+        Host(host).m_Videos.erase(video); // the player stops and removes its image as it goes
     }
 
     // Archives
@@ -1562,6 +1602,7 @@ void PluginScriptHost::StopGameModules() {
 
 void PluginScriptHost::OnSimulationStopped() {
     StopGameModules();
+    m_Videos.clear();
     while (!m_Instances.empty()) {
         DestroyInstance(m_Instances.begin()->first);
     }

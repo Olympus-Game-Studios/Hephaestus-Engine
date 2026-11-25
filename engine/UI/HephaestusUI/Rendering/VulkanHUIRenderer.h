@@ -137,6 +137,10 @@ private:
     void ReapRetiredTextures();
     bool UploadPixelsToTexture(VulkanTexture& texture, const uint8_t* pixels,
                                uint32_t width, uint32_t height);
+    /** Overwrites an existing texture's pixels (same size) with a staged copy. */
+    bool CopyPixelsToTexture(VulkanTexture& texture, const uint8_t* pixels, uint32_t width, uint32_t height);
+    /** A UIDynamicImages image: its slot, re-uploaded when the store's version moves on. */
+    UITextureInfo ResolveDynamicTexture(const std::string& imageId);
 
     // Recording helpers
     static VkShaderModule LoadShaderModule(VkDevice device, const std::string& name);
@@ -172,6 +176,11 @@ private:
 
     // Texture cache (slot 0 = solid white)
     std::vector<UITextureEntry> m_Textures;
+    struct DynamicTextureEntry {
+        uint32_t slot = 0;
+        uint64_t version = 0;
+    };
+    std::unordered_map<std::string, DynamicTextureEntry> m_DynamicTextures;
     std::unordered_map<std::string, uint32_t> m_TextureLookup;
     std::unordered_map<std::string, bool> m_MissingAssetsLogged;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Assets/ArchiveFileSystem.h"
+#include "../Audio/VideoPlayer.h"
 #include "../Core/PropertyValue.h"
 #include "../PluginAPI/GameModuleAPI.h"
 #include "../PluginAPI/ScriptLanguageAPI.h"
@@ -148,4 +149,6 @@ private:
     std::vector<size_t> m_SessionMeshes;
     std::unordered_map<uint32_t, std::vector<uint32_t>> m_SessionColliders; // owner entity -> its hull colliders
     Hephaestus::ArchiveFileSystem m_Archives;
+    std::unordered_map<uint32_t, std::unique_ptr<Hephaestus::VideoPlayer>> m_Videos; // videoPlay handles
+    uint32_t m_NextVideo = 1;
 };

@@ -4,6 +4,7 @@
 
 #include "../../Assets/AssetManager.h"
 #include "../HephaestusUI/Rendering/HUIGeometryBuilder.h"
+#include "../HephaestusUI/UIDynamicImages.h"
 
 #include <QFontDatabase>
 #include <QFontMetricsF>
@@ -291,6 +292,21 @@ const QImage& RuntimeUIOverlayWidget::TintedImage(const std::string& imageId,
     static const QImage none;
     if (imageId.empty()) {
         return none;
+    }
+    // A dynamic image (a playing video): its latest pixels, refreshed as the store's version moves on.
+    if (const uint64_t version = Hephaestus::HephaestusUI::UIDynamicImages::Instance().Version(imageId); version != 0) {
+        uint64_t& shown = m_dynamicVersions[imageId];
+        Hephaestus::HephaestusUI::UIDynamicImages::Image pixels;
+        if (Hephaestus::HephaestusUI::UIDynamicImages::Instance().CopyIfNewer(imageId, shown, pixels)) {
+            QImage frame(pixels.rgba.data(), static_cast<int>(pixels.width), static_cast<int>(pixels.height),
+                         static_cast<int>(pixels.width * 4), QImage::Format_RGBA8888);
+            m_images[imageId] = frame.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            const std::string prefix = imageId + "|";
+            for (auto it = m_tintedImages.begin(); it != m_tintedImages.end();) {
+                it = it->first.rfind(prefix, 0) == 0 ? m_tintedImages.erase(it) : std::next(it);
+            }
+            shown = pixels.version;
+        }
     }
     auto loaded = m_images.find(imageId);
     if (loaded == m_images.end()) {

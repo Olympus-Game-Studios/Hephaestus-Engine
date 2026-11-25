@@ -428,6 +428,19 @@ typedef struct HPScriptHostAPI {
        getEntityName convention; empty when nothing was typed. Keys such as
        Backspace and Enter are read with isKeyDown. */
     size_t (*getTypedText)(void* host, char* buffer, size_t bufferSize);
+
+    /* Video playback (cutscenes): check structSize. videoPlay starts a video
+       file (absolute, or relative to the project root) with its sound; each
+       new frame becomes the image `imageId`, which any UI image showing that
+       image id draws. Returns a handle, or 0 with a message in `error` when
+       it cannot play (no backend on this platform, a missing file). Call
+       videoUpdate every frame while it plays: it hands over new frames and
+       returns 0 once the video has ended or failed. videoStop stops it and
+       frees the handle and its image; call it for an ended video too. All
+       videos stop when the simulation stops. */
+    uint32_t (*videoPlay)(void* host, const char* path, const char* imageId, float volume, char* error, size_t errorSize);
+    int32_t (*videoUpdate)(void* host, uint32_t video);
+    void (*videoStop)(void* host, uint32_t video);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity: its Script
